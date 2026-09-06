@@ -39,6 +39,20 @@ AUTHENTICATION_BACKENDS = [
     "apps.accounts.backends.LocalAccountBackend",
 ]
 
+# Intranet guard (ADR-0002, slice 006 R1/R6): papéis restritos à rede interna
+# e faixas de intranet aceitas. ``INTRANET_RESTRICTED_ROLES`` aceita vários
+# papéis separados por vírgula (default: só ``nir``). ``INTRANET_IP_RANGE``
+# aceita CIDRs separadas por vírgula; vazio = restrição desligada (default
+# seguro de desenvolvimento — o papel restrito nunca é bloqueado).
+INTRANET_RESTRICTED_ROLES = [
+    role.strip()
+    for role in os.environ.get("INTRANET_RESTRICTED_ROLES", "nir").split(",")
+    if role.strip()
+]
+INTRANET_IP_RANGE = os.environ.get("INTRANET_IP_RANGE", "")
+# Header de proxy reverso com o IP real do cliente (túnel Cloudflare).
+TRUSTED_PROXY_HEADER = os.environ.get("TRUSTED_PROXY_HEADER", "HTTP_CF_CONNECTING_IP")
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
@@ -52,6 +66,11 @@ MIDDLEWARE = [
     # MessageMiddleware (precisa do storage de mensagens para deslogar com
     # mensagem o usuário sem papéis).
     "apps.accounts.middleware.ActiveRoleMiddleware",
+    # Guard de intranet (slice 006, R1/R5): roda APÓS o ActiveRoleMiddleware —
+    # precisa de ``session["active_role"]`` já resolvido para decidir pelo
+    # papel ativo. Paths isentos (login/logout/switch-role/static/media) e
+    # faixa vazia (dev) nunca bloqueiam.
+    "apps.accounts.middleware.IntranetGuardMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 

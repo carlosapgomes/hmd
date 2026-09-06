@@ -25,7 +25,7 @@
 
 ## 6. Intranet guard (nir)
 
-- [ ] 6.1 Slice 006 — `IntranetGuardMiddleware` (CIDR + trusted proxy + bypass multi-role + paths isentos). Verificação: cenários de bloqueio/liberação da spec verdes; ver `slices/slice-006-intranet-guard.md`
+- [x] 6.1 Slice 006 — `IntranetGuardMiddleware` (CIDR + trusted proxy + bypass multi-role + paths isentos). Verificação: cenários de bloqueio/liberação da spec verdes; ver `slices/slice-006-intranet-guard.md`
 
 ## 7. Gate final do change
 

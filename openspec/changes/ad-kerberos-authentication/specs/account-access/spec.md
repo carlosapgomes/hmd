@@ -6,8 +6,8 @@ Substituir a autenticação local transitória por autenticação via Active Dir
 
 ## RENAMED Requirements
 
-- FROM: `Autenticação local transitória`
-- TO: `Autenticação por Active Directory com break-glass local`
+- FROM: `### Requirement: Autenticação local transitória`
+- TO: `### Requirement: Autenticação por Active Directory com break-glass local`
 
 ## MODIFIED Requirements
 
@@ -15,7 +15,7 @@ Substituir a autenticação local transitória por autenticação via Active Dir
 
 Usuários provisionados com `ad_upn` SHALL autenticar exclusivamente via Kerberos contra o Active Directory (CPF normalizado + senha do AD); credenciais locais SHALL ser inutilizáveis para esses usuários. Usuários sem `ad_upn` (break-glass, ex.: superusuário do seed) SHALL autenticar localmente apenas quando a autenticação local estiver habilitada por configuração. Independentemente do mecanismo, contas com `account_status` diferente de `active` não autenticam, e respostas ao usuário são genéricas, distinguindo apenas "credenciais inválidas" de "serviço de autenticação indisponível".
 
-#### Scenario: Login AD com credenciais válidas
+#### Scenario: Login com credenciais válidas
 
 - **GIVEN** um usuário ativo provisionado com `ad_upn`, com papel atribuído, e a senha correta do AD
 - **WHEN** submete login com CPF e senha
@@ -27,7 +27,7 @@ Usuários provisionados com `ad_upn` SHALL autenticar exclusivamente via Kerbero
 - **WHEN** submete login
 - **THEN** o login é negado com mensagem genérica de credenciais inválidas e nenhum segundo DC é consultado para esta tentativa
 
-#### Scenario: Conta bloqueada não autentica mesmo com senha AD válida
+#### Scenario: Conta bloqueada não autentica
 
 - **GIVEN** um usuário com `account_status` bloqueado e senha correta do AD
 - **WHEN** submete login

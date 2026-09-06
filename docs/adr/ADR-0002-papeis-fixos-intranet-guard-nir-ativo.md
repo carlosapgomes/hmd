@@ -28,7 +28,7 @@ ats-web a restrição de intranet considera o *conjunto* de papéis do usuário
     troca de papel é a rota de fuga para o usuário multi-role bloqueado com
     papel ativo restrito;
   - **`/admin/` deliberadamente NÃO é isento** (esclarecimento registrado
-    na revisão final do change 01, 2026-09-07): a restrição segue a função
+    na revisão final do change 01, 2026-09-06): a restrição segue a função
     exercida — quem atua como `nir` não acessa nada externamente, inclusive
     o Django admin; superusuários multi-role têm a fuga via `/switch-role/`.
     Isentar o admin abriria bypass para `nir`-only externo, e nenhum fluxo

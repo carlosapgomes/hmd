@@ -29,7 +29,7 @@
 
 ## 7. Gate final do change
 
-- [x] 7.1 Executar quality gate completo (`uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest`) e registrar resultado no relatório do change — **resultado (2026-09-07): ruff check ✅ · ruff format ✅ (50 arquivos) · mypy ✅ (35 arquivos) · pytest ✅ 61 passed (banco de teste PostgreSQL 17 via compose) · manage.py check ✅ · openspec validate ✅**
+- [x] 7.1 Executar quality gate completo (`uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest`) e registrar resultado no relatório do change — **resultado (2026-09-06): ruff check ✅ · ruff format ✅ (50 arquivos) · mypy ✅ (35 arquivos) · pytest ✅ 61 passed (banco de teste PostgreSQL 17 via compose) · manage.py check ✅ · openspec validate ✅**
 - [x] 7.2 Atualizar `PROJECT_CONTEXT.md` com o estado pós-change e preparar arquivamento (`openspec archive bootstrap-django-hmd-core`) — PROJECT_CONTEXT atualizado; arquivamento pendente de revisão final do dono
 
 > **Notas para o summary de arquivamento**:

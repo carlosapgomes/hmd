@@ -1,0 +1,42 @@
+# Desenvolvimento: db persistente + serviço web (runserver) do HMD.
+# Uso: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# O overlay soma ao docker-compose.yml: volume persistente do db e o serviço
+# web com live-reload (mount do código-fonte). O .venv do host nunca vaza:
+# um volume dedicado guarda as dependências, sincronizadas no start do
+# container com `uv sync --frozen` (idempotente quando o lock está satisfeito).
+
+name: hmd-dev
+
+services:
+  db:
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: >
+      sh -c "uv sync --frozen &&
+             uv run python manage.py runserver 0.0.0.0:8000 --settings=config.settings.dev"
+    ports:
+      - "8080:8000"
+    volumes:
+      - .:/app
+      - app_venv:/app/.venv
+    environment:
+      DATABASE_URL: postgres://hmd:hmd_dev@db:5432/hmd_dev
+      DJANGO_SECRET_KEY: dev-secret-key-not-for-production
+      DJANGO_DEBUG: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - hmd-net
+    stdin_open: true
+    tty: true
+
+volumes:
+  pgdata_dev:
+  app_venv:

@@ -1,7 +1,8 @@
 """Fixtures compartilhadas da raiz do HMD.
 
-No slice 001 não há banco de dados: os smoke tests usam as settings de teste
-(``config.settings.test``, selecionada no ``pyproject.toml``) e o test client
-do Django sem acessar o banco. Fixtures de domínio chegam com os slices de
-cada change.
+A suíte roda com ``config.settings.test`` (selecionada no ``pyproject.toml``)
+contra o PostgreSQL efêmero do compose de teste (``docker-compose.test.yml``,
+banco ``hmd_test`` na porta 5433 / ``TEST_DB_PORT``). O banco de
+desenvolvimento nunca é tocado pelos testes (slice 002). Fixtures de domínio
+chegam com os slices de cada change.
 """

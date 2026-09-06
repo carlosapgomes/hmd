@@ -1,0 +1,32 @@
+# Base: definição comum do serviço PostgreSQL 17 do HMD.
+# Uso: docker compose up -d db  (dev: + overlay docker-compose.dev.yml)
+#
+# O Postgres publica a porta host ${POSTGRES_HOST_PORT:-5432} — ajuste a
+# variável (mesma lida por config/settings/dev.py) para evitar colisão com
+# outro PostgreSQL no host.
+
+name: hmd
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hmd
+      POSTGRES_PASSWORD: hmd_dev
+      POSTGRES_DB: hmd_dev
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hmd -d hmd_dev"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+    networks:
+      - hmd-net
+
+networks:
+  hmd-net:
+    driver: bridge

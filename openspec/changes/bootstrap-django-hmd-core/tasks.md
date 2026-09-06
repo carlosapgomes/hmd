@@ -9,7 +9,7 @@
 
 ## 2. Banco e ambientes compose
 
-- [ ] 2.1 Slice 002 — Settings de banco (DATABASE_URL/DB_*), compose dev/test com PostgreSQL 17 + extensões. Verificação: `docker compose -f docker-compose.test.yml up -d` + `uv run pytest` verde contra banco de teste; `manage.py migrate` aplica no compose dev; ver `slices/slice-002-database-compose.md`
+- [x] 2.1 Slice 002 — Settings de banco (DATABASE_URL/DB_*), compose dev/test com PostgreSQL 17 + extensões. Verificação: `docker compose -f docker-compose.test.yml up -d` + `uv run pytest` verde contra banco de teste; `manage.py migrate` aplica no compose dev; ver `slices/slice-002-database-compose.md`
 
 ## 3. Contas: modelo e seed
 

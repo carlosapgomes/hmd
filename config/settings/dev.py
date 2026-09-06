@@ -10,7 +10,7 @@ Default explícito de desenvolvimento para ``SECRET_KEY``; em produção use
 
 import os
 
-import dj_database_url
+from config.settings.db import database_config
 
 from .base import *  # noqa: F401,F403
 
@@ -21,9 +21,20 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-secret-key-not-for-product
 
 ALLOWED_HOSTS = ["*"]
 
+# Resolução pura (config.settings.db): DATABASE_URL tem precedência; sem ela,
+# defaults locais do compose dev. POSTGRES_HOST_PORT alinha o default à porta
+# publicada pelo docker-compose quando diferir de 5432 (colisão com outro PG).
+postgres_host_port = os.environ.get("POSTGRES_HOST_PORT", "5432")
+
 DATABASES = {
-    "default": dj_database_url.config(
-        default="postgres://hmd:hmd_dev@localhost:5432/hmd_dev",
+    "default": database_config(
+        os.environ,
+        default_db_host="localhost",
+        default_db_port=postgres_host_port,
+        default_db_name="hmd_dev",
+        default_db_user="hmd",
+        default_db_password="hmd_dev",
+        default_application_name="hmd",
         conn_max_age=0,
         conn_health_checks=False,
     )

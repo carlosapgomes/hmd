@@ -31,3 +31,7 @@
 
 - [x] 7.1 Executar quality gate completo (`uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest`) e registrar resultado no relatório do change — **resultado (2026-09-07): ruff check ✅ · ruff format ✅ (50 arquivos) · mypy ✅ (35 arquivos) · pytest ✅ 61 passed (banco de teste PostgreSQL 17 via compose) · manage.py check ✅ · openspec validate ✅**
 - [x] 7.2 Atualizar `PROJECT_CONTEXT.md` com o estado pós-change e preparar arquivamento (`openspec archive bootstrap-django-hmd-core`) — PROJECT_CONTEXT atualizado; arquivamento pendente de revisão final do dono
+
+> **Notas para o summary de arquivamento**:
+> 1. Decisão confirmada: `/admin/` **não** é isento do intranet guard (restrição segue o papel ativo; fuga via `/switch-role/`) — registrada como esclarecimento no ADR-0002.
+> 2. Correção de UX agendada para o change 02: `switch-role` acessado com 0 papéis deve redirecionar ao logout com mensagem explicativa (hoje exibe página vazia; paridade ats-web).

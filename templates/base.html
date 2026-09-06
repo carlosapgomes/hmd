@@ -19,13 +19,20 @@
       <span class="app-header__title">{{ app_display_name }}</span>
     </a>
     {% if user.is_authenticated %}
-    <!-- Sessão: display name · avatar/perfil · sair -->
+    <!-- Sessão: papel ativo · display name · avatar/perfil · troca de papel · sair -->
     <div class="d-flex align-items-center gap-3 ms-auto">
+      {% if active_role %}
+      <span class="badge rounded-pill badge-role" title="Papel ativo">{{ active_role }}</span>
+      {% endif %}
       <a href="{% url 'profile' %}" class="app-session-meta text-decoration-none" title="Meu perfil">
         {{ user.display_name }}
       </a>
       <a href="{% url 'profile' %}" class="avatar-circle" aria-label="Meu perfil"
          title="Meu perfil">{{ user.first_name|default:user.username|slice:":2"|upper }}</a>
+      {% if has_multiple_roles %}
+      <a href="{% url 'switch_role' %}" class="btn btn-sm btn-outline-light"
+         title="Trocar papel ativo">Trocar papel</a>
+      {% endif %}
       <form method="post" action="{% url 'logout' %}" class="d-inline">
         {% csrf_token %}
         <button type="submit" class="btn btn-sm btn-outline-light">Sair</button>

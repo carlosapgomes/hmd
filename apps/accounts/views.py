@@ -1,8 +1,8 @@
-"""Views de autenticação local transitória e home placeholder (slice 004).
+"""Views de autenticação local transitória, home placeholder e switch-role.
 
 Fluxo R2/R4/R5 do ADR-0003 (estágio 1): login/logout locais, perfil com
 troca de senha local e home autenticada placeholder. O papel ativo em sessão
-e o switch-role chegam no slice 005; o guard de intranet no slice 006.
+e o switch-role chegam no slice 005 (R1/R2); o guard de intranet no slice 006.
 """
 
 from django.contrib import messages
@@ -90,6 +90,27 @@ def profile_view(request: HttpRequest) -> HttpResponse:
         "accounts/profile.html",
         {"form": form, "user_roles": user_roles},
     )
+
+
+@login_required
+def switch_role_view(request: HttpRequest) -> HttpResponse:
+    """Troca o papel ativo da sessão (slice 005, R2).
+
+    GET lista os papéis do usuário; POST valida que o papel escolhido
+    pertence ao usuário, grava ``session["active_role"]`` e redireciona para a
+    home. As homes por papel continuam placeholders neste change.
+    """
+    user = _require_user(request)
+    user_roles = list(user.roles.order_by("name").values_list("name", flat=True))
+
+    if request.method == "POST":
+        role_name = request.POST.get("role", "")
+        if role_name in user_roles:
+            request.session["active_role"] = role_name
+            return redirect(reverse("home"))
+        messages.error(request, "Papel inválido ou não atribuído.")
+
+    return render(request, "accounts/switch_role.html", {"user_roles": user_roles})
 
 
 @login_required

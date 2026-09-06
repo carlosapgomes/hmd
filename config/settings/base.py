@@ -47,6 +47,11 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
+    # Papel ativo em sessão (slice 005, R1/R6): registrado após o
+    # AuthenticationMiddleware (precisa de request.user) e após o
+    # MessageMiddleware (precisa do storage de mensagens para deslogar com
+    # mensagem o usuário sem papéis).
+    "apps.accounts.middleware.ActiveRoleMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
@@ -64,6 +69,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "apps.accounts.context_processors.app_display_name",
+                "apps.accounts.context_processors.role_context",
             ],
         },
     },

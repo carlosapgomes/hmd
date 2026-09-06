@@ -21,7 +21,7 @@
 
 ## 5. Multi-role e papel ativo
 
-- [ ] 5.1 Slice 005 — `ActiveRoleMiddleware`, switch-role, context processor, `@role_required`. Verificação: cenários das specs (auto-set, multi-role redirect, troca, 403) verdes; ver `slices/slice-005-active-role-switch.md`
+- [x] 5.1 Slice 005 — `ActiveRoleMiddleware`, switch-role, context processor, `@role_required`. Verificação: cenários das specs (auto-set, multi-role redirect, troca, 403) verdes; ver `slices/slice-005-active-role-switch.md`
 
 ## 6. Intranet guard (nir)
 

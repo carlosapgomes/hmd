@@ -14,20 +14,20 @@ Ligar o cliente Kerberos à autenticação: `KerberosBackend` (usuários com `ad
 
 ## Requisitos
 
-- **R1** `KerberosBackend.authenticate`: normaliza username (strip/lower); usuário inexistente ou **sem** `ad_upn` → `None` (sem consultar KDC); com `ad_upn` → `validate_with_failover`; sucesso → retorna usuário se `account_status == "active"`; falha → `None` (log interno com code/reason, sem detalhe externo).
-- **R2** `LocalAccountBackend` modificado: recusa usuários **com** `ad_upn` (sem checar senha local); sem `ad_upn` mantém comportamento atual **e** exige `AD_ALLOW_LOCAL_AUTH=True` (default `True`).
+- **R1** `KerberosBackend.authenticate`: normaliza username (strip/lower); carrega o usuário — inexistente ou **sem** `ad_upn` → `None` (sem consultar KDC); **checa `account_status == "active"` ANTES do AS-REQ** (conta bloqueada não gera tráfego Kerberos); com `ad_upn` → `validate_with_failover(upn, senha)`; sucesso → retorna usuário; falha → `None` (log interno com code/reason, sem detalhe externo). Quando o resultado é `all_kdcs_unreachable`/`kdc_timeout`, marca `request.kerberos_unavailable = True` (contrato request-scoped, design D4).
+- **R2** `LocalAccountBackend` modificado: **apenas superusuários sem `ad_upn`** autenticam localmente, somente com `AD_ALLOW_LOCAL_AUTH=True` (default `False` em `base`; `dev`/`test` setam `True`); usuários comuns sem `ad_upn` são recusados; usuários com `ad_upn` são recusados sempre.
 - **R3** `AUTHENTICATION_BACKENDS = [KerberosBackend, LocalAccountBackend]` (ordem: AD primeiro; local só para break-glass).
-- **R4** `login_view`: quando o resultado interno é `all_kdcs_unreachable`/`kdc_timeout`, a mensagem genérica é de **serviço indisponível** ("Não foi possível falar com o serviço de autenticação. Tente novamente.") — distinta de credenciais inválidas; nenhuma mensagem revela código KDC, existência de CPF ou status interno.
-- **R5** Management command `ad_check`: `uv run python manage.py ad_check --cpf <cpf>` (senha via prompt/env, nunca argv) executa a validação contra **cada** DC configurado isoladamente e imprime por DC: ok/código/razão/latência; documentado no README/`.env.example` como ferramenta de aceitação fora do CI.
+- **R4** `login_view`: quando `request.kerberos_unavailable` está marcado, a mensagem genérica é de **serviço indisponível** ("Não foi possível falar com o serviço de autenticação. Tente novamente.") — distinta de credenciais inválidas; nenhuma mensagem revela código KDC, existência de CPF ou status interno.
+- **R5** Management command `ad_check`: `uv run python manage.py ad_check --cpf <cpf>` executa a validação contra **cada** DC configurado e imprime por DC: ok/código/razão/latência; senha lida **exclusivamente via `getpass`** (nunca argv/env); documentado no README como ferramenta de aceitação fora do CI.
 - **R6** ADR-0004 (`docs/adr/ADR-0004-autenticacao-ad-minikerberos.md`): contexto, decisão (AS-REQ/minikerberos fixado, sem SSO/LDAP, break-glass por ad_upn), alternativas (gssapi, kinit subprocesso, pacotes pratos) e consequências (lockout AD → D5/D7 do design; TGT descartado).
-- **R7** Testes (fakes): login AD válido cria sessão; senha errada nega (fake devolve 24, sem failover); usuário AD + senha local correta no banco → negado (R2); break-glass sem ad_upn autentica local com `AD_ALLOW_LOCAL_AUTH=True` e falha com `False`; conta `blocked` com senha AD válida → negada; `all_kdcs_unreachable` → mensagem de serviço indisponível na resposta.
+- **R7** Testes (fakes): login AD válido cria sessão; senha errada nega (fake devolve 24, sem failover); usuário AD + senha local correta no banco → negado (R2); **superusuário** break-glass sem ad_upn autentica local com `AD_ALLOW_LOCAL_AUTH=True` e falha com `False`; **usuário comum sem ad_upn é negado mesmo com senha local e flag ligada**; conta `blocked` com senha AD válida → negada **sem acionar a factory** (status antes do KDC); `all_kdcs_unreachable` → marca `kerberos_unavailable` e a view mostra serviço indisponível; teste de integração do contrato completo de login (rate-limit desligado → backend → sessão → mensagem correta).
 
 ## Matriz requisito → arquivo → teste/check
 
 | Requisito | Arquivo(s) esperado(s) | Teste/check |
 | --- | --- | --- |
-| R1 | `apps/accounts/backends.py` | `test_kerberos_backend.py::test_ad_user_login_ok`, `::test_wrong_password_denied_no_failover` |
-| R2 | `apps/accounts/backends.py` | `::test_ad_user_cannot_use_local_password`, `::test_breakglass_requires_flag` |
+| R1 | `apps/accounts/backends.py` | `test_kerberos_backend.py::test_ad_user_login_ok`, `::test_wrong_password_denied_no_failover`, `::test_blocked_account_skips_kdc` |
+| R2 | `apps/accounts/backends.py` | `::test_ad_user_cannot_use_local_password`, `::test_breakglass_superuser_only_and_flag` |
 | R3 | `config/settings/base.py` | `rg -n "KerberosBackend" config/settings/base.py` |
 | R4 | `apps/accounts/views.py` | `::test_all_dcs_down_shows_service_unavailable` |
 | R5 | `apps/accounts/management/commands/ad_check.py` | `--help` imprime uso; verificação real é manual |
@@ -55,6 +55,7 @@ expected_files:
   - apps/accounts/management/commands/ad_check.py
   - apps/accounts/tests/test_kerberos_backend.py
   - config/settings/base.py
+  - config/settings/{dev,test}.py   # AD_ALLOW_LOCAL_AUTH=True explícito p/ desenvolvimento
   - docs/adr/ADR-0004-autenticacao-ad-minikerberos.md
   - README.md (seção ad_check)
 allowed_incidental_files:
@@ -70,7 +71,8 @@ Escale ao parent se: a distinção de mensagens exigir mudar o fluxo de template
 
 ## Critérios de aceitação
 
-- [ ] R1–R7 comprovados pelos comandos da matriz (5 cenários da spec cobertos)
+- [ ] R1–R7 comprovados pelos comandos da matriz (7 cenários da spec cobertos, incl. integração do contrato de login)
 - [ ] Nenhum teste toca a rede; `ad_check` é o único caminho real (manual)
-- [ ] Senha nunca aparece em argv/logs
+- [ ] Senha nunca aparece em argv/env/logs (apenas `getpass`)
+- [ ] Conta bloqueada não aciona o KDC (assert de não-chamada)
 - [ ] Gate parcial do slice verde

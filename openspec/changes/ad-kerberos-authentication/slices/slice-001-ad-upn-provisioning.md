@@ -14,10 +14,10 @@ Marcar a origem AD da identidade: campo `User.ad_upn` (único, opcional), migrat
 
 ## Requisitos
 
-- **R1** `User.ad_upn`: `CharField(max_length=150, unique=True, null=True, blank=True)`; migration gerada e aplicável em banco limpo.
+- **R1** `User.ad_upn`: `CharField(max_length=150, unique=True, null=True, blank=True)` com validação de formato **UPN completo** (`RegexValidator` tipo `user@dominio` — sufixo livre: floresta multi-domínio, ver design D3); migration gerada e aplicável em banco limpo.
 - **R2** `apps/accounts/admin.py` registra `User` (list_display com username/ad_upn/account_status/is_staff; fieldsets/searchable por username/ad_upn; filtro por account_status; M2M roles editável) e `Role`.
 - **R3** No admin, salvar usuário com `ad_upn` preenchido deixa a senha local inutilizável (`set_unusable_password()` via lógica do formulário/admin; usuários existentes locais preservam senha).
-- **R4** Testes: `ad_upn` único (violação gera IntegrityError/ValidationError); nullable em massa (seed/ break-glass); admin changelist/detail renderizam com o campo; salvar com `ad_upn` resulta em `has_usable_password() is False`.
+- **R4** Testes: `ad_upn` único (violação gera IntegrityError/ValidationError); nullable em massa (seed/break-glass); UPN inválido (sem `@dominio`) rejeitado pela validação de formato (sufixos de outros domínios da floresta são aceitos); admin changelist/detail renderizam com o campo; salvar com `ad_upn` resulta em `has_usable_password() is False`.
 
 ## Matriz requisito → arquivo → teste/check
 

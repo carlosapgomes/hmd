@@ -6,12 +6,12 @@ O HMD autentica hoje (bootstrap) com senha local transitória (ADR-0003). O hosp
 
 ## What Changes
 
-- Campo `User.ad_upn` (opcional, único): marca usuários geridos pelo AD; provisionamento administrativo via Django admin.
-- `KerberosBackend`: usuários **com** `ad_upn` autenticam exclusivamente via Kerberos (CPF + senha do AD); o TGT é descartado (prova de senha, nada é reutilizado).
-- Failover entre DCs **somente** em erro de transporte/timeout; códigos KDC de autenticação (`6`/`18`/`23`/`24`/`37`) são definitivos (evita amplificar lockout do AD).
+- Campo `User.ad_upn` (UPN completo `cpf@dominio`, único, opcional): marca usuários geridos pelo AD — o ambiente é floresta multi-domínio, então o realm é derivado do sufixo do UPN; provisionamento administrativo via Django admin.
+- `KerberosBackend`: usuários **com** `ad_upn` autenticam exclusivamente via Kerberos (CPF + senha do AD); checagem de `account_status` antes de qualquer AS-REQ; o TGT é descartado (prova de senha, nada é reutilizado).
+- Failover entre DCs **somente** em erro de transporte/timeout (incl. código `52` com retry TCP no mesmo DC); códigos KDC de autenticação (`6`/`18`/`23`/`24`/`37`) são definitivos (evita amplificar lockout do AD).
 - Taxonomia de resultado (`ok`/`code`/`reason`) extraída do protocolo, nunca de texto de exceção; "serviço indisponível" (DCs fora) é distinto de "credenciais inválidas" para o usuário — sempre com mensagem genérica.
-- Proteção anti-lockout local por CPF/IP via cache (limiar abaixo da política do AD; bloqueio temporário, sem tocar `account_status`).
-- Break-glass local preservado: usuários **sem** `ad_upn` (ex.: superusuário do seed) continuam com senha local, controlável por env.
+- Proteção anti-lockout local por CPF normalizado/IP confiável via cache (limiar abaixo da política do AD; bloqueio temporário, sem tocar `account_status`; produção exige cache compartilhado).
+- Break-glass local **apenas para superusuários sem `ad_upn`** e **desligado por padrão** (`AD_ALLOW_LOCAL_AUTH`, ADR-0003); ambientes dev/teste ligam explicitamente.
 - Correção de UX agendada na revisão do change 01: `/switch-role/` com zero papéis encaminha ao logout com mensagem (hoje exibe página vazia).
 
 ## Capabilities

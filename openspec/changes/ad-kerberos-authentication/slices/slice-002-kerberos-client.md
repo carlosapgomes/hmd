@@ -15,10 +15,10 @@ Módulo `apps/accounts/kerberos.py`: taxonomia `KerberosAuthResult(ok, code, rea
 
 - **R1** `pyproject.toml`: dependência `minikerberos==0.4.9` (uv lock atualizado).
 - **R2** `KerberosAuthResult` imutável (`ok: bool`, `code: int | None`, `reason: str | None`).
-- **R3** Wrapper do minikerberos: função/factory que recebe (cpf, senha, dc, timeout) e devolve `KerberosAuthResult` — sucesso `ok=True`; `KerberosError` → código extraído por atributo/protocolo; `OSError`/`TimeoutError` → `reason="kdc_unreachable"`/`"kdc_timeout"` (sem código). Cliente novo por tentativa; nada é retido (TGT descartado).
-- **R4** `validate_with_failover(cpf, senha)`: percorre `AD_DCS` na ordem; avança **apenas** se `reason` for transporte/timeout; retorna imediatamente em `ok` ou em código definitivo (`{6, 18, 23, 24, 37}`); esgotados os DCs → `KerberosAuthResult(False, reason="all_kdcs_unreachable")`.
-- **R5** Settings: `AD_REALM` (default `<REALM-AD>`), `AD_DCS` (default `["<DC1-IP>", "<DC2-IP>"]`), `AD_KDC_TIMEOUT` (default `3`), e `KERBEROS_CLIENT_FACTORY` (default aponta o wrapper real; testes injetam fakes) — documentadas no `.env.example` (exceto a factory, que é de teste).
-- **R6** Testes com fakes da factory cobrindo: sucesso no 1º DC; 24 no 1º DC → sem 2ª chamada (assert na fake); timeout 1º → 2º consultado; ambos inalcançáveis → `all_kdcs_unreachable`; extração de código lê atributo numérico (fake levanta exceção com `errorcode=24`-like).
+- **R3** Wrapper do minikerberos: função/factory que recebe **(upn, senha, dc, timeout)** e devolve `KerberosAuthResult` — o **realm é derivado do sufixo do UPN** (maiúsculas), nunca um realm fixo; sucesso `ok=True`; `KerberosError` → código extraído por atributo/protocolo; `OSError`/`TimeoutError` → `reason="kdc_unreachable"`/`"kdc_timeout"` (sem código). Cliente novo por tentativa; nada é retido (TGT descartado). O `timeout` deve ser propagado à API do minikerberos (confirmar o parâmetro na 0.4.9; se indisponível, envolver a tentativa com timeout explícito e registrar no código).
+- **R4** `validate_with_failover(upn, senha)`: percorre `AD_DCS` na ordem; avança **apenas** se `reason` for transporte/timeout (incluindo código `52` — resposta grande p/ UDP — reprocessado via **TCP no mesmo DC** antes de qualquer classificação); retorna imediatamente em `ok` ou em código definitivo (`{6, 18, 23, 24, 37}`; `25` é passo interno de preauth, nunca resultado final); esgotados os DCs → `KerberosAuthResult(False, reason="all_kdcs_unreachable")`.
+- **R5** Settings: `AD_DCS` (default `["<DC1-IP>", "<DC2-IP>"]`), `AD_KDC_TIMEOUT` (default `3`), e `KERBEROS_CLIENT_FACTORY` (default aponta o wrapper real; testes injetam fakes) — documentadas no `.env.example` (exceto a factory, que é de teste). Realm não é env: deriva do sufixo do UPN (design D3).
+- **R6** Testes com fakes da factory cobrindo: sucesso no 1º DC; 24 no 1º DC → sem 2ª chamada (assert na fake); timeout 1º → 2º consultado; ambos inalcançáveis → `all_kdcs_unreachable`; extração de código lê atributo numérico (fake levanta exceção com `errorcode=24`-like); realm derivado do sufixo do UPN (fake recebe UPN `cpf@outro.dominio` → principal/realm correspondentes, não um realm fixo); `52` tratado como transporte com retry TCP no mesmo DC (sem avanço imediato de DC).
 
 ## Matriz requisito → arquivo → teste/check
 
@@ -27,7 +27,7 @@ Módulo `apps/accounts/kerberos.py`: taxonomia `KerberosAuthResult(ok, code, rea
 | R1 | `pyproject.toml`, `uv.lock` | `uv run python -c "import minikerberos"` exit 0 |
 | R2/R3 | `apps/accounts/kerberos.py` | `test_kerberos.py::test_result_immutable`, `::test_kerberos_error_extracts_code`, `::test_transport_error_reason` |
 | R4 | `apps/accounts/kerberos.py` | `test_kerberos.py::test_success_first_dc`, `::test_auth_error_no_failover`, `::test_timeout_fails_over`, `::test_all_dcs_unreachable` |
-| R5 | `config/settings/base.py`, `.env.example` | `rg -n "AD_REALM|AD_DCS|AD_KDC_TIMEOUT" config/settings/base.py .env.example` |
+| R5 | `config/settings/base.py`, `.env.example` | `rg -n "AD_DCS|AD_KDC_TIMEOUT" config/settings/base.py .env.example` |
 | R6 | `apps/accounts/tests/test_kerberos.py` | `uv run pytest apps/accounts/tests/test_kerberos.py` |
 
 ## RED

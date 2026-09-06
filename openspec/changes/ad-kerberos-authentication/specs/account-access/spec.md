@@ -13,13 +13,13 @@ Substituir a autenticação local transitória por autenticação via Active Dir
 
 ### Requirement: Autenticação por Active Directory com break-glass local
 
-Usuários provisionados com `ad_upn` SHALL autenticar exclusivamente via Kerberos contra o Active Directory (CPF normalizado + senha do AD); credenciais locais SHALL ser inutilizáveis para esses usuários. Usuários sem `ad_upn` (break-glass, ex.: superusuário do seed) SHALL autenticar localmente apenas quando a autenticação local estiver habilitada por configuração. Independentemente do mecanismo, contas com `account_status` diferente de `active` não autenticam, e respostas ao usuário são genéricas, distinguindo apenas "credenciais inválidas" de "serviço de autenticação indisponível".
+Usuários provisionados com `ad_upn` (UPN completo `cpf@dominio`) SHALL autenticar exclusivamente via Kerberos contra o Active Directory (CPF no login + senha do AD; realm derivado do sufixo do UPN); credenciais locais SHALL ser inutilizáveis para esses usuários. A checagem de `account_status` precede qualquer consulta ao KDC: contas com status diferente de `active` não autenticam e não geram tráfego Kerberos. A autenticação local (break-glass) é permitida **apenas para superusuários sem `ad_upn`** e somente quando habilitada por configuração (ADR-0003). Respostas ao usuário são genéricas, distinguindo apenas "credenciais inválidas" de "serviço de autenticação indisponível".
 
 #### Scenario: Login com credenciais válidas
 
-- **GIVEN** um usuário ativo provisionado com `ad_upn`, com papel atribuído, e a senha correta do AD
+- **GIVEN** um usuário ativo provisionado com `ad_upn` completo (cpf@dominio), com papel atribuído, e a senha correta do AD
 - **WHEN** submete login com CPF e senha
-- **THEN** a sessão é criada e o fluxo de papel ativo é iniciado
+- **THEN** a sessão é criada e o fluxo de papel ativo é iniciado, com o realm derivado do sufixo do UPN
 
 #### Scenario: Senha AD incorreta não autentica e não faz failover
 
@@ -31,7 +31,7 @@ Usuários provisionados com `ad_upn` SHALL autenticar exclusivamente via Kerbero
 
 - **GIVEN** um usuário com `account_status` bloqueado e senha correta do AD
 - **WHEN** submete login
-- **THEN** o login é negado
+- **THEN** o login é negado sem que o KDC seja consultado
 
 #### Scenario: Usuário AD não autentica com senha local
 
@@ -41,9 +41,15 @@ Usuários provisionados com `ad_upn` SHALL autenticar exclusivamente via Kerbero
 
 #### Scenario: Break-glass local autentica quando habilitado
 
-- **GIVEN** um usuário sem `ad_upn` (ex.: superusuário do seed), com senha local válida e autenticação local habilitada
+- **GIVEN** um superusuário sem `ad_upn`, com senha local válida e autenticação local habilitada por configuração
 - **WHEN** submete login
 - **THEN** a sessão é criada normalmente
+
+#### Scenario: Usuário comum sem ad_upn não usa autenticação local
+
+- **GIVEN** um usuário não-superusuário sem `ad_upn`, com senha local correta e autenticação local habilitada
+- **WHEN** submete login
+- **THEN** o login é negado com mensagem genérica
 
 ### Requirement: Usuário multi-role com papel ativo único em sessão
 
@@ -77,17 +83,17 @@ Um usuário pode possuir múltiplos papéis, mas a sessão SHALL manter no máxi
 
 ### Requirement: Provisionamento administrativo com ad_upn
 
-O cadastro administrativo de usuários do AD SHALL registrar o `ad_upn` (único, opcional) e deixar a senha local inutilizável para esses usuários. O login SHALL ser o CPF normalizado, correspondente ao `sAMAccountName`.
+O cadastro administrativo de usuários do AD SHALL registrar o `ad_upn` completo (`cpf@dominio`; único, opcional — o ambiente é uma floresta com múltiplos domínios em trust, portanto o sufixo não é restrito a um domínio fixo) e deixar a senha local inutilizável para esses usuários. O login SHALL ser o CPF normalizado, correspondente ao `sAMAccountName`.
 
 #### Scenario: Usuário AD provisionado sem senha local
 
-- **GIVEN** um administrador cadastra um usuário com `ad_upn` preenchido
+- **GIVEN** um administrador cadastra um usuário com `ad_upn` completo (cpf@dominio) preenchido
 - **WHEN** o usuário é consultado
 - **THEN** ele não possui senha local utilizável e seu `ad_upn` é único no sistema
 
 ### Requirement: Backend Kerberos com failover de DCs
 
-A validação Kerberos SHALL consultar os DCs configurados em ordem, avançando para o próximo DC **somente** em erro de transporte, timeout ou KDC indisponível. Códigos KDC de autenticação (`6`, `18`, `23`, `24`, `37`) são definitivos e não provocam nova tentativa. Quando todos os DCs estão inalcançáveis, o resultado é "serviço indisponível", nunca "credenciais inválidas". O resultado interno preserva o código KDC do protocolo para diagnóstico, sem depender de texto de exceção.
+A validação Kerberos SHALL usar o principal derivado do `ad_upn` (realm do sufixo, em maiúsculas) e consultar os DCs configurados em ordem, avançando para o próximo DC **somente** em erro de transporte, timeout ou KDC indisponível — respostas UDP grandes (código `52`) são reprocessadas via TCP **no mesmo DC** antes de qualquer classificação. Códigos KDC de autenticação (`6`, `18`, `23`, `24`, `37`) são definitivos e não provocam nova tentativa. Quando todos os DCs estão inalcançáveis, o resultado é "serviço indisponível", nunca "credenciais inválidas". O resultado interno preserva o código KDC do protocolo para diagnóstico, sem depender de texto de exceção.
 
 #### Scenario: Erro de transporte no primeiro DC tenta o segundo
 
@@ -109,7 +115,7 @@ A validação Kerberos SHALL consultar os DCs configurados em ordem, avançando 
 
 ### Requirement: Proteção anti-lockout local
 
-O sistema SHALL limitar tentativas de login malsucedidas por CPF e por par IP+CPF, com limiar configurável inferior à política de lockout do AD. Ao atingir o limiar dentro da janela, tentativas subsequentes são recusadas temporariamente com mensagem genérica, sem consultar o KDC e sem alterar `account_status`. Tentativa bem-sucedida reinicia os contadores.
+O sistema SHALL limitar tentativas de login malsucedidas por CPF normalizado e por par IP+CPF (IP de origem lido do cabeçalho confiável, mesma regra do guard de intranet), com limiar configurável inferior à política de lockout do AD. Ao atingir o limiar dentro da janela, tentativas subsequentes são recusadas temporariamente com mensagem genérica, sem consultar o KDC e sem alterar `account_status`. Tentativa bem-sucedida reinicia os contadores. Em produção, o rate-limit SHALL operar sobre cache compartilhado entre processos.
 
 #### Scenario: Limiar atingido bloqueia temporariamente
 
@@ -122,3 +128,9 @@ O sistema SHALL limitar tentativas de login malsucedidas por CPF e por par IP+CP
 - **GIVEN** um CPF com falhas abaixo do limiar
 - **WHEN** o login é bem-sucedido
 - **THEN** os contadores de tentativas desse CPF são zerados
+
+#### Scenario: Formatação do CPF não contorna o limite
+
+- **GIVEN** tentativas malsucedidas com o mesmo CPF em variações de espaçamento ou caixa
+- **WHEN** uma nova tentativa desse CPF é submetida
+- **THEN** todas contam para o mesmo contador

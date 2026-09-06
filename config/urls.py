@@ -1,14 +1,13 @@
 """Configuração de URLs raiz do HMD.
 
-Home estática mínima (slice 001) como health check; a home real por papel e as
-páginas de conta chegam nos slices 003–004.
+A home autenticada (``/``) e as páginas de conta (login/logout/perfil) vêm de
+``apps.accounts.urls`` (slice 004); o admin usa o fluxo padrão do Django.
 """
 
 from django.contrib import admin
-from django.urls import URLPattern, URLResolver, path
-from django.views.generic import TemplateView
+from django.urls import URLPattern, URLResolver, include, path
 
 urlpatterns: list[URLPattern | URLResolver] = [
-    path("", TemplateView.as_view(template_name="home.html"), name="home"),
+    path("", include("apps.accounts.urls")),
     path("admin/", admin.site.urls),
 ]

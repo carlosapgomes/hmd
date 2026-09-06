@@ -32,6 +32,13 @@ INSTALLED_APPS = [
 # Modelo de usuário customizado (D8) — estendido uma única vez.
 AUTH_USER_MODEL = "accounts.User"
 
+# Autenticação local transitória (ADR-0003, slice 004 R1): backend custom que
+# delega a checagem de senha ao ModelBackend e recusa account_status != active.
+# O change ad-kerberos-authentication substitui o login local comum.
+AUTHENTICATION_BACKENDS = [
+    "apps.accounts.backends.LocalAccountBackend",
+]
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
@@ -56,6 +63,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "apps.accounts.context_processors.app_display_name",
             ],
         },
     },

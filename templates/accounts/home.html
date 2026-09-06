@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_display_name }} — Início{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+  <div class="col-12 col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+        <h1 class="h3 mb-1">Bem-vindo(a), {{ user.display_name }}</h1>
+        <p class="text-muted mb-4">
+          Esta é a sua área de trabalho no {{ app_display_name }}. As filas do
+          seu papel substituirão esta tela nas próximas versões.
+        </p>
+
+        <h2 class="h6 text-muted text-uppercase mb-2">Papéis</h2>
+        {% if role_names %}
+        <ul class="list-unstyled d-flex flex-wrap gap-2 mb-0">
+          {% for name in role_names %}
+          <li><span class="badge rounded-pill badge-role">{{ name }}</span></li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-muted mb-0">Nenhum papel atribuído.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

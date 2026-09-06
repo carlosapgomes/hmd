@@ -17,7 +17,7 @@
 
 ## 4. Autenticação local e templates base
 
-- [ ] 4.1 Slice 004 — Login/logout com ModelBackend + backend com checagem de `account_status`, base.html hospitalar, home placeholder, perfil. Verificação: testes de fluxo de login (client Django) verdes; ver `slices/slice-004-auth-views-templates.md`
+- [x] 4.1 Slice 004 — Login/logout com ModelBackend + backend com checagem de `account_status`, base.html hospitalar, home placeholder, perfil. Verificação: testes de fluxo de login (client Django) verdes; ver `slices/slice-004-auth-views-templates.md`
 
 ## 5. Multi-role e papel ativo
 

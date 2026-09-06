@@ -2,7 +2,8 @@
 
 Provam, sem banco de dados:
 - R1: settings carregam, ``APP_DISPLAY_NAME`` = "HMD — Hemodinâmica",
-  ``ROOT_URLCONF`` resolvível e a home estática responde 200;
+  ``ROOT_URLCONF`` resolvível e a home (autenticada desde o slice 004)
+  redireciona anônimos ao login;
 - R6: ``config.settings.prod`` falha fechado (``ImproperlyConfigured``) quando
   ``DJANGO_SECRET_KEY`` não está definida.
 """
@@ -31,9 +32,11 @@ def test_root_urlconf_is_resolvable() -> None:
     assert reverse("home") == "/"
 
 
-def test_home_responds_200() -> None:
+def test_home_redirects_anonymous_to_login() -> None:
+    """R4 (slice 004): a home passou a exigir login; anônimos vão ao login."""
     response = Client().get("/")
-    assert response.status_code == 200
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith("/login/")
 
 
 def test_prod_requires_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:

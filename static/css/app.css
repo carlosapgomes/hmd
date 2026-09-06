@@ -1,0 +1,29 @@
+/*
+ * HMD — Hemodinâmica: folha mínima do scaffold (slice 001).
+ * O tema hospitalar completo (Bootstrap 5.3 + paleta HMD) é construído no
+ * slice 004, junto com templates/base.html.
+ */
+
+:root {
+  --hmd-primary: #0d4a8a;
+  --hmd-background: #f4f6f8;
+  --hmd-text: #1c2733;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  background: var(--hmd-background);
+  color: var(--hmd-text);
+}
+
+.home {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem;
+}
+
+.home h1 {
+  color: var(--hmd-primary);
+  font-size: 2rem;
+}

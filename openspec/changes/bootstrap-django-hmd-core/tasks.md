@@ -5,7 +5,7 @@
 
 ## 1. Fundação e toolchain
 
-- [ ] 1.1 Slice 001 — Scaffold Django + toolchain + documentação viva (ADRs, AGENTS.md, PROJECT_CONTEXT.md, README). Verificação: `uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest` exit 0 com smoke tests; ver `slices/slice-001-foundation-tooling.md`
+- [x] 1.1 Slice 001 — Scaffold Django + toolchain + documentação viva (ADRs, AGENTS.md, PROJECT_CONTEXT.md, README). Verificação: `uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest` exit 0 com smoke tests; ver `slices/slice-001-foundation-tooling.md`
 
 ## 2. Banco e ambientes compose
 

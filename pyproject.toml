@@ -1,0 +1,47 @@
+[project]
+name = "hmd"
+version = "0.1.0"
+description = "Sistema de apoio à regulação de pacientes do serviço de hemodinâmica (HGRS)."
+requires-python = ">=3.13"
+dependencies = [
+    "django>=5.2,<6",
+    "psycopg[binary]",
+    "whitenoise",
+    "python-dotenv",
+    "dj-database-url",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-django",
+    "ruff",
+    "mypy",
+    "django-stubs",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+exclude = ["migrations", ".pi"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]  # line length handled by the formatter
+
+[tool.ruff.lint.isort]
+known-first-party = ["config", "apps"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+pythonpath = ["."]
+addopts = ["--reuse-db"]
+
+[tool.mypy]
+plugins = ["mypy_django_plugin.main"]
+python_version = "3.13"
+strict = true
+explicit_package_bases = true
+
+[tool.django-stubs]
+django_settings_module = "config.settings.test"

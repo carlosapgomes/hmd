@@ -35,10 +35,9 @@ django-fsm substituído por viewflow.fsm com estados renomeados.
 
 ## Estado atual (execução do roadmap)
 
-Change 01 `bootstrap-django-hmd-core` em andamento. Slice 001 concluído:
-scaffold Django 5.2 executável (`config/`), toolchain (ruff/mypy/pytest),
-home estática mínima e smoke tests verdes **sem banco de dados**. Em seguida:
-banco/compose (slice 002), `apps/accounts` (003–006).
+Change 01 `bootstrap-django-hmd-core` **implementado** (6/6 slices aceitos; gate final verde: ruff + format + mypy + 61 testes + `manage.py check`; aguardando arquivamento). Fundação completa: scaffold Django 5.2 SSR (`config/settings` por ambiente com resolução de banco fail-closed `DATABASE_URL`→`DB_*`→`DB_PASSWORD_FILE` e prefixo `TEST_` isolado), compose dev/test PostgreSQL 17 (+unaccent/pg_trgm), `apps/accounts` (User multi-role com `account_status`/conselho, seed_admin idempotente, auth local transitória com backend que recusa conta não-ativa, papel ativo em sessão revalidado a cada request, switch-role, `role_required` 403, `IntranetGuardMiddleware` nir-only por papel ativo). Próximo: change 02 `ad-kerberos-authentication`.
+
+Nota ambiental: portas host 5432/5433 podem estar ocupadas por containers de outros projetos — use `POSTGRES_HOST_PORT=55432`/`TEST_DB_PORT=55433` (mecanismo já previsto nos compose/env).
 
 ## Roadmap — 11 changes (resumo)
 
@@ -60,10 +59,11 @@ banco/compose (slice 002), `apps/accounts` (003–006).
 
 ```
 config/            settings por ambiente (base/dev/prod/test), urls, wsgi/asgi
-templates/         templates raiz (home estática mínima no slice 001)
-static/            CSS/JS (tema completo chega no slice 004)
-tests/             suíte raiz (smoke tests do scaffold)
-apps/              apps de domínio (a partir do slice 003: apps/accounts)
+templates/         templates raiz + accounts (login/perfil/home/switch-role)
+static/            CSS/JS (tema hospitalar HMD, Bootstrap 5.3 CDN)
+tests/             suíte raiz (smoke + resolução de banco)
+apps/accounts/     User/Role, backends, views, middleware (papel ativo + guard), seed
+docker-compose*.yml PostgreSQL 17 dev/test (+ docker/init.sql unaccent/pg_trgm)
 docs/adr/          decisões arquiteturais
 ```
 

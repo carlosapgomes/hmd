@@ -13,7 +13,7 @@
 
 ## 3. Contas: modelo e seed
 
-- [ ] 3.1 Slice 003 — `User` + `Role` (5 papéis) + `account_status` + conselho profissional + `seed_admin`. Verificação: testes de modelo/seed verdes (`apps/accounts/tests/`); seed idempotente comprovado; ver `slices/slice-003-accounts-models-seed.md`
+- [x] 3.1 Slice 003 — `User` + `Role` (5 papéis) + `account_status` + conselho profissional + `seed_admin`. Verificação: testes de modelo/seed verdes (`apps/accounts/tests/`); seed idempotente comprovado; ver `slices/slice-003-accounts-models-seed.md`
 
 ## 4. Autenticação local e templates base
 

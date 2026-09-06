@@ -25,7 +25,12 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Apps de domínio (apps/).
+    "apps.accounts",
 ]
+
+# Modelo de usuário customizado (D8) — estendido uma única vez.
+AUTH_USER_MODEL = "accounts.User"
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",

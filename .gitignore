@@ -11,6 +11,9 @@ dist/
 build/
 coverage/
 
+# Temporários
+temp/
+
 # Sistema / editor
 .DS_Store
 *.log

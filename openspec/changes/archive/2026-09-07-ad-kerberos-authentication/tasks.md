@@ -5,7 +5,7 @@
 
 ## 0. Preflight
 
-- [ ] 0.1 Confirmar working tree limpa, registrar `BASE_REF`; suíte verde uma vez (baseline do change anterior serve)
+- [x] 0.1 Confirmar working tree limpa, registrar `BASE_REF`; suíte verde uma vez (baseline do change anterior serve) — executado no início da execução: árvore limpa, BASE_REF `5c48785`, baseline do change 01 (61 testes) válida
 
 ## 1. Provisionamento
 

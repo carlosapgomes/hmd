@@ -1,0 +1,24 @@
+# Configuração do NlpEngine spaCy do Presidio (slice 002, design D4/R4).
+#
+# Mapeia os labels do modelo pt da spaCy para as entidades do Presidio e
+# abaixa a confiança de ORG/ORGANIZATION (sinal institucional de relatório —
+# menos confiável que PERSON/LOC no corpus de notícias do pt_core_news_lg).
+# O nome do modelo é sobrescrito em runtime por ANONYMIZATION_SPACY_MODEL
+# (apps.anonymization.engine); o default aqui espelha o setting.
+nlp_engine_name: spacy
+models:
+  - lang_code: pt
+    model_name: pt_core_news_lg
+
+ner_model_configuration:
+  model_to_presidio_entity_mapping:
+    PER: PERSON
+    PERSON: PERSON
+    LOC: LOCATION
+    GPE: LOCATION
+    ORG: ORGANIZATION
+    DATE: DATE_TIME
+  low_confidence_score_multiplier: 0.4
+  low_score_entity_names:
+    - ORG
+    - ORGANIZATION

@@ -202,6 +202,14 @@ INTAKE_RUN_TASKS_INLINE = os.environ.get("INTAKE_RUN_TASKS_INLINE", "true").lowe
     "yes",
 )
 
+# Anonimização Presidio (change presidio-anonymization, slice 002, design
+# D3/D4): modelo spaCy pt-BR do engine singleton e limiar de score do
+# analyzer. O modelo default (pt_core_news_lg, ~541 MB) é trocável por um
+# menor (ex.: pt_core_news_md) em ambientes enxutos; o engine só carrega o
+# modelo no processo que o importa (worker/testes — nunca no processo web).
+ANONYMIZATION_SPACY_MODEL = os.environ.get("ANONYMIZATION_SPACY_MODEL", "pt_core_news_lg")
+ANONYMIZATION_SCORE_THRESHOLD = float(os.environ.get("ANONYMIZATION_SCORE_THRESHOLD", "0.45"))
+
 # django-q2 (change intake-nir-upload, slice 003, design D2): fila de tasks
 # assíncronas com broker ORM (``orm: "default"`` — sem Redis), no formato do
 # ats-web, com ``ALT_CLUSTERS`` DENTRO de ``Q_CLUSTER``. O cluster ``pdf``

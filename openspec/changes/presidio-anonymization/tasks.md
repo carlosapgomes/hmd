@@ -14,7 +14,7 @@
 
 ## 2. Recognizers BR + engine
 
-- [ ] 2.1 Slice 002 — `recognizers.py` (BR_CPF/BR_CNS checksum, BR_CRM) + `engine.py` singleton (YAML, spaCy pt, threshold env) + deps pinadas. Ver `slices/slice-002-recognizers-engine.md`
+- [x] 2.1 Slice 002 — `recognizers.py` (BR_CPF/BR_CNS checksum, BR_CRM) + `engine.py` singleton (YAML, spaCy pt, threshold env) + deps pinadas. Ver `slices/slice-002-recognizers-engine.md` (presidio 2.2.364/spacy 3.8.16/pt-core-news-lg 3.8.0 por URL oficial; default_score_threshold no construtor)
 
 ## 3. Serviço de anonimização + artefatos
 

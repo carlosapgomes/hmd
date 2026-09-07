@@ -40,6 +40,10 @@ INSTALLED_APPS = [
     # Pipeline LLM (change llm-pipeline-per-type, slice 001): cliente OpenRouter
     # + llm_check; sem models neste slice (chegam no slice 004).
     "apps.pipeline",
+    # Prompts LLM versionados (change llm-pipeline-per-type, slice 003):
+    # PromptTemplate (1 ativo por nome via constraint parcial) + seeds
+    # idempotentes (28 templates) + montagem dos prompts do caso.
+    "apps.llm",
 ]
 
 # Modelo de usuário customizado (D8) — estendido uma única vez.

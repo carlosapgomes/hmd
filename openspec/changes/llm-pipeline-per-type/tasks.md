@@ -17,7 +17,7 @@
 
 ## 3. Prompts versionados
 
-- [ ] 3.1 Slice 003 — `apps/llm`: PromptTemplate + seeds idempotentes (2 system neutros + 26 user por tipo) + montagem por caso. Ver `slices/slice-003-prompt-templates.md`
+- [x] 3.1 Slice 003 — `apps/llm`: PromptTemplate + seeds idempotentes (2 system neutros + 26 user por tipo) + montagem por caso. Ver `slices/slice-003-prompt-templates.md` (28 seeds; substituição de placeholders será via str.replace — decisão registrada p/ 004/006)
 
 ## 4. LLM1 + reconciliação + gate de divergência
 

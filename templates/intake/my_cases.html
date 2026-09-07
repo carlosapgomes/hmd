@@ -19,15 +19,24 @@
           <span class="font-monospace small text-muted">Caso {{ item.case.case_id }}</span>
           {% if item.case.status == 'FAILED' %}
           <span class="badge rounded-pill text-bg-danger">{{ item.status_label }}</span>
+          {% elif item.case.status == 'LLM_EXTRACTING' and item.case.manual_review_required %}
+          <span class="badge rounded-pill text-bg-info">{{ item.status_label }}</span>
           {% elif item.case.manual_review_required %}
           <span class="badge rounded-pill text-bg-warning">{{ item.status_label }}</span>
           {% else %}
           <span class="badge rounded-pill text-bg-secondary">{{ item.status_label }}</span>
           {% endif %}
           {% if item.case.manual_review_required %}
-          <span class="badge rounded-pill text-bg-warning border" title="{{ item.case.manual_review_reason }}">
-            Retido para revisão
-          </span>
+            {% if item.case.status == 'LLM_EXTRACTING' and item.case.manual_review_reason == 'procedure_divergence' %}
+            <span class="badge rounded-pill text-bg-info border"
+                  title="Divergência entre os procedimentos declarados e os detectados na extração">
+              Retido por divergência de procedimentos
+            </span>
+            {% else %}
+            <span class="badge rounded-pill text-bg-warning border" title="{{ item.case.manual_review_reason }}">
+              Retido para revisão
+            </span>
+            {% endif %}
           {% endif %}
         </div>
         <div class="small text-muted">

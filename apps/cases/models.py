@@ -23,7 +23,7 @@ from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django_fsm import RETURN_VALUE, FSMField, FSMModelMixin, transition
 
-from apps.cases.events import case_status_event_type
+from apps.cases.events import CaseEventType, case_status_event_type
 from apps.cases.procedure_catalog import get_procedure_profile
 
 if TYPE_CHECKING:
@@ -82,6 +82,13 @@ class DoctorDisposition(models.TextChoices):
     DENIED = "denied", "Negado"
 
 
+# Razão canônica de retenção por divergência declarado × detectado (design
+# D5, slice 004): gravada em ``Case.manual_review_reason`` pelo llm1_service
+# ao reter o caso, verificada pelo despacho do release do intake e usada no
+# payload do ``CASE_GATE_BYPASSED`` da transição ``bypass_pipeline_divergence``.
+PROCEDURE_DIVERGENCE_REASON = "procedure_divergence"
+
+
 class Case(FSMModelMixin, models.Model):
     """Caso de regulação — entidade central (núcleo enxuto, design D7)."""
 
@@ -124,6 +131,18 @@ class Case(FSMModelMixin, models.Model):
     anonymization_report = models.JSONField(default=dict, blank=True)
     patient_name = models.CharField(max_length=255, blank=True)
     patient_birth_date = models.DateField(null=True, blank=True)
+
+    # Artefatos do pipeline LLM (change llm-pipeline-per-type, D10): os 4
+    # campos nascem na migration ÚNICA do slice 004 (dono definido; os slices
+    # 005/006 apenas usam). ``structured_data`` é o artefato LLM1 persistido
+    # pelo llm1_service (só tokens); ``summary_text``/``suggested_action`` são
+    # a saída do LLM2 (slice 006); ``policy_result`` é o resultado
+    # determinístico da policy por procedimento (slice 005). Todos com default
+    # — casos antigos seguem válidos sem migração de dados.
+    structured_data = models.JSONField(default=dict, blank=True)
+    summary_text = models.TextField(blank=True)
+    suggested_action = models.JSONField(default=dict, blank=True)
+    policy_result = models.JSONField(default=dict, blank=True)
 
     # Lock/lease de exclusividade de mutação (design D6, slice 004): espelho
     # do ats-web — dono (FK SET_NULL), concessão/vencimento (indexado), token
@@ -175,6 +194,15 @@ class Case(FSMModelMixin, models.Model):
     @transition(field="status", source=CaseStatus.LLM_EXTRACTING, target=CaseStatus.LLM_EXTRACTING)
     def _fsm_start_llm_extraction(self) -> None:
         """Hook FSM self LLM_EXTRACTING (início do worker de extração LLM)."""
+
+    @transition(field="status", source=CaseStatus.LLM_EXTRACTING, target=CaseStatus.LLM_SUMMARIZING)
+    def _fsm_bypass_pipeline_divergence(self) -> None:
+        """Hook FSM LLM_EXTRACTING → LLM_SUMMARIZING (bypass do NIR).
+
+        Primeira transição adicionada pós-change-03 (guardrail: transições
+        sim, estados não) — a liberação de uma retenção por divergência
+        avança o caso mantendo o conjunto declarado.
+        """
 
     @transition(field="status", source=CaseStatus.LLM_EXTRACTING, target=CaseStatus.LLM_SUMMARIZING)
     def _fsm_complete_llm_extraction(self) -> None:
@@ -320,6 +348,42 @@ class Case(FSMModelMixin, models.Model):
     def complete_llm_extraction(self, *, user: User | None = None, role: str | None = None) -> None:
         """LLM_EXTRACTING → LLM_SUMMARIZING (fim da extração LLM)."""
         self._run_transition(self._fsm_complete_llm_extraction, user=user, role=role)
+
+    def bypass_pipeline_divergence(
+        self, *, user: User | None = None, role: str | None = None
+    ) -> None:
+        """LLM_EXTRACTING → LLM_SUMMARIZING (liberação de divergência pelo NIR).
+
+        Mesma gravação direta de ``_run_transition``, com DOIS eventos no mesmo
+        ``atomic``: a transição (``CASE_STATUS_LLM_SUMMARIZING``, payload
+        ``{source, target}``) e o bypass auditado (``CASE_GATE_BYPASSED`` com
+        ``reason=procedure_divergence``). Não altera rows — o conjunto
+        declarado é preservado (design D5). As flags de retenção são zeradas
+        pelo serviço que a invoca (release do intake, R7) no mesmo atomic.
+        Source inválido → ``TransitionNotAllowed`` sem efeito (django-fsm).
+        """
+        source = str(self.status)
+        with transaction.atomic():
+            self._fsm_bypass_pipeline_divergence()
+            self.save()
+            target = str(self.status)
+            actor_type = ActorType.USER if user is not None else ActorType.SYSTEM
+            CaseEvent.objects.create(
+                case_id=self.case_id,
+                event_type=case_status_event_type(target),
+                actor_type=actor_type,
+                actor=user,
+                actor_role=role or "",
+                payload={"source": source, "target": target},
+            )
+            CaseEvent.objects.create(
+                case_id=self.case_id,
+                event_type=CaseEventType.CASE_GATE_BYPASSED,
+                actor_type=actor_type,
+                actor=user,
+                actor_role=role or "",
+                payload={"reason": PROCEDURE_DIVERGENCE_REASON},
+            )
 
     def start_llm_summarization(self, *, user: User | None = None, role: str | None = None) -> None:
         """Self em LLM_SUMMARIZING: registra o início do worker de sumarização LLM."""

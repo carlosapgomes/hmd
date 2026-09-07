@@ -21,7 +21,7 @@
 
 ## 4. LLM1 + reconciliação + gate de divergência
 
-- [ ] 4.1 Slice 004 — `llm1_service` com guardas + reconciliação com upsert de detecção + retenção por divergência + transição `bypass_pipeline_divergence` + extensão do gate_release + **migration única (4 campos) e todos os eventos do change**. Ver `slices/slice-004-llm1-reconciliation.md`
+- [x] 4.1 Slice 004 — `llm1_service` com guardas + reconciliação com upsert de detecção + retenção por divergência + transição `bypass_pipeline_divergence` + extensão do gate_release + **migration única (4 campos) e todos os eventos do change**. Ver `slices/slice-004-llm1-reconciliation.md` (LlmPipelineError em llm.py — desvio registrado) `slices/slice-004-llm1-reconciliation.md`
 
 ## 5. Policy + prior-case
 

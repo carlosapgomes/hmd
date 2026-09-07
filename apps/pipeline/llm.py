@@ -59,6 +59,25 @@ class LlmError(Exception):
         self.kind = kind
 
 
+class LlmPipelineError(Exception):
+    """Falha de guarda/validação de uma etapa do pipeline (slice 004, D4).
+
+    Distinta do ``LlmError`` (transporte/cliente): esta representa a resposta
+    do modelo rejeitada pelas guardas (schema/idioma/vazamento de token) ou
+    pré-condição de pipeline não atendida. ``reason`` é o código canônico
+    ``<etapa>_<motivo>`` (ex.: ``llm1_schema``) que o orquestrador repassa ao
+    ``fail_processing`` — serviços nunca transicionam (D4: o único dono do
+    ``fail_processing`` é o orquestrador). A mensagem é interna e nunca
+    carrega conteúdo de resposta/PII.
+    """
+
+    reason: str
+
+    def __init__(self, reason: str, message: str | None = None) -> None:
+        super().__init__(message or reason)
+        self.reason = reason
+
+
 @runtime_checkable
 class LlmClient(Protocol):
     """Contrato do cliente LLM consumido pelo pipeline (D1).

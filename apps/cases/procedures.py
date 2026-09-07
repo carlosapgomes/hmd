@@ -182,6 +182,58 @@ def set_detected_procedures(
         )
 
 
+def record_detected_procedures(
+    case: Case,
+    detection: Mapping[str, str],
+    *,
+    user: User | None,
+    role: str | None,
+) -> None:
+    """Registra a detecção do pipeline com UPSERT atômico (D5, slice 004).
+
+    Extensão do change 03 (o ``set_detected_procedures`` rejeita tipo sem row
+    — insuficiente para o gate de divergência): cria as rows dos tipos
+    detectados ainda não declarados (``declared_by_nir=False``, para a
+    transformação permanecer auditável) e atualiza ``detection_status`` das
+    rows existentes — tudo no mesmo atomic com o evento
+    ``CASE_PROCEDURES_DETECTED`` na ordem canônica. Tipo fora do catálogo ou
+    status fora de {detected, not_detected} é erro nomeando o valor; mapa
+    vazio é erro (detecção sempre cobre a união declarado ∪ detectado).
+    """
+    with transaction.atomic():
+        locked = Case.objects.select_for_update().get(pk=case.pk)
+        if not detection:
+            raise ValueError("a detecção deve trazer ao menos um tipo (detected/not_detected)")
+        for procedure_type, status in detection.items():
+            _validate_catalog_type(procedure_type)
+            if status not in _VALID_DETECTION_STATUSES:
+                raise ValueError(f"status de detecção inválido para {procedure_type!r}: {status!r}")
+        ordered_detection = {
+            procedure_type: detection[procedure_type]
+            for procedure_type in _canonical_order(detection)
+        }
+        for procedure_type, status in ordered_detection.items():
+            updated = CaseProcedure.objects.filter(
+                case=locked, procedure_type=procedure_type
+            ).update(detection_status=status)
+            if not updated:
+                # Tipo detectado sem row (não-declarado): a row nasce neutra e
+                # auditável — a divergência fica visível como row não-declarada.
+                CaseProcedure.objects.create(
+                    case=locked,
+                    procedure_type=procedure_type,
+                    declared_by_nir=False,
+                    detection_status=status,
+                )
+        _create_procedure_event(
+            locked,
+            event_type=CaseEventType.CASE_PROCEDURES_DETECTED,
+            payload={"detection": ordered_detection},
+            user=user,
+            role=role,
+        )
+
+
 # ── R4: decisão médica por procedimento + transição FSM ────────────────────
 
 

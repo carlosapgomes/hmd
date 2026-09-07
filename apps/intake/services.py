@@ -32,7 +32,14 @@ from django.utils import timezone
 
 from apps.cases.events import CaseEventType
 from apps.cases.locks import CaseLockConflictError
-from apps.cases.models import ActorType, Case, CaseDocument, CaseEvent, CaseStatus
+from apps.cases.models import (
+    PROCEDURE_DIVERGENCE_REASON,
+    ActorType,
+    Case,
+    CaseDocument,
+    CaseEvent,
+    CaseStatus,
+)
 from apps.cases.procedure_catalog import get_procedure_profile
 from apps.cases.procedures import set_declared_procedures
 from apps.intake.tasks import enqueue_case_processing
@@ -170,20 +177,23 @@ def create_case_with_documents(
 
 # ── Ações de revisão do gate NIR (slice 005, design D6/D7) ─────────────────
 # ``release_retained_case``/``resubmit_case_documents`` implementam as duas
-# ações de revisão do gate (liberar/reenviar), restritas a caso retido
-# (``PDF_EXTRACTING`` + ``manual_review_required``) do próprio criador.
-# Ambas rodam em transação com ``select_for_update`` no ``Case`` e re-check
-# DENTRO da transação das três pré-condições, na ordem do escopo da view:
+# ações de revisão do gate (liberar/reenviar), restritas a caso retido do
+# próprio criador. A liberação (R7, change llm-pipeline-per-type slice 004)
+# DESPACHA pela retenção: formato (``PDF_EXTRACTING``) → ``complete_pdf_``
+# ``extraction`` (comportamento atual) e divergência de procedimentos
+# (``LLM_EXTRACTING`` + ``procedure_divergence``) →
+# ``bypass_pipeline_divergence``. O reenvio continua exclusivo da retenção de
+# formato. Ambas rodam em transação com ``select_for_update`` no ``Case`` e
+# re-check DENTRO da transação das pré-condições, na ordem do escopo da view:
 # 1) ownership (criador — caso alheio vira ``Http404``/not-found sem vazar
 #    informação, mesmo status do filtro da view por criador); 2) retenção
 #    (``CaseNotRetainedError`` → 400); 3) lock ativo não-expirado
 #    (``CaseLockConflictError`` — D6). Retenção/ownership precedem o lock
 #    ativo: caso não-retido responde 400 mesmo sob lease ativa (R3), e
 #    nunca se revela estado/lock a quem não é o criador.
-# Divergências marcadas vs ats-web ``scope_gate_bypass``: aqui o bypass usa a
-# transição existente ``complete_pdf_extraction`` (nenhum estado novo) e o
-# reenvio substitui os ``CaseDocument`` zerando flag/texto/nº antes de
-# reenfileirar (D6/D7).
+# Divergências marcadas vs ats-web ``scope_gate_bypass``: aqui o bypass usa
+# transições existentes (nenhum estado novo) e o reenvio substitui os
+# ``CaseDocument`` zerando flag/texto/nº antes de reenfileirar (D6/D7).
 
 
 # Campos zerados pelo reenvio (R2): texto/nº extraídos e flag/motivo do gate.
@@ -226,11 +236,12 @@ def _assert_no_active_lock(case: Case) -> None:
         )
 
 
-def _assert_retained(case: Case) -> None:
-    """Re-check DENTRO da transação: caso retido (PDF_EXTRACTING + flag).
+def _assert_format_retained(case: Case) -> None:
+    """Re-check DENTRO da transação: caso retido por FORMATO (R7).
 
-    Estado divergente do GET do detalhe (concorrência) → ``CaseNotRetainedError``
-    sem efeito (R3/D6).
+    ``PDF_EXTRACTING`` + flag — a retenção do gate de regulação (slice 003).
+    O reenvio de documentos é exclusivo desta retenção. Estado divergente do
+    GET do detalhe (concorrência) → ``CaseNotRetainedError`` sem efeito.
     """
     if case.status != CaseStatus.PDF_EXTRACTING or not case.manual_review_required:
         raise CaseNotRetainedError(
@@ -238,44 +249,83 @@ def _assert_retained(case: Case) -> None:
         )
 
 
+def _assert_releasable(case: Case) -> None:
+    """Re-check DENTRO da transação: caso liberável pelo gate (R7).
+
+    Liberação despacha pelas duas retenções suportadas: formato
+    (``PDF_EXTRACTING`` + flag) ou divergência de procedimentos
+    (``LLM_EXTRACTING`` + flag + ``manual_review_reason=procedure_divergence``).
+    Qualquer outro estado/motivo → ``CaseNotRetainedError`` (400 sem efeito).
+    """
+    if case.status == CaseStatus.PDF_EXTRACTING and case.manual_review_required:
+        return
+    if (
+        case.status == CaseStatus.LLM_EXTRACTING
+        and case.manual_review_required
+        and case.manual_review_reason == PROCEDURE_DIVERGENCE_REASON
+    ):
+        return
+    raise CaseNotRetainedError(
+        "Este caso não está retido para revisão do gate — recarregue a página."
+    )
+
+
 def release_retained_case(
     *,
     case: Case,
     user: User,
     role: str | None,
-) -> None:
-    """Libera caso retido: bypass do gate avançando a ANONYMIZING (R1/D6).
+) -> CaseStatus:
+    """Libera caso retido: despacho pela (estado, razão) da retenção (R7).
 
     ``select_for_update`` no ``Case`` + re-check DENTRO da transação das
     pré-condições na ordem do escopo: criador (not-found sem vazar
-    informação), retido e sem lock ativo. Efeito na mesma transação:
-    ``complete_pdf_extraction`` (PDF_EXTRACTING → ANONYMIZING, evento de
-    transição com o NIR como ator), flags de retenção zeradas e evento
-    ``CASE_GATE_BYPASSED`` com o motivo original no payload.
+    informação), liberável e sem lock ativo. Efeito na mesma transação:
+
+    - ``PDF_EXTRACTING`` (retenção de FORMATO) → ``complete_pdf_extraction``
+      (→ ANONYMIZING), flags zeradas e ``CASE_GATE_BYPASSED`` com o motivo
+      original — comportamento atual, intacto;
+    - ``LLM_EXTRACTING`` + ``procedure_divergence`` →
+      ``bypass_pipeline_divergence`` (→ LLM_SUMMARIZING, eventos de transição
+      + ``CASE_GATE_BYPASSED`` com ``reason=procedure_divergence``), flags
+      zeradas — o conjunto declarado é preservado (design D5).
+
+    Devolve o estado-alvo alcançado (a view diferencia a mensagem de sucesso).
 
     Raises:
         Http404: caso não é do criador (escopo por criador, sem vazar informação).
-        CaseNotRetainedError: caso fora da retenção (sem efeito).
+        CaseNotRetainedError: caso fora das duas retenções (sem efeito).
         CaseLockConflictError: lock ativo não-expirado de outro ator (sem efeito).
     """
     with transaction.atomic():
         locked = Case.objects.select_for_update().get(pk=case.pk)
         _assert_owned_by(locked, user)
-        _assert_retained(locked)
+        _assert_releasable(locked)
         _assert_no_active_lock(locked)
-        retention_reason = locked.manual_review_reason
-        locked.complete_pdf_extraction(user=user, role=role)
+        if locked.status == CaseStatus.PDF_EXTRACTING:
+            retention_reason = locked.manual_review_reason
+            locked.complete_pdf_extraction(user=user, role=role)
+            locked.manual_review_required = False
+            locked.manual_review_reason = ""
+            locked.save(update_fields=["manual_review_required", "manual_review_reason"])
+            CaseEvent.objects.create(
+                case_id=locked.case_id,
+                event_type=CaseEventType.CASE_GATE_BYPASSED,
+                actor_type=ActorType.USER if user is not None else ActorType.SYSTEM,
+                actor=user,
+                actor_role=role or "",
+                payload={"reason": retention_reason},
+            )
+            return CaseStatus.ANONYMIZING
+
+        # LLM_EXTRACTING + procedure_divergence: bypass auditado (R6/R7). A
+        # transição grava os dois eventos; aqui só zeramos as flags (mesmo
+        # atomic — a transição não conhece a retenção).
+        locked.bypass_pipeline_divergence(user=user, role=role)
         locked.manual_review_required = False
         locked.manual_review_reason = ""
         locked.save(update_fields=["manual_review_required", "manual_review_reason"])
-        CaseEvent.objects.create(
-            case_id=locked.case_id,
-            event_type=CaseEventType.CASE_GATE_BYPASSED,
-            actor_type=ActorType.USER if user is not None else ActorType.SYSTEM,
-            actor=user,
-            actor_role=role or "",
-            payload={"reason": retention_reason},
-        )
+        return CaseStatus.LLM_SUMMARIZING
 
 
 def resubmit_case_documents(
@@ -311,7 +361,7 @@ def resubmit_case_documents(
     with transaction.atomic():
         locked = Case.objects.select_for_update().get(pk=case.pk)
         _assert_owned_by(locked, user)
-        _assert_retained(locked)
+        _assert_format_retained(locked)
         _assert_no_active_lock(locked)
         old_documents = list(locked.documents.all())
         old_file_names = [document.file.name for document in old_documents if document.file.name]

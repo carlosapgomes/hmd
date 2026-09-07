@@ -37,7 +37,7 @@ from apps.accounts.decorators import role_required
 from apps.accounts.models import User
 from apps.cases.events import CaseEventType
 from apps.cases.locks import CaseLockConflictError
-from apps.cases.models import Case, CaseDocument
+from apps.cases.models import Case, CaseDocument, CaseStatus
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 
 from .forms import IntakeUploadForm
@@ -267,12 +267,15 @@ def _gate_action_error(message: str, case_id: uuid.UUID, *, status: int) -> Http
 @role_required("nir")
 @require_POST
 def gate_release(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
-    """Libera caso retido: bypass do gate avançando a ANONYMIZING (R1).
+    """Libera caso retido: despacho pela (estado, razão) da retenção (R7).
 
     POST escopado ao caso do próprio NIR (alheio/inexistente → 404). O efeito
-    (transição + ``CASE_GATE_BYPASSED`` + flags zeradas) roda no serviço
-    transacional ``release_retained_case``; sucesso → redirect ao detalhe com
-    mensagem; caso fora da retenção → 400; lock ativo (worker reprocessando) → 409.
+    roda no serviço transacional ``release_retained_case``: retenção de
+    FORMATO avança a ANONYMIZING (comportamento atual) e retenção por
+    divergência (``LLM_EXTRACTING`` + ``procedure_divergence``) avança a
+    LLM_SUMMARIZING via bypass — ambos com ``CASE_GATE_BYPASSED`` e flags
+    zeradas. Sucesso → redirect ao detalhe com mensagem do caminho; caso fora
+    das retenções → 400; lock ativo (worker reprocessando) → 409.
     """
     user = _require_user(request)
     active_role = request.session.get("active_role", "")
@@ -282,17 +285,24 @@ def gate_release(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         created_by=user,
     )
     try:
-        release_retained_case(case=case, user=user, role=active_role)
+        target = release_retained_case(case=case, user=user, role=active_role)
     except CaseNotRetainedError as exc:
         logger.warning("gate_release_rejected user=%s case=%s motivo=%s", user.pk, case_id, exc)
         return _gate_action_error(str(exc), case_id, status=400)
     except CaseLockConflictError as exc:
         logger.warning("gate_release_locked user=%s case=%s motivo=%s", user.pk, case_id, exc)
         return _gate_action_error(str(exc), case_id, status=409)
-    messages.success(
-        request,
-        f"Caso {case.case_id} liberado — o gate foi dispensado e o caso avançou para anonimização.",
-    )
+    if target == CaseStatus.LLM_SUMMARIZING:
+        messages.success(
+            request,
+            f"Caso {case.case_id} liberado — a divergência foi dispensada e o caso "
+            "avançou para a sumarização.",
+        )
+    else:
+        messages.success(
+            request,
+            f"Caso {case.case_id} liberado — o gate foi dispensado e o caso avançou para anonimização.",
+        )
     return redirect(reverse("intake:case_detail", args=[case.case_id]))
 
 

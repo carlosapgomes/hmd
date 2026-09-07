@@ -78,6 +78,21 @@ class CaseEventType(models.TextChoices):
         "Anonimização concluída",
     )
 
+    # Pipeline LLM (change llm-pipeline-per-type, D10): TODOS os eventos do
+    # change nascem AQUI (slice 004 é o dono; os slices 005/006 apenas usam).
+    # Gravados pelos serviços do pipeline (llm1/llm2/policy/prior-case) e pelo
+    # gate de divergência com payloads enxutos (names/versions/contagens/
+    # classificação — nunca conteúdo clínico bruto). ``CASE_GATE_BYPASSED``
+    # (do gate do intake) é reutilizado pela liberação de divergência.
+    CASE_LLM1_COMPLETED = "CASE_LLM1_COMPLETED", "Extração LLM1 concluída"
+    CASE_LLM2_COMPLETED = "CASE_LLM2_COMPLETED", "Sumarização LLM2 concluída"
+    CASE_GATE_PROCEDURE_DIVERGENCE = (
+        "CASE_GATE_PROCEDURE_DIVERGENCE",
+        "Divergência declarado×detectado retida para revisão do NIR",
+    )
+    CASE_POLICY_EVALUATED = "CASE_POLICY_EVALUATED", "Policy pré-operatória avaliada"
+    PRIOR_CASE_LOOKUP = "PRIOR_CASE_LOOKUP", "Consulta a casos anteriores registrada"
+
 
 def case_status_event_type(state: str) -> str:
     """Resolve o tipo canônico do evento de transição para o estado-alvo.

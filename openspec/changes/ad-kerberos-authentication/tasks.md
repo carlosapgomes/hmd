@@ -22,6 +22,7 @@
 ## 4. Anti-lockout
 
 - [x] 4.1 Slice 004 — Rate-limit por CPF/IP+CPF via cache, recusa pré-KDC, sucesso zera, env-configurável. Ver `slices/slice-004-lockout-rate-limit.md`
+- [x] 4.2 **Emenda pós-review (aprovada pelo dono)**: falhas por indisponibilidade do serviço (`request.kerberos_unavailable`) não contam para o limite local — spec emendada (cenário "Falha por indisponibilidade não conta para o limite"), slice 004 R2/R5/matrIZ atualizados, fix + testes via ciclo worker/reviewer
 
 ## 5. UX zero papéis
 

@@ -15,18 +15,19 @@ Rate-limit de tentativas de login malsucedidas por CPF e por IP+CPF no cache do 
 ## Requisitos
 
 - **R1** `apps/accounts/ratelimit.py`: funções puras sobre o cache — registrar falha (por `cpf` **normalizado** strip/lower e por `ip+cpf`), checar bloqueio, zerar contadores — com chaves namespaceadas e TTL derivado da janela/duração. O IP vem do **mesmo helper confiável do guard de intranet** (`_get_client_ip` com `TRUSTED_PROXY_HEADER`, reutilizado/importado de `apps/accounts/middleware.py`; nunca header arbitrário).
-- **R2** Integração no fluxo de login: **antes** de acionar backends, checa bloqueio; bloqueado → recusa com a mesma mensagem genérica de credenciais/serviço (sem revelar bloqueio nem consultar KDC); tentativa malsucedida registra falha; bem-sucedida zera.
+- **R2** Integração no fluxo de login: **antes** de acionar backends, checa bloqueio; bloqueado → recusa com a mesma mensagem genérica de credenciais/serviço (sem revelar bloqueio nem consultar KDC); tentativa malsucedida registra falha — **exceto quando a falha é por indisponibilidade do serviço** (`request.kerberos_unavailable` setado: não chegou ao AD, não conta para o limite); bem-sucedida zera.
+  - *Emenda pós-review (2026-09-06, aprovada pelo dono): a exceção de indisponibilidade foi adicionada após o gate final, registrada na spec e no tasks.md (4.2).*
 - **R3** Settings por env: `LOGIN_ATTEMPTS_LIMIT` (default 5), `LOGIN_ATTEMPTS_WINDOW_SECONDS` (default 900), `LOGIN_LOCKOUT_SECONDS` (default 900) — documentadas no `.env.example`.
 - **R3b** `config/settings/prod.py` falha fechado (`ImproperlyConfigured` com mensagem clara) quando `CACHES` ainda for o default `LocMemCache` em produção — cache compartilhado (Redis/Memcached) é obrigatório no deploy para o limiar valer entre workers; dev/teste permanecem LocMem.
 - **R4** O bloqueio é temporário (expira sozinho via TTL do cache) e **não** altera `account_status` nem persiste no banco.
-- **R5** Testes: atingir limiar → próxima tentativa negada sem acionar a fake do Kerberos (assert de não-chamada); dentro do limiar não bloqueia; sucesso zera (nova falha conta de 1); entradas por IP+CPF independentes do contador por CPF; expiração simulada (TTL curto em override_settings ou tempo do cache zerado); **variações do CPF (espaços/caixa) contam para o mesmo contador**; **IP obtido do header confiável** (spoof de header não-confiável não muda a chave); settings `prod` com LocMem → `ImproperlyConfigured`.
+- **R5** Testes: atingir limiar → próxima tentativa negada sem acionar a fake do Kerberos (assert de não-chamada); dentro do limiar não bloqueia; sucesso zera (nova falha conta de 1); entradas por IP+CPF independentes do contador por CPF; expiração simulada (TTL curto em override_settings ou tempo do cache zerado); **variações do CPF (espaços/caixa) contam para o mesmo contador**; **IP obtido do header confiável** (spoof de header não-confiável não muda a chave); settings `prod` com LocMem → `ImproperlyConfigured`; **N tentativas de indisponibilidade acima do limiar NÃO bloqueiam** (login posterior válido bem-sucedido).
 
 ## Matriz requisito → arquivo → teste/check
 
 | Requisito | Arquivo(s) esperado(s) | Teste/check |
 | --- | --- | --- |
 | R1 | `apps/accounts/ratelimit.py` | `test_lockout.py::test_counters_by_normalized_cpf_and_trusted_ip` |
-| R2 | `apps/accounts/views.py` (ou backend, conforme design do fluxo) | `test_lockout.py::test_locked_attempt_skips_kerberos`, `::test_success_resets_counters` |
+| R2 | `apps/accounts/views.py` (ou backend, conforme design do fluxo) | `test_lockout.py::test_locked_attempt_skips_kerberos`, `::test_success_resets_counters`, `::test_service_unavailable_failures_do_not_lock` |
 | R3/R3b | `config/settings/{base,prod}.py`, `.env.example` | `rg -n "LOGIN_ATTEMPTS_LIMIT|LOGIN_ATTEMPTS_WINDOW|LOGIN_LOCKOUT" config/settings/base.py .env.example` + `::test_prod_requires_shared_cache` |
 | R4 | `apps/accounts/ratelimit.py` | `::test_lockout_expires_without_touching_account_status` |
 | R5 | `apps/accounts/tests/test_lockout.py` | `uv run pytest apps/accounts/tests/test_lockout.py` |

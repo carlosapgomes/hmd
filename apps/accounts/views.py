@@ -74,11 +74,16 @@ def login_view(request: HttpRequest) -> HttpResponse:
                     clear_login_failures(request, username)
                     login(request, user)
                     return redirect(reverse("home"))
-                # Tentativa malsucedida conta para o limiar local.
-                register_failed_login(request, username)
+                # Tentativa malsucedida conta para o limiar local — EXCETO
+                # quando a falha é por indisponibilidade do serviço
+                # (``request.kerberos_unavailable``: não chegou ao AD, não
+                # contribui para o lockout do AD nem para o limite local — R2
+                # emendado). Ordem: primeiro a marcação, para que a falha de
+                # outage nunca incremente os contadores.
                 if getattr(request, "kerberos_unavailable", False):
                     messages.error(request, SERVICE_UNAVAILABLE_MESSAGE)
                 else:
+                    register_failed_login(request, username)
                     messages.error(request, INVALID_CREDENTIALS_MESSAGE)
     else:
         form = LoginForm()

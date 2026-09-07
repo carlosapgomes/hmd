@@ -115,7 +115,7 @@ A validação Kerberos SHALL usar o principal derivado do `ad_upn` (realm do suf
 
 ### Requirement: Proteção anti-lockout local
 
-O sistema SHALL limitar tentativas de login malsucedidas por CPF normalizado e por par IP+CPF (IP de origem lido do cabeçalho confiável, mesma regra do guard de intranet), com limiar configurável inferior à política de lockout do AD. Ao atingir o limiar dentro da janela, tentativas subsequentes são recusadas temporariamente com mensagem genérica, sem consultar o KDC e sem alterar `account_status`. Tentativa bem-sucedida reinicia os contadores. Em produção, o rate-limit SHALL operar sobre cache compartilhado entre processos.
+O sistema SHALL limitar tentativas de login malsucedidas por CPF normalizado e por par IP+CPF (IP de origem lido do cabeçalho confiável, mesma regra do guard de intranet), com limiar configurável inferior à política de lockout do AD. Tentativas que falham por **indisponibilidade do serviço de autenticação** (KDCs inalcançáveis) não geram tráfego ao AD e, portanto, SHALL não ser registradas como falha nos contadores. Ao atingir o limiar dentro da janela, tentativas subsequentes são recusadas temporariamente com mensagem genérica, sem consultar o KDC e sem alterar `account_status`. Tentativa bem-sucedida reinicia os contadores. Em produção, o rate-limit SHALL operar sobre cache compartilhado entre processos.
 
 #### Scenario: Limiar atingido bloqueia temporariamente
 
@@ -134,3 +134,9 @@ O sistema SHALL limitar tentativas de login malsucedidas por CPF normalizado e p
 - **GIVEN** tentativas malsucedidas com o mesmo CPF em variações de espaçamento ou caixa
 - **WHEN** uma nova tentativa desse CPF é submetida
 - **THEN** todas contam para o mesmo contador
+
+#### Scenario: Falha por indisponibilidade não conta para o limite
+
+- **GIVEN** tentativas de login que falham porque o serviço de autenticação está indisponível (KDCs inalcançáveis), em quantidade acima do limiar
+- **WHEN** o serviço volta e o usuário submete login com credenciais corretas
+- **THEN** o login é bem-sucedido sem bloqueio local residual

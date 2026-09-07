@@ -34,13 +34,14 @@ from django.urls import reverse
 from apps.accounts.kerberos import KerberosAuthResult
 from apps.accounts.models import Role, User
 from apps.accounts.ratelimit import clear_login_failures, is_login_locked, register_failed_login
-from apps.accounts.views import INVALID_CREDENTIALS_MESSAGE
+from apps.accounts.views import INVALID_CREDENTIALS_MESSAGE, SERVICE_UNAVAILABLE_MESSAGE
 
 CPF = "12345678901"
 AD_UPN = "12345678901@dominio-teste.local"
 AD_PASSWORD = "senha-ad-correta"
 LOCAL_PASSWORD = "senha-local-123"
 DC_ONE = "10.0.0.19"
+DC_TWO = "10.0.0.21"
 LIMIT = 5
 # IPs de teste: ``10.0.0.5`` é o REMOTE_ADDR (confiável por padrão);
 # ``203.0.113.9``/``198.51.100.7`` são valores de documentação (TEST-NET) para
@@ -319,6 +320,46 @@ class TestLoginLockoutFlow:
         assert allowed.headers["Location"] == reverse("home")
         user.refresh_from_db()
         assert user.account_status == "active"
+
+    def test_service_unavailable_failures_do_not_lock(self, client: Client) -> None:
+        """R2 emendado: falhas por indisponibilidade NÃO contam para o limiar.
+
+        N tentativas acima do limiar em que o serviço AD está fora (KDCs
+        inalcançáveis → ``request.kerberos_unavailable`` setada pelo backend)
+        não chegaram ao AD: não podem contar para o lockout do AD nem para o
+        limite local. Quando o serviço volta, o login com a senha correta
+        deve passar — se a indisponibilidade contasse, o contador local teria
+        bloqueado a tentativa (RED).
+        """
+        _create_user(ad_upn=AD_UPN)
+        # Uma tentativa de outage = 2 DCs falhos (failover esgota →
+        # ``all_kdcs_unreachable`` → marca ``request.kerberos_unavailable``).
+        outage_attempt = [
+            KerberosAuthResult(False, reason="kdc_unreachable"),
+            KerberosAuthResult(False, reason="kdc_timeout"),
+        ]
+        factory = FakeKerberosFactory(outage_attempt * (LIMIT + 1) + [KerberosAuthResult(ok=True)])
+
+        with override_settings(
+            AD_DCS=[DC_ONE, DC_TWO],
+            AD_KDC_TIMEOUT=3,
+            KERBEROS_CLIENT_FACTORY=factory,
+        ):
+            for _ in range(LIMIT + 1):
+                unavailable = client.post(
+                    reverse("login"), {"username": CPF, "password": AD_PASSWORD}
+                )
+                assert unavailable.status_code == 200
+                # Serviço fora é comunicado como indisponível — nunca como
+                # credenciais inválidas nem bloqueio local.
+                assert SERVICE_UNAVAILABLE_MESSAGE in unavailable.content.decode()
+
+            # Serviço de volta: credenciais corretas autenticam sem bloqueio
+            # local residual (as falhas de indisponibilidade não contaram).
+            recovered = client.post(reverse("login"), {"username": CPF, "password": AD_PASSWORD})
+
+        assert recovered.status_code == 302
+        assert recovered.headers["Location"] == reverse("home")
 
 
 class TestProdRequiresSharedCache:

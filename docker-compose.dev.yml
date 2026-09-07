@@ -36,10 +36,12 @@ services:
       DJANGO_SECRET_KEY: dev-secret-key-not-for-production
       DJANGO_DEBUG: "true"
       # Com os workers no ar, o web enfileira (nunca processa inline 2×); a
-      # anonimização também nunca roda inline no processo web (o modelo spaCy
-      # vive apenas no worker-anonymization — design D7).
+      # anonimização e o pipeline LLM também nunca rodam inline no processo web
+      # (o modelo spaCy vive no worker-anonymization; a OpenRouter é chamada
+      # apenas pelo worker-llm — design D7/D9).
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
+      LLM_RUN_TASKS_INLINE: "false"
     depends_on:
       db:
         condition: service_healthy
@@ -70,6 +72,7 @@ services:
       Q_CLUSTER_NAME: pdf
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
+      LLM_RUN_TASKS_INLINE: "false"
     depends_on:
       db:
         condition: service_healthy
@@ -92,6 +95,34 @@ services:
       Q_CLUSTER_NAME: anonymization
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
+      LLM_RUN_TASKS_INLINE: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - hmd-net
+
+  # Worker do cluster llm do django-q2 (change llm-pipeline-per-type, slice
+  # 006, R6): consome o cluster alternativo "llm" — o pipeline LLM1/LLM2
+  # (chamadas à OpenRouter) num processo dedicado usando a imagem pronta. Ao
+  # concluir a anonimização (entrada em LLM_EXTRACTING), o signal enfileira no
+  # cluster llm (nunca inline no processo do worker de anonimização).
+  worker-llm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hmd-dev:app
+    command: python manage.py qcluster --settings=config.settings.dev
+    volumes:
+      - media_data:/app/media
+    environment:
+      DATABASE_URL: postgres://hmd:hmd_dev@db:5432/hmd_dev
+      DJANGO_SECRET_KEY: dev-secret-key-not-for-production
+      DJANGO_DEBUG: "true"
+      Q_CLUSTER_NAME: llm
+      INTAKE_RUN_TASKS_INLINE: "false"
+      ANONYMIZATION_RUN_TASKS_INLINE: "false"
+      LLM_RUN_TASKS_INLINE: "false"
     depends_on:
       db:
         condition: service_healthy

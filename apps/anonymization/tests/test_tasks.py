@@ -252,7 +252,9 @@ def test_signal_enqueues_on_anonymizing_entry(monkeypatch: pytest.MonkeyPatch) -
     O ciclo completo roda na saída do commit: task claima o lock, grava o
     início (self), anonimiza e completa para LLM_EXTRACTING. A self-transition
     NÃO re-dispara (guarda source=ANONYMIZING): exatamente uma conclusão e uma
-    transição para LLM_EXTRACTING na trilha.
+    transição para LLM_EXTRACTING na trilha. O pipeline LLM (entrada em
+    LLM_EXTRACTING) não roda aqui — fora do contrato deste teste (a cadeia LLM
+    completa é coberta pelos testes do change 06).
     """
     user = _create_user("signal-entry")
     case = Case.objects.create(created_by=user)
@@ -261,7 +263,8 @@ def test_signal_enqueues_on_anonymizing_entry(monkeypatch: pytest.MonkeyPatch) -
     case.save(update_fields=["extracted_text"])
     _stub_engine(monkeypatch)
 
-    case.complete_pdf_extraction(user=None, role=SYSTEM_ROLE)
+    with override_settings(LLM_RUN_TASKS_INLINE=False):
+        case.complete_pdf_extraction(user=None, role=SYSTEM_ROLE)
     case.refresh_from_db()
 
     assert case.status == CaseStatus.LLM_EXTRACTING
@@ -403,6 +406,11 @@ def test_inline_full_chain_pdf_to_anonymization(monkeypatch: pytest.MonkeyPatch)
     with override_settings(
         INTAKE_RUN_TASKS_INLINE=True,
         ANONYMIZATION_RUN_TASKS_INLINE=True,
+        # O pipeline LLM não roda aqui (fora do contrato do change 05): a
+        # entrada em LLM_EXTRACTING enfileira no broker (no-op em teste) e o
+        # caso permanece LLM_EXTRACTING. A cadeia LLM completa inline é coberta
+        # pelos testes do change 06 (slice 006) com fakes.
+        LLM_RUN_TASKS_INLINE=False,
         STORAGES=_MEMORY_STORAGES,
     ):
         case = create_case_with_documents(

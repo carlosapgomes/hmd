@@ -29,7 +29,7 @@
 
 ## 6. LLM2 + orquestrador + cluster llm
 
-- [ ] 6.1 Slice 006 — `llm2_service` (visão filtrada, policy prevalece, strictest) + orquestrador/task (trigger duplo, retomada pós-bypass, lock, fail-closed) + worker-llm + ADR-0008. Ver `slices/slice-006-llm2-orchestrator.md`
+- [x] 6.1 Slice 006 — `llm2_service` (visão filtrada, policy prevalece, agregado qualquer-recusa com motivos somados) + orquestrador/task (trigger duplo com anti-recursão, retomada pós-bypass sem re-executar LLM1, lock, fail-closed com dono único) + worker-llm + ADR-0008. Ver `slices/slice-006-llm2-orchestrator.md` (**desvio autorizado pelo parent**: release da lease de anonimização no mesmo atomic de `complete_anonymization` + `LLM_RUN_TASKS_INLINE=False` nos 2 testes transaction=True do anonymization — padrão change 05; P2 reportado: `released=True` pós-commit e branch async do conflito sem teste direto)
 
 ## 7. Gate final do change
 

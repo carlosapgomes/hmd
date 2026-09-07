@@ -64,3 +64,10 @@ INTAKE_RUN_TASKS_INLINE = True
 # de entrada em ANONYMIZING executa a task sincronamente — determinístico
 # independente de um .env local com ANONYMIZATION_RUN_TASKS_INLINE=false.
 ANONYMIZATION_RUN_TASKS_INLINE = True
+
+# Pipeline LLM roda inline na suíte (design D9/R4): o signal de entrada em
+# LLM_EXTRACTING executa o orquestrador sincronamente — determinístico
+# independente de um .env local com LLM_RUN_TASKS_INLINE=false. Testes de
+# cadeia (anonymization transaction=True) que não exercem o pipeline sobrescrevem
+# para False (o enqueue vira no-op async).
+LLM_RUN_TASKS_INLINE = True

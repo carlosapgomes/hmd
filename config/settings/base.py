@@ -268,6 +268,18 @@ LLM_CLIENT_FACTORY = "apps.pipeline.llm.create_openrouter_client"
 PRIOR_CASE_WINDOW_DAYS = int(os.environ.get("PRIOR_CASE_WINDOW_DAYS", "7"))
 PRIOR_CASE_FALLBACK_WINDOW_DAYS = int(os.environ.get("PRIOR_CASE_FALLBACK_WINDOW_DAYS", "15"))
 
+# Modo de execução da task do pipeline LLM (change llm-pipeline-per-type,
+# slice 006, design D9/R4): ``True`` (default em dev/teste) executa o pipeline
+# sincronamente quando o signal de entrada em LLM_EXTRACTING dispara — testes
+# determinísticos e cadeia inline de dev single-process; ``False`` enfileira no
+# cluster ``llm`` do django-q2 (produção/compose com o serviço worker-llm — o
+# processo web nunca chama a OpenRouter).
+LLM_RUN_TASKS_INLINE = os.environ.get("LLM_RUN_TASKS_INLINE", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # django-q2 (change intake-nir-upload, slice 003, design D2): fila de tasks
 # assíncronas com broker ORM (``orm: "default"`` — sem Redis), no formato do
 # ats-web, com ``ALT_CLUSTERS`` DENTRO de ``Q_CLUSTER``. O cluster ``pdf``
@@ -275,7 +287,8 @@ PRIOR_CASE_FALLBACK_WINDOW_DAYS = int(os.environ.get("PRIOR_CASE_FALLBACK_WINDOW
 # ``manage.py qcluster`` com ``Q_CLUSTER_NAME=pdf``; o cluster ``anonymization``
 # (slice 004 — engine Presidio/spaCy no worker, 2 workers/timeout 300s/
 # retry 360s, separado do ``pdf`` para o modelo não competir com a extração)
-# por ``Q_CLUSTER_NAME=anonymization``; o cluster ``llm`` chega no change 06.
+# por ``Q_CLUSTER_NAME=anonymization``; o cluster ``llm`` (slice 006 — pipeline
+# LLM1/LLM2, 1 worker/timeout 900s/retry 960s) por ``Q_CLUSTER_NAME=llm``.
 Q_CLUSTER = {
     "name": "hmd",
     "orm": "default",
@@ -293,6 +306,11 @@ Q_CLUSTER = {
             "workers": 2,
             "timeout": 300,
             "retry": 360,
+        },
+        "llm": {
+            "workers": 1,
+            "timeout": 900,
+            "retry": 960,
         },
     },
 }

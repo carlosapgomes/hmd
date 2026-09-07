@@ -62,6 +62,16 @@ ANONYMIZATION_RUN_TASKS_INLINE = os.environ.get(
     "yes",
 )
 
+# Pipeline LLM (change llm-pipeline-per-type, slice 006, R4): em produção o
+# default é enfileirar no cluster llm — nunca rodar inline sem intenção
+# explícita (o processo web nunca chama a OpenRouter; só o worker-llm). Só
+# roda inline se a variável estiver explicitamente ligada.
+LLM_RUN_TASKS_INLINE = os.environ.get("LLM_RUN_TASKS_INLINE", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # Segurança
 CSRF_COOKIE_SECURE = True
 SESSION_COOKIE_SECURE = True

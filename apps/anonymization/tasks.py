@@ -94,8 +94,11 @@ def process_case_anonymization(case_id: uuid.UUID) -> None:
 
     Idempotência por estado: apenas ``ANONYMIZING`` processa; ``NEW``,
     ``PDF_EXTRACTING``, ``LLM_EXTRACTING`` e demais → log + no-op. Claim de
-    lock ``context="worker_anonymization"``/``role="system"`` com release no
-    ``finally`` (token do claim); erro do serviço → ``fail_processing`` (→
+    lock ``context="worker_anonymization"``/``role="system"``; a lease é
+    liberada no MESMO atomic da transição de saída consumida por signal
+    (``complete_anonymization`` — entrada em ``LLM_EXTRACTING``; coordenação do
+    change 05, estendida no slice 006 do pipeline LLM) e o ``finally`` re-tenta
+    o release nos demais caminhos; erro do serviço → ``fail_processing`` (→
     ``FAILED``) sem ``anonymized_text`` preenchido (fail-closed). Política de
     conflito em ``_claim_worker_lock``: inline propaga (coordenação com o
     release da task-pdf evita o conflito); async vira no-op com log.
@@ -124,6 +127,7 @@ def process_case_anonymization(case_id: uuid.UUID) -> None:
     if lock is None:
         # Conflito async (outro worker cuidando): no-op deliberado.
         return
+    released = False
     try:
         # Releitura sob posse da lease: entre a checagem e o claim o caso pode
         # ter sido processado por outra execução — a decisão é sempre fresca.
@@ -147,9 +151,26 @@ def process_case_anonymization(case_id: uuid.UUID) -> None:
         try:
             # Persistência (wrapper 003) e transição FSM atômicas: em falha
             # nada é escrito — ``anonymized_text`` permanece vazio (fail-closed).
+            # O release da lease roda no MESMO atomic da transição de saída cujo
+            # evento é consumido por signal (a entrada em LLM_EXTRACTING dispara
+            # o enqueue do pipeline LLM — slice 006): o commit garante o release
+            # antes dos hooks ``on_commit`` (padrão change 05/finding P1; desvio
+            # autorizado no slice 006). O ``finally`` re-tenta nos demais
+            # caminhos (falhas/estados não avançados) — release duplo é no-op.
             with transaction.atomic():
                 anonymize_case_text(case)
                 case.complete_anonymization(user=None, role=SYSTEM_ROLE)
+                try:
+                    release_case_lock(case, lock.token)
+                    released = True
+                except CaseLockConflictError:
+                    # Lease expirada durante o processamento (anomalia rara): o
+                    # resultado da fase permanece; o finally re-tenta o release.
+                    logger.warning(
+                        "process_case_anonymization: lease do caso %s expirou no atomic final",
+                        case_id,
+                        exc_info=True,
+                    )
         except Exception as exc:
             logger.exception(
                 "process_case_anonymization: anonimização falhou para o caso %s", case_id
@@ -159,16 +180,18 @@ def process_case_anonymization(case_id: uuid.UUID) -> None:
             case.refresh_from_db()
             case.fail_processing(reason=str(exc), user=None, role=SYSTEM_ROLE)
     finally:
-        try:
-            release_case_lock(case, lock.token)
-        except CaseLockConflictError:
-            # Lease expirada durante o processamento: o lock se perdeu, mas o
-            # resultado do processamento não deve ser mascarado pelo release.
-            logger.warning(
-                "process_case_anonymization: lease do caso %s expirou antes do release",
-                case_id,
-                exc_info=True,
-            )
+        if not released:
+            try:
+                release_case_lock(case, lock.token)
+            except CaseLockConflictError:
+                # Lease expirada durante o processamento (ou já liberada no
+                # atomic de sucesso): o lock se perdeu, mas o resultado do
+                # processamento não deve ser mascarado pelo release.
+                logger.warning(
+                    "process_case_anonymization: lease do caso %s expirou antes do release",
+                    case_id,
+                    exc_info=True,
+                )
 
 
 def enqueue_case_anonymization(case_id: uuid.UUID) -> None:

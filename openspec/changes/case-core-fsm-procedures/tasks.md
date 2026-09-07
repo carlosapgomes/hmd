@@ -10,7 +10,7 @@
 
 ## 1. Catálogo
 
-- [ ] 1.1 Slice 001 — `procedure_catalog.py`: 13 `ProcedureProfile` + `CRITERIA_SECTIONS` (S1–S8) + fail-fast + comando de verificação idempotente. Ver `slices/slice-001-procedure-catalog.md`
+- [x] 1.1 Slice 001 — `procedure_catalog.py`: 13 `ProcedureProfile` + `CRITERIA_SECTIONS` (S1–S8) + fail-fast + comando de verificação idempotente. Ver `slices/slice-001-procedure-catalog.md`
 
 ## 2. Case + FSM + eventos
 

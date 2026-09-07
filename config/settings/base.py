@@ -27,6 +27,9 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Apps de domínio (apps/).
     "apps.accounts",
+    # Núcleo de casos (change 03): slice 001 entrega o catálogo code-first
+    # (procedure_catalog + seed/verificação); models chegam no slice 002.
+    "apps.cases",
 ]
 
 # Modelo de usuário customizado (D8) — estendido uma única vez.

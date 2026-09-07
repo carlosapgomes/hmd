@@ -6,11 +6,11 @@
 
 ## 0. Preflight
 
-- [ ] 0.1 Confirmar working tree limpa, registrar `BASE_REF`; baseline verde (gate do change 04 serve); `uv sync` com as deps novas resolve (após o slice 002)
+- [x] 0.1 Confirmar working tree limpa, registrar `BASE_REF`; baseline verde (gate do change 04 serve); `uv sync` com as deps novas resolve (após o slice 002) — árvore limpa, BASE_REF `32da09c`, baseline 337 válida; disco 406G livres p/ modelo
 
 ## 1. Pré-extração determinística
 
-- [ ] 1.1 Slice 001 — `deterministic.py` puro (nº ocorrência reusando padrões do intake, nome, nascimento, CPF/CNS por checksum futuro) + `DeterministicExtraction`. Ver `slices/slice-001-deterministic-extraction.md`
+- [x] 1.1 Slice 001 — `deterministic.py` puro (nº ocorrência reusando padrões do intake, nome, nascimento, CPF/CNS por checksum futuro) + `DeterministicExtraction`. Ver `slices/slice-001-deterministic-extraction.md` (runs exatos 11/15 após fix de review)
 
 ## 2. Recognizers BR + engine
 

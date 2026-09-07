@@ -34,6 +34,9 @@ INSTALLED_APPS = [
     "apps.cases",
     # Intake do NIR (change intake-nir-upload, slice 001).
     "apps.intake",
+    # Anonimização (change presidio-anonymization, slice 001): módulo puro de
+    # pré-extração determinística; sem models/recognizers neste slice.
+    "apps.anonymization",
 ]
 
 # Modelo de usuário customizado (D8) — estendido uma única vez.

@@ -7,7 +7,16 @@ multi-role, status de conta e registro profissional opcional par-ou-nada.
 
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
+from django.core.validators import RegexValidator
 from django.db import models
+
+# Validação de formato do UPN (D3): ``usuario@dominio`` com sufixo livre — o
+# ambiente é uma floresta multi-domínio e o sufixo do UPN não é restrito a um
+# domínio fixo (ex.: o usuário pode vir de outro domínio em trust).
+upn_validator = RegexValidator(
+    regex=r"^[^@\s]+@[^@\s]+$",
+    message="Informe o UPN completo no formato usuario@dominio (ex.: cpf@dominio).",
+)
 
 
 class ProfessionalCouncil(models.TextChoices):
@@ -59,6 +68,23 @@ class User(AbstractUser):
         "Número do conselho profissional",
         max_length=30,
         blank=True,
+    )
+
+    # Origem AD da identidade (D3, slice 001 R1): UPN completo
+    # ``cpf@dominio``, único e opcional. Usuários com ``ad_upn`` têm a
+    # credencial no Active Directory — a senha local é inutilizada no
+    # provisionamento administrativo (R3).
+    ad_upn = models.CharField(
+        "UPN do Active Directory",
+        max_length=150,
+        unique=True,
+        null=True,
+        blank=True,
+        validators=[upn_validator],
+        help_text=(
+            "UPN completo no formato usuario@dominio (ex.: cpf@dominio). O "
+            "sufixo é livre — floresta multi-domínio."
+        ),
     )
 
     def clean(self) -> None:

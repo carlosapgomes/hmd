@@ -9,11 +9,11 @@
 
 ## 1. Provisionamento
 
-- [ ] 1.1 Slice 001 — `User.ad_upn` (único/opcional) + migration + Django admin de User/Role (provisionamento administrativo). Ver `slices/slice-001-ad-upn-provisioning.md`
+- [x] 1.1 Slice 001 — `User.ad_upn` (único/opcional) + migration + Django admin de User/Role (provisionamento administrativo). Ver `slices/slice-001-ad-upn-provisioning.md`
 
 ## 2. Cliente Kerberos
 
-- [ ] 2.1 Slice 002 — `kerberos.py`: `KerberosAuthResult` + wrapper minikerberos injetável + failover restrito a transporte + extração de código por protocolo. Ver `slices/slice-002-kerberos-client.md`
+- [x] 2.1 Slice 002 — `kerberos.py`: `KerberosAuthResult` + wrapper minikerberos injetável + failover restrito a transporte + extração de código por protocolo. Ver `slices/slice-002-kerberos-client.md`
 
 ## 3. Backend e login
 

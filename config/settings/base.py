@@ -39,6 +39,22 @@ AUTHENTICATION_BACKENDS = [
     "apps.accounts.backends.LocalAccountBackend",
 ]
 
+# Validação Kerberos no Active Directory (change ad-kerberos, D1/D5/D10).
+# ``AD_DCS`` são os KDCs conhecidos do domínio raiz; o realm NÃO é
+# configurável: é derivado do sufixo do ``ad_upn`` no momento da validação
+# (D3 — floresta multi-domínio). ``AD_KDC_TIMEOUT`` é o timeout por tentativa
+# (default 3s). Failover entre DCs só em erro de transporte (D5).
+AD_DCS = [
+    dc.strip()
+    for dc in os.environ.get("AD_DCS", "<DC1-IP>,<DC2-IP>").split(",")
+    if dc.strip()
+]
+AD_KDC_TIMEOUT = int(os.environ.get("AD_KDC_TIMEOUT", "3"))
+# Factory injetável do wrapper real (D6): dotted-path resolvido em tempo de
+# chamada por ``apps.accounts.kerberos``. Testes sobrescrevem com fakes via
+# ``override_settings`` — nenhuma chamada de rede na suíte.
+KERBEROS_CLIENT_FACTORY = "apps.accounts.kerberos.validate_password"
+
 # Intranet guard (ADR-0002, slice 006 R1/R6): papéis restritos à rede interna
 # e faixas de intranet aceitas. ``INTRANET_RESTRICTED_ROLES`` aceita vários
 # papéis separados por vírgula (default: só ``nir``). ``INTRANET_IP_RANGE``

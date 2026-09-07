@@ -9,6 +9,9 @@ dependencies = [
     "whitenoise",
     "python-dotenv",
     "dj-database-url",
+    # Cliente Kerberos puro em Python para validação de senha AD (D1).
+    # Fixado: superfície pequena/menos auditada exige pin exato.
+    "minikerberos==0.4.9",
 ]
 
 [dependency-groups]
@@ -42,6 +45,18 @@ plugins = ["mypy_django_plugin.main"]
 python_version = "3.13"
 strict = true
 explicit_package_bases = true
+
+# Dependências do minikerberos 0.4.9 sem stubs/py.typed (ad-kerberos D1):
+# importadas apenas como valores não-tipados no wrapper de apps/accounts/kerberos.py.
+[[tool.mypy.overrides]]
+module = [
+    "minikerberos.*",
+    "asysocks.*",
+    "asn1crypto.*",
+    "unicrypto.*",
+    "oscrypto.*",
+]
+ignore_missing_imports = true
 
 [tool.django-stubs]
 django_settings_module = "config.settings.test"

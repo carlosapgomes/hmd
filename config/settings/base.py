@@ -64,6 +64,20 @@ AD_KDC_TIMEOUT = int(os.environ.get("AD_KDC_TIMEOUT", "3"))
 # ``override_settings`` — nenhuma chamada de rede na suíte.
 KERBEROS_CLIENT_FACTORY = "apps.accounts.kerberos.validate_password"
 
+# Anti-lockout local via cache (change ad-kerberos, slice 004, R3/D7): limiar
+# de tentativas malsucedidas por CPF/IP+CPF, janela de contagem e duração do
+# bloqueio temporário. Defaults abaixo da política típica de lockout do AD.
+# O cache default é LocMem (por processo) — suficiente para dev/teste; em
+# produção o cache compartilhado é obrigatório (falha fechado em prod, R3b).
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    },
+}
+LOGIN_ATTEMPTS_LIMIT = int(os.environ.get("LOGIN_ATTEMPTS_LIMIT", "5"))
+LOGIN_ATTEMPTS_WINDOW_SECONDS = int(os.environ.get("LOGIN_ATTEMPTS_WINDOW_SECONDS", "900"))
+LOGIN_LOCKOUT_SECONDS = int(os.environ.get("LOGIN_LOCKOUT_SECONDS", "900"))
+
 # Intranet guard (ADR-0002, slice 006 R1/R6): papéis restritos à rede interna
 # e faixas de intranet aceitas. ``INTRANET_RESTRICTED_ROLES`` aceita vários
 # papéis separados por vírgula (default: só ``nir``). ``INTRANET_IP_RANGE``

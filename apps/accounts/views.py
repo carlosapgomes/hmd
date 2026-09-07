@@ -19,6 +19,7 @@ from django.views.decorators.http import require_POST
 from apps.accounts.models import User
 
 from .forms import HospitalPasswordChangeForm, LoginForm
+from .ratelimit import clear_login_failures, is_login_locked, register_failed_login
 
 # Mensagens genéricas de login (change ad-kerberos, slice 003/R4/D5): o usuário
 # externo nunca recebe código KDC, existência de CPF nem status interno da
@@ -45,8 +46,11 @@ def login_view(request: HttpRequest) -> HttpResponse:
     GET renderiza o formulário; POST autentica com a ordem de backends das
     settings (D4). Falha mostra mensagem genérica — credenciais inválidas ou
     serviço indisponível, conforme a marcação request-scoped do backend
-    (R4/D5); nenhuma mensagem revela motivo interno. Login redireciona direto
-    para a home (papel ativo/switch-role é o slice 005).
+    (R4/D5); nenhuma mensagem revela motivo interno. O anti-lockout local
+    (slice 004/D7) roda ANTES de consultar backends/KDC: limiar atingido =
+    recusa com a mesma mensagem genérica, sem revelar bloqueio; sucesso zera
+    os contadores. Login redireciona direto para a home (papel
+    ativo/switch-role é o slice 005).
     """
     if request.user.is_authenticated:
         return redirect(reverse("home"))
@@ -54,18 +58,27 @@ def login_view(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
         form = LoginForm(request.POST)
         if form.is_valid():
-            user = authenticate(
-                request,
-                username=form.cleaned_data["username"],
-                password=form.cleaned_data["password"],
-            )
-            if user is not None:
-                login(request, user)
-                return redirect(reverse("home"))
-            if getattr(request, "kerberos_unavailable", False):
-                messages.error(request, SERVICE_UNAVAILABLE_MESSAGE)
-            else:
+            username = form.cleaned_data["username"]
+            password = form.cleaned_data["password"]
+            # Anti-lockout local (slice 004/D7): checagem ANTES de consultar
+            # qualquer backend/KDC; bloqueado = recusa com a mensagem genérica
+            # de credenciais (sem revelar o bloqueio) e sem registrar nova
+            # falha. Limiar/janela/duração vêm das settings (R3).
+            if is_login_locked(request, username):
                 messages.error(request, INVALID_CREDENTIALS_MESSAGE)
+            else:
+                user = authenticate(request, username=username, password=password)
+                if user is not None:
+                    # Sucesso zera os contadores do CPF (R2/R4).
+                    clear_login_failures(request, username)
+                    login(request, user)
+                    return redirect(reverse("home"))
+                # Tentativa malsucedida conta para o limiar local.
+                register_failed_login(request, username)
+                if getattr(request, "kerberos_unavailable", False):
+                    messages.error(request, SERVICE_UNAVAILABLE_MESSAGE)
+                else:
+                    messages.error(request, INVALID_CREDENTIALS_MESSAGE)
     else:
         form = LoginForm()
 

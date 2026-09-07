@@ -21,7 +21,7 @@
 
 ## 4. Anti-lockout
 
-- [ ] 4.1 Slice 004 — Rate-limit por CPF/IP+CPF via cache, recusa pré-KDC, sucesso zera, env-configurável. Ver `slices/slice-004-lockout-rate-limit.md`
+- [x] 4.1 Slice 004 — Rate-limit por CPF/IP+CPF via cache, recusa pré-KDC, sucesso zera, env-configurável. Ver `slices/slice-004-lockout-rate-limit.md`
 
 ## 5. UX zero papéis
 

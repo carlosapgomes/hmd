@@ -1,7 +1,10 @@
 """Production settings do HMD.
 
 Falha fechado: sem ``DJANGO_SECRET_KEY`` a inicialização aborta com
-``ImproperlyConfigured`` — nunca há fallback para valor de build (R6).
+``ImproperlyConfigured`` — nunca há fallback para valor de build (R6). Cache
+do anti-lockout (slice 004/R3b): enquanto ``CACHES`` for o default
+``LocMemCache`` (por-processo) a inicialização também aborta — produção exige
+cache compartilhado entre workers (Redis/Memcached) configurado no deploy.
 """
 
 import os
@@ -9,13 +12,26 @@ import os
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
 
-from .base import *  # noqa: F401,F403
+from .base import *  # noqa: F401,F403,F405
 
 DEBUG = False
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
 if not SECRET_KEY:
     raise ImproperlyConfigured("DJANGO_SECRET_KEY é obrigatório em produção.")
+
+# Cache do anti-lockout local (change ad-kerberos, slice 004, R3b/D7):
+# ``LocMemCache`` é por-processo — com múltiplos workers o limiar efetivo do
+# rate-limit de login seria multiplicado. Produção falha fechado enquanto
+# ``CACHES`` permanecer LocMem: o deploy precisa configurar um cache
+# compartilhado (Redis/Memcached) para o limiar valer entre workers. Dev/teste
+# continuam em LocMem (limiar por processo é suficiente lá).
+if CACHES["default"]["BACKEND"] == "django.core.cache.backends.locmem.LocMemCache":  # noqa: F405
+    raise ImproperlyConfigured(
+        "CACHES não pode ser LocMemCache em produção: o rate-limit de login "
+        "(LOGIN_ATTEMPTS_LIMIT) exige cache compartilhado entre workers "
+        "(Redis/Memcached) — configure CACHES no deploy."
+    )
 
 ALLOWED_HOSTS = [
     host.strip() for host in os.environ.get("ALLOWED_HOSTS", "").split(",") if host.strip()

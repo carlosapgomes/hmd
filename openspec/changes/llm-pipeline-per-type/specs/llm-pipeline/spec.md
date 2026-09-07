@@ -24,7 +24,7 @@ O sistema SHALL chamar LLMs via OpenRouter usando o endpoint OpenAI-compatible (
 
 ### Requirement: Extração estruturada por tipo com guardas anti-alucinação
 
-A LLM1 SHALL extrair, a partir **exclusivamente** de `anonymized_text`, um artefato estruturado validado por schemas por tipo de procedimento: base comum (identificação mínima do pedido com tokens, contexto clínico, linha do tempo, exames com resultados objetivos, medicações/anticoagulação, comorbidades, contraindicações, `trechos_nao_classificados`) + blocos específicos por tipo (ex.: FAV → estado do acesso; filtro cava → TEp/contraindicação a anticoagulação; permicath → infecção ativa). Casos multiprocedimento usam **composição união** dos schemas numa **única chamada**. Campos extraídos SHALL carregar `evidence_spans` (trecho citado do texto) e `status ∈ {confirmado, nao_informado, incerto}`; informação ausente NUNCA é completada. Guardas: validação strict do JSON contra o schema, language guard pt-BR (rejeita resposta em outro idioma), **no máximo 1 retry corretivo tipado** por chamada; esgotadas as guardas, o caso vai a `FAILED` com motivo (fail-closed) — nunca avança com artefato inválido.
+A LLM1 SHALL extrair, a partir **exclusivamente** de `anonymized_text`, um artefato estruturado validado por schemas por tipo de procedimento: base comum (identificação mínima do pedido com tokens, contexto clínico, linha do tempo, exames com resultados objetivos, medicações/anticoagulação, comorbidades, contraindicações, `trechos_nao_classificados`) + blocos específicos por tipo (ex.: FAV → estado do acesso; filtro cava → TEp/contraindicação a anticoagulação; permicath → infecção ativa). Casos multiprocedimento usam **composição união** dos schemas numa **única chamada**; a lista de procedimentos detectados aceita qualquer tipo do catálogo (não apenas os declarados) — o modelo pode relatar um tipo não-declarado, que é o gatilho da revisão de divergência. Campos extraídos SHALL carregar `evidence_spans` (trecho citado do texto) e `status ∈ {confirmado, nao_informado, incerto}`; informação ausente NUNCA é completada. Guardas: validação strict do JSON contra o schema, language guard pt-BR (rejeita resposta em outro idioma), **no máximo 1 retry corretivo tipado** por chamada; esgotadas as guardas, o caso vai a `FAILED` com motivo (fail-closed) — nunca avança com artefato inválido.
 
 #### Scenario: Extração feliz valida e persiste
 
@@ -124,7 +124,7 @@ A LLM2 SHALL produzir, numa única chamada por caso, o sumário apresentável e 
 
 - **GIVEN** a chamada LLM2 de um caso
 - **WHEN** o payload é montado
-- **THEN** ele contém exclusivamente conteúdo de `anonymized_text`/artefato anonimizado, policy e prior-case — nenhum valor real de paciente
+- **THEN** ele contém exclusivamente conteúdo anonimizado (varredura recursiva contra os mapas de pseudônimos do caso e dos casos prévios — nenhum valor real de paciente)
 
 ### Requirement: Processamento assíncrono no cluster llm
 

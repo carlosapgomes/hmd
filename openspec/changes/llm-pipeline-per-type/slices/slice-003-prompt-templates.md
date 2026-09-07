@@ -7,7 +7,7 @@
 ## Contexto necessário (contexto zero)
 
 - Referência: `/projects/dev/ats-web/apps/llm/models.py::PromptTemplate` (unique_together `(name, version)`; 1 ativo por nome via constraint parcial) e `apps/llm/management/commands/seed_prompts.py` (SOMENTE-LEITURA — adaptar nomes/conteúdo p/ HMD).
-- Plano §7: "`PromptTemplate` versionado por tipo: `proc.<type>.llm1.system/user`, `proc.<type>.llm2.system/user` (+ seed)" — **adaptação HMD (design D3)**: systems neutros compartilhados (`llm1.system`/`llm2.system`) porque a composição união exige UMA chamada por caso; users por tipo.
+- Plano §7 (**emenda aprovada em review 2026-09-07, registrada no plano**): systems neutros compartilhados (`llm1.system`/`llm2.system`) porque a composição união exige UMA chamada por estágio; users por tipo (`proc.<type>.llm1.user`/`proc.<type>.llm2.user` × 13 = 28 templates). Divergência com o ats-web registrada: lá o 1-ativo-por-nome é garantia de app (`clean/save`), aqui vira constraint parcial no banco (melhoria).
 - Catálogo: labels dos 13 tipos em `apps/cases/procedure_catalog.py` (usar nos textos).
 - Conteúdo dos prompts: pt-BR, papel/guardas (JSON estrito, idioma pt-BR, evidence obrigatória, nunca inventar, usar tokens `<PESSOA_1>` etc. quando citar pessoas, status tri-state). Conteúdo clínico por tipo deriva de `temp/parametrosHMD.md` (seção do tipo).
 

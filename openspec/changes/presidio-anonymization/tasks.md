@@ -30,5 +30,5 @@
 
 ## 6. Gate final do change
 
-- [ ] 6.1 Quality gate completo (`uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest`) + `openspec validate presidio-anonymization`; registrar resultado
-- [ ] 6.2 Atualizar `PROJECT_CONTEXT.md` (estado pós-change; invariante anonymized_text; cluster anonymization; env novas) e preparar arquivamento
+- [x] 6.1 Quality gate completo (`uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest`) + `openspec validate presidio-anonymization`; registrar resultado — **resultado (2026-09-07): ruff check ✅ · ruff format ✅ (162 arquivos) · mypy ✅ (112 arquivos) · pytest ✅ 399 passed · manage.py check ✅ · makemigrations --check ✅ · compose config ✅ · benchmark sintético PASS (recall 1.0, zero-PII limpo, 0 bloqueios, exit 0) · openspec validate ✅**
+- [x] 6.2 Atualizar `PROJECT_CONTEXT.md` (estado pós-change; invariante anonymized_text; cluster anonymization; env novas) e preparar arquivamento — atualizado; arquivamento pendente de revisão final do dono

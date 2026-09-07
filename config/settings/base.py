@@ -260,6 +260,14 @@ LLM_TIMEOUT_SECONDS = int(os.environ.get("LLM_TIMEOUT_SECONDS", "120"))
 # ``override_settings`` — nenhuma chamada de rede na suíte.
 LLM_CLIENT_FACTORY = "apps.pipeline.llm.create_openrouter_client"
 
+# Prior-case (change llm-pipeline-per-type, slice 005, design D7): janelas do
+# lookup de casos prévios em dias — match primário por número de ocorrência
+# (default 7) e fallback por nome normalizado + nascimento (default 15). O
+# intervalo é fechado: ``decisão_prévia <= case.created_at <= decisão_prévia +
+# janela`` (decisão "futura" nunca casa — correção do review).
+PRIOR_CASE_WINDOW_DAYS = int(os.environ.get("PRIOR_CASE_WINDOW_DAYS", "7"))
+PRIOR_CASE_FALLBACK_WINDOW_DAYS = int(os.environ.get("PRIOR_CASE_FALLBACK_WINDOW_DAYS", "15"))
+
 # django-q2 (change intake-nir-upload, slice 003, design D2): fila de tasks
 # assíncronas com broker ORM (``orm: "default"`` — sem Redis), no formato do
 # ats-web, com ``ALT_CLUSTERS`` DENTRO de ``Q_CLUSTER``. O cluster ``pdf``

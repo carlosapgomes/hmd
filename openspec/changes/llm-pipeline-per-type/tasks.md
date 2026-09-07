@@ -25,7 +25,7 @@
 
 ## 5. Policy + prior-case
 
-- [ ] 5.1 Slice 005 — policy determinística consultiva (S1–S8 + requisitos gerais; ok|alerta|nao_informado) + prior-case (nº 7d + fallback nome/nascimento 15d) com eventos. Ver `slices/slice-005-policy-priorcase.md`
+- [x] 5.1 Slice 005 — policy determinística consultiva (S1–S8 + requisitos gerais; ok|alerta|nao_informado) + prior-case (nº 7d + fallback nome/nascimento 15d) com eventos. Ver `slices/slice-005-policy-priorcase.md` (K = textual-informativo por decisão do parent, pendente validação do dono)
 
 ## 6. LLM2 + orquestrador + cluster llm
 

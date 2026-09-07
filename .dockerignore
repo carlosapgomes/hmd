@@ -1,0 +1,25 @@
+# Contexto do build da imagem (Dockerfile, R5 do slice 004): o venv do host
+# jamais entra no contexto — o build instala as dependências/modelo no
+# /app/.venv da imagem e o COPY . /app não pode sobrescrevê-lo.
+.venv/
+
+# Ambiente
+.env
+.env.*
+!.env.example
+
+# Python / Django
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+media/
+staticfiles/
+
+# VCS
+.git/
+.gitignore
+
+# Temporários / relatórios locais
+temp/

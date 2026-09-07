@@ -109,10 +109,18 @@ def _no_inline_processing() -> Iterator[None]:
     A criação com ``INTAKE_RUN_TASKS_INLINE=True`` (default da suíte) já
     processa os PDFs e retém/finaliza o caso sozinha. As ações do gate são
     testadas com estados controlados; os testes que exercitam o reenvio +
-    reprocessamento ligam o inline pontualmente.
+    reprocessamento ligam o inline pontualmente. ``ANONYMIZATION_RUN_TASKS_INLINE``
+    também fica False: estes testes cobrem a semântica/concorrência do GATE,
+    não o pipeline de anonimização — o slice 004 do change presidio-
+    anonymization (task + fail-closed por texto vazio) é coberto na suíte do
+    próprio app (apps/anonymization/tests/test_tasks.py). Desvio incidental
+    autorizado (reportado no slice 004).
     """
 
-    with override_settings(INTAKE_RUN_TASKS_INLINE=False):
+    with override_settings(
+        INTAKE_RUN_TASKS_INLINE=False,
+        ANONYMIZATION_RUN_TASKS_INLINE=False,
+    ):
         yield
 
 

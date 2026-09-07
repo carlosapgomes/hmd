@@ -6,11 +6,23 @@ branch por estado do caso — ``NEW`` → ``start_pdf_extraction`` e processa;
 ``PDF_EXTRACTING`` (caso retido pelo gate/reenviado) → PULA o start (a
 transição exige source ``NEW``) e processa; demais estados → no-op com log
 (reexecução do q2 nunca duplica eventos). A operação roda sob lock do caso
-(``context="worker_pdf"``, ``role="system"``) com release no ``finally`` do
-token do claim; erro de extração → ``fail_processing`` (→ ``FAILED``) com o
-motivo na trilha; resultado do gate → conclusão (``ANONYMIZING`` + evento
+(``context="worker_pdf"``, ``role="system"``); a lease é liberada no MESMO
+atomic da fase final (ver coordenação abaixo) e o ``finally`` da task re-tenta
+o release apenas nos caminhos de exceção/no-op; erro de extração →
+``fail_processing`` (→ ``FAILED``) com o motivo na trilha; resultado do gate →
+conclusão (``ANONYMIZING`` + evento
 ``CASE_EXTRACTION_COMPLETED``) ou retenção (permanece ``PDF_EXTRACTING`` com
 ``manual_review_required`` + evento ``CASE_GATE_MANUAL_REVIEW``).
+
+Coordenação com a anonimização (finding P1 do review): a transição de saída
+(``complete_pdf_extraction`` — a que emite o evento de entrada em
+``ANONYMIZING``) e o ``release_case_lock`` rodam no MESMO
+``transaction.atomic()`` (fase final em ``_extract_and_decide``). Assim os
+hooks ``on_commit`` dos eventos dessa transição — o enqueue da task de
+anonimização — só disparam quando aquele atomic commitar, já com a lease
+``worker_pdf`` liberada. Sem essa ordem, em dev single-process (ambas as flags
+inline) a anonimização rodaria ainda DENTRO desta task com o lock ativo e o
+claim ``worker_anonymization`` conflitaria (caso wrongly FAILED).
 
 ``enqueue_case_processing`` é o serviço de criação (D7): enfileira no cluster
 ``pdf`` quando fora de inline; senão executa a task sincronamente.
@@ -30,7 +42,7 @@ from django.utils import timezone
 from django_q.tasks import async_task
 
 from apps.cases.events import CaseEventType
-from apps.cases.locks import CaseLockConflictError, claim_case_lock, release_case_lock
+from apps.cases.locks import CaseLock, CaseLockConflictError, claim_case_lock, release_case_lock
 from apps.cases.models import ActorType, Case, CaseEvent, CaseStatus
 from apps.intake.pdf_utils import (
     extract_agency_record_number,
@@ -58,10 +70,13 @@ def process_case_documents(case_id: uuid.UUID, user: User | None = None) -> None
     Branch por estado (D5): ``NEW`` → ``start_pdf_extraction`` (→ PDF_EXTRACTING,
     evento) e processa; ``PDF_EXTRACTING`` (retido/reenviado) → pula o start e
     processa; demais estados → log + no-op (idempotência — reexecução não
-    duplica eventos). Claim de lock ``context="worker_pdf"``/``role="system"``
-    com release no ``finally`` (token do claim); erro de extração →
-    ``fail_processing(reason)`` → ``FAILED``; ``user`` é aceito para paridade
-    com as operações auditadas, mas o pipeline atua como ator sistema.
+    duplica eventos). Claim de lock ``context="worker_pdf"``/``role="system"``;
+    o release roda na fase final dentro de ``_extract_and_decide`` (mesmo atomic
+    da transição de saída — coordenação com a anonimização) e o ``finally``
+    re-tenta apenas quando a fase não liberou (exceção/no-op/lease expirada);
+    erro de extração → ``fail_processing(reason)`` → ``FAILED``; ``user`` é
+    aceito para paridade com as operações auditadas, mas o pipeline atua como
+    ator sistema.
 
     Raises:
         ValueError: caso inexistente.
@@ -83,6 +98,7 @@ def process_case_documents(case_id: uuid.UUID, user: User | None = None) -> None
         return
 
     lock = claim_case_lock(case, user=None, context=WORKER_LOCK_CONTEXT, role=SYSTEM_ROLE)
+    released = False
     try:
         # Releitura sob posse da lease: entre a checagem e o claim o caso pode
         # ter sido processado por outra execução — a decisão é sempre fresca.
@@ -98,21 +114,30 @@ def process_case_documents(case_id: uuid.UUID, user: User | None = None) -> None
             return
 
         try:
-            _extract_and_decide(case)
+            # Fase final (finding P1): transição de saída + release da lease no
+            # MESMO atomic — os hooks on_commit da entrada em ANONYMIZING só
+            # disparam depois de a lease worker_pdf ser liberada. Devolve True
+            # quando o release rodou dentro do atomic; False quando a lease
+            # expirou antes (o finally re-tenta).
+            released = _extract_and_decide(case, lock=lock)
         except Exception as exc:
             logger.exception("process_case_documents: extração falhou para o caso %s", case_id)
+            # O rollback do atomic final desfez transição/eventos; a releitura
+            # garante o estado real (e o fail_processing válido) antes do fail.
+            case.refresh_from_db()
             case.fail_processing(reason=_failure_reason(exc), user=None, role=SYSTEM_ROLE)
     finally:
-        try:
-            release_case_lock(case, lock.token)
-        except CaseLockConflictError:
-            # Lease expirada durante o processamento: o lock se perdeu, mas o
-            # resultado do processamento não deve ser mascarado pelo release.
-            logger.warning(
-                "process_case_documents: lease do caso %s expirou antes do release",
-                case_id,
-                exc_info=True,
-            )
+        if not released:
+            try:
+                release_case_lock(case, lock.token)
+            except CaseLockConflictError:
+                # Lease expirada durante o processamento: o lock se perdeu, mas o
+                # resultado do processamento não deve ser mascarado pelo release.
+                logger.warning(
+                    "process_case_documents: lease do caso %s expirou antes do release",
+                    case_id,
+                    exc_info=True,
+                )
 
 
 def enqueue_case_processing(case: Case) -> None:
@@ -157,7 +182,7 @@ def _extract_document_text(document: CaseDocument) -> str:
         os.unlink(path)
 
 
-def _extract_and_decide(case: Case) -> None:
+def _extract_and_decide(case: Case, *, lock: CaseLock) -> bool:
     """Extrai os documentos na ordem, aplica o gate e decide o destino do caso.
 
     Pré-condição: caso sob lock do worker em ``PDF_EXTRACTING`` (o start do NEW
@@ -168,6 +193,17 @@ def _extract_and_decide(case: Case) -> None:
     com ``manual_review_required``/``manual_review_reason`` + evento
     ``CASE_GATE_MANUAL_REVIEW``. Exceção de extração propaga ao chamador (que
     converte em ``fail_processing``).
+
+    O ``release_case_lock`` roda DENTRO do mesmo atomic da transição de saída
+    (finding P1): os hooks ``on_commit`` registrados pelos eventos desta fase —
+    o enqueue da anonimização na entrada em ANONYMIZING — só disparam quando
+    este atomic commitar, com a lease ``worker_pdf`` já liberada (sem isso, o
+    modo inline single-process conflitaria no claim ``worker_anonymization``).
+
+    Returns:
+        ``True`` quando a lease do worker foi liberada neste atomic; ``False``
+        quando o release conflitou (lease expirada durante o processamento — o
+        finally da task re-tenta o release mantendo o resultado da fase).
     """
     raw_chunks: list[str] = []
     for document in case.documents.all():
@@ -214,6 +250,18 @@ def _extract_and_decide(case: Case) -> None:
                     "text_length": gate.text_length,
                 },
             )
+
+        # Release da lease DENTRO deste atomic (último passo da fase final): o
+        # commit deste bloco é o que dispara os hooks on_commit dos eventos da
+        # transição — que passam a rodar só com a lease já liberada. Conflito
+        # aqui só ocorre com a própria lease expirada (o row lock deste atomic
+        # impede claim alheio): o resultado da fase permanece e o finally da
+        # task re-tenta o release (contrato original).
+        try:
+            release_case_lock(current, lock.token)
+        except CaseLockConflictError:
+            return False
+    return True
 
 
 def _record_system_event(case: Case, *, event_type: str, payload: dict[str, object]) -> None:

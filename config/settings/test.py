@@ -59,3 +59,8 @@ APP_DISPLAY_NAME = "HMD — Hemodinâmica"
 # chamadas direto, sem cluster real — determinístico independente de um .env
 # local com INTAKE_RUN_TASKS_INLINE=false.
 INTAKE_RUN_TASKS_INLINE = True
+
+# Processamento da anonimização roda inline na suíte (design D7/R2): o signal
+# de entrada em ANONYMIZING executa a task sincronamente — determinístico
+# independente de um .env local com ANONYMIZATION_RUN_TASKS_INLINE=false.
+ANONYMIZATION_RUN_TASKS_INLINE = True

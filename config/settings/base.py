@@ -210,12 +210,27 @@ INTAKE_RUN_TASKS_INLINE = os.environ.get("INTAKE_RUN_TASKS_INLINE", "true").lowe
 ANONYMIZATION_SPACY_MODEL = os.environ.get("ANONYMIZATION_SPACY_MODEL", "pt_core_news_lg")
 ANONYMIZATION_SCORE_THRESHOLD = float(os.environ.get("ANONYMIZATION_SCORE_THRESHOLD", "0.45"))
 
+# Modo de execução da task de anonimização (change presidio-anonymization,
+# slice 004, design D7/R2): ``True`` (default em dev/teste) executa a task
+# sincronamente quando o signal de entrada em ANONYMIZING dispara — testes
+# determinísticos, sem worker; ``False`` enfileira no cluster ``anonymization``
+# do django-q2 (produção/compose com o serviço worker-anonymization).
+ANONYMIZATION_RUN_TASKS_INLINE = os.environ.get(
+    "ANONYMIZATION_RUN_TASKS_INLINE", "true"
+).lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # django-q2 (change intake-nir-upload, slice 003, design D2): fila de tasks
 # assíncronas com broker ORM (``orm: "default"`` — sem Redis), no formato do
 # ats-web, com ``ALT_CLUSTERS`` DENTRO de ``Q_CLUSTER``. O cluster ``pdf``
 # (extração de PDF, 2 workers/timeout 180s) é consumido por um processo
-# ``manage.py qcluster`` com ``Q_CLUSTER_NAME=pdf``; o cluster ``llm`` chega no
-# change 06.
+# ``manage.py qcluster`` com ``Q_CLUSTER_NAME=pdf``; o cluster ``anonymization``
+# (slice 004 — engine Presidio/spaCy no worker, 2 workers/timeout 300s/
+# retry 360s, separado do ``pdf`` para o modelo não competir com a extração)
+# por ``Q_CLUSTER_NAME=anonymization``; o cluster ``llm`` chega no change 06.
 Q_CLUSTER = {
     "name": "hmd",
     "orm": "default",
@@ -228,6 +243,11 @@ Q_CLUSTER = {
             "workers": 2,
             "timeout": 180,
             "retry": 300,
+        },
+        "anonymization": {
+            "workers": 2,
+            "timeout": 300,
+            "retry": 360,
         },
     },
 }

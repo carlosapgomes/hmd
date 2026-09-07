@@ -1,10 +1,14 @@
-# Desenvolvimento: db persistente + serviço web (runserver) do HMD.
-# Uso: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Desenvolvimento: db persistente + serviço web (runserver) + workers do HMD.
+# Uso: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 #
-# O overlay soma ao docker-compose.yml: volume persistente do db e o serviço
-# web com live-reload (mount do código-fonte). O .venv do host nunca vaza:
-# um volume dedicado guarda as dependências, sincronizadas no start do
-# container com `uv sync --frozen` (idempotente quando o lock está satisfeito).
+# O overlay soma ao docker-compose.yml: volume persistente do db, o serviço
+# web com live-reload (mount do código-fonte) e os workers do django-q2. Os
+# três serviços usam a MESMA imagem construída do Dockerfile (slice 004, R5):
+# dependências + modelo spaCy instalados no BUILD. O web dev mantém o fluxo de
+# volume/runserver de sempre (bind do código + volume app_venv sincronizados
+# com `uv sync --frozen` no start); os workers usam a imagem pronta — sem sync
+# no startup e sem bind do código (mudanças nos workers exigem `--build`).
+# O .venv do host nunca vaza (volume dedicado no web; imagem no worker).
 
 name: hmd-dev
 
@@ -17,6 +21,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: hmd-dev:app
     command: >
       sh -c "uv sync --frozen &&
              uv run python manage.py runserver 0.0.0.0:8000 --settings=config.settings.dev"
@@ -30,8 +35,11 @@ services:
       DATABASE_URL: postgres://hmd:hmd_dev@db:5432/hmd_dev
       DJANGO_SECRET_KEY: dev-secret-key-not-for-production
       DJANGO_DEBUG: "true"
-      # Com o worker-pdf no ar, o web enfileira (nunca processa inline 2×).
+      # Com os workers no ar, o web enfileira (nunca processa inline 2×); a
+      # anonimização também nunca roda inline no processo web (o modelo spaCy
+      # vive apenas no worker-anonymization — design D7).
       INTAKE_RUN_TASKS_INLINE: "false"
+      ANONYMIZATION_RUN_TASKS_INLINE: "false"
     depends_on:
       db:
         condition: service_healthy
@@ -40,26 +48,50 @@ services:
     stdin_open: true
     tty: true
 
-  # Worker do cluster pdf do django-q2 (design D2/R5): consome o cluster
-  # alternativo "pdf" (extração) em um processo dedicado; o cluster default
+  # Worker do cluster pdf do django-q2 (extração, design D2/R5): consome o
+  # cluster alternativo "pdf" em um processo dedicado usando a IMAGEM PRONTA
+  # (deps+modelo no build, sem `uv sync`/bind do código); o cluster default
   # "hmd" não é executado no compose dev. Compartilha o volume de media com o
-  # web (mesmo MEDIA_ROOT) — os PDFs gravados no upload são lidos aqui.
+  # web (mesmo MEDIA_ROOT) — os PDFs gravados no upload são lidos aqui. Ao
+  # concluir a extração (entrada em ANONYMIZING), o signal enfileira no
+  # cluster anonymization (nunca inline no processo do pdf).
   worker-pdf:
     build:
       context: .
       dockerfile: Dockerfile
-    command: >
-      sh -c "uv sync --frozen &&
-             uv run python manage.py qcluster --settings=config.settings.dev"
+    image: hmd-dev:app
+    command: python manage.py qcluster --settings=config.settings.dev
     volumes:
-      - .:/app
-      - app_venv:/app/.venv
       - media_data:/app/media
     environment:
       DATABASE_URL: postgres://hmd:hmd_dev@db:5432/hmd_dev
       DJANGO_SECRET_KEY: dev-secret-key-not-for-production
       DJANGO_DEBUG: "true"
       Q_CLUSTER_NAME: pdf
+      INTAKE_RUN_TASKS_INLINE: "false"
+      ANONYMIZATION_RUN_TASKS_INLINE: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - hmd-net
+
+  # Worker do cluster anonymization do django-q2 (slice 004, R5): consome o
+  # cluster alternativo "anonymization" — o único processo que carrega o
+  # engine Presidio/spaCy (singleton; o modelo vive na imagem do build).
+  worker-anonymization:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hmd-dev:app
+    command: python manage.py qcluster --settings=config.settings.dev
+    environment:
+      DATABASE_URL: postgres://hmd:hmd_dev@db:5432/hmd_dev
+      DJANGO_SECRET_KEY: dev-secret-key-not-for-production
+      DJANGO_DEBUG: "true"
+      Q_CLUSTER_NAME: anonymization
+      INTAKE_RUN_TASKS_INLINE: "false"
+      ANONYMIZATION_RUN_TASKS_INLINE: "false"
     depends_on:
       db:
         condition: service_healthy

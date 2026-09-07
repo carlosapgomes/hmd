@@ -22,7 +22,7 @@
 
 ## 4. Worker/cluster
 
-- [ ] 4.1 Slice 004 — cluster `anonymization` (ALT_CLUSTERS) + task idempotente com lock + signal de enqueue na entrada de ANONYMIZING + compose `worker-anonymization` + fail-closed + ADR-0007. Ver `slices/slice-004-worker-cluster.md`
+- [x] 4.1 Slice 004 — cluster `anonymization` (ALT_CLUSTERS) + task idempotente com lock + signal de enqueue na entrada de ANONYMIZING + compose `worker-anonymization` + fail-closed + ADR-0007. Ver `slices/slice-004-worker-cluster.md` (coordenação transição+release no mesmo atomic no intake — desvio autorizado; Dockerfile com modelo no build)
 
 ## 5. Re-identificação + benchmark
 

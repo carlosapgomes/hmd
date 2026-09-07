@@ -49,6 +49,19 @@ INTAKE_RUN_TASKS_INLINE = os.environ.get("INTAKE_RUN_TASKS_INLINE", "false").low
     "yes",
 )
 
+# Processamento da anonimização (change presidio-anonymization, slice 004,
+# R2): em produção o default é enfileirar no cluster anonymization — nunca
+# rodar inline sem intenção explícita (o processo web nunca carrega o modelo
+# spaCy; só o worker anonymization). Só roda inline se a variável estiver
+# explicitamente ligada.
+ANONYMIZATION_RUN_TASKS_INLINE = os.environ.get(
+    "ANONYMIZATION_RUN_TASKS_INLINE", "false"
+).lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # Segurança
 CSRF_COOKIE_SECURE = True
 SESSION_COOKIE_SECURE = True

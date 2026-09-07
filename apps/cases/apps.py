@@ -8,3 +8,7 @@ class CasesConfig(AppConfig):
     name = "apps.cases"
     label = "cases"
     verbose_name = "Casos"
+
+    def ready(self) -> None:
+        """Registra os signals do app (projeção de comunicações, slice 005)."""
+        from apps.cases import signals  # noqa: F401

@@ -26,7 +26,7 @@
 
 ## 5. Comunicações
 
-- [ ] 5.1 Slice 005 — `CaseCommunicationMessage` (user/system) + projeção sistêmica via signal + serviço de post do usuário. Ver `slices/slice-005-communications.md`
+- [x] 5.1 Slice 005 — `CaseCommunicationMessage` (user/system) + projeção sistêmica via signal + serviço de post do usuário. Ver `slices/slice-005-communications.md`
 
 ## 6. Gate final do change
 

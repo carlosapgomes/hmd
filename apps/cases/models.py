@@ -501,3 +501,62 @@ class CaseEvent(models.Model):
 
     def __str__(self) -> str:
         return f"CaseEvent {self.event_type} @ {self.timestamp}"
+
+
+class MessageType(models.TextChoices):
+    """Tipo da mensagem da thread de comunicações do caso (design D8)."""
+
+    USER = "user", "Usuário"
+    SYSTEM = "system", "Sistema"
+
+
+class CaseCommunicationMessage(models.Model):
+    """Mensagem de comunicação operacional do caso (design D8, slice 005).
+
+    Thread append-only por caso com dois tipos: ``user`` (manual, com autor e
+    papel ativo no momento do post) e ``system`` (automática, projetada de
+    eventos relevantes da FSM via signal ``CaseEvent.post_save`` — sem autor,
+    sem notificação). Espelho do ats-web ``CaseCommunicationMessage``;
+    divergência HMD (D8): o post manual é feito por
+    ``apps/cases/communications.py::post_user_communication`` com papel
+    explícito (o ats-web cria notificações de menção — change 11, fora de
+    escopo). ``source_event`` O2O garante no máximo uma mensagem system por
+    evento (projeção idempotente, R4).
+    """
+
+    message_type = models.CharField(
+        max_length=20, choices=MessageType.choices, default=MessageType.USER
+    )
+    message_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    case = models.ForeignKey(Case, on_delete=models.CASCADE, related_name="communication_messages")
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="case_communication_messages",
+    )
+    # Papel ativo do autor no momento do post (design D8).
+    author_role = models.CharField(max_length=30, blank=True)
+    body = models.TextField()
+    source_event = models.OneToOneField(
+        CaseEvent,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="communication_notice",
+    )
+    # Tipo canônico do evento projetado (espelho do ``event_type`` da trilha).
+    system_event_type = models.CharField(max_length=80, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["case", "created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        if self.message_type == MessageType.SYSTEM:
+            return f"CaseCommunicationMessage {self.message_id} [system: {self.system_event_type}]"
+        return f"CaseCommunicationMessage {self.message_id} [{self.author_role}]"

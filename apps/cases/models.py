@@ -1,27 +1,33 @@
-"""Models de casos (change 03, slice 002, design D4/D5/D7).
+"""Models de casos (change 03, slices 002–003, design D2/D4/D5/D7).
 
 ``Case`` é o núcleo enxuto: identificador UUID, FSM de 17 estados com
 transições protegidas (``django-fsm-2``) e os campos de identidade/origem
-(D7). ``CaseEvent`` é a trilha de auditoria append-only. Divergências
-deliberadas vs ats-web: ``actor_role`` (acréscimo HMD) e ``actor_type ∈
-{user, system}``; gravação direta — cada transição faz ``save()`` e cria o
-``CaseEvent`` no mesmo ``transaction.atomic()``, sem o padrão pending-event +
-signal ``Case.post_save`` do ats-web (design D5).
+(D7). ``CaseProcedure`` é a dimensão de procedimento por caso (D2) — 1–N rows
+por caso, neutras, com unicidade (case, procedure_type). ``CaseEvent`` é a
+trilha de auditoria append-only. Divergências deliberadas vs ats-web:
+``actor_role`` (acréscimo HMD) e ``actor_type ∈ {user, system}``; gravação
+direta — cada transição faz ``save()`` e cria o ``CaseEvent`` no mesmo
+``transaction.atomic()``, sem o padrão pending-event + signal
+``Case.post_save`` do ats-web (design D5).
 """
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django_fsm import RETURN_VALUE, FSMField, FSMModelMixin, transition
 
 from apps.cases.events import case_status_event_type
+from apps.cases.procedure_catalog import get_procedure_profile
 
 if TYPE_CHECKING:
+    from django.db.models.base import ModelBase
+
     from apps.accounts.models import User
 
 
@@ -57,6 +63,22 @@ class ActorType(models.TextChoices):
 
     USER = "user", "Usuário"
     SYSTEM = "system", "Sistema"
+
+
+class DetectionStatus(models.TextChoices):
+    """Projeção operacional da detecção da análise por procedimento (D2)."""
+
+    PENDING = "pending", "Pendente"
+    DETECTED = "detected", "Detectado"
+    NOT_DETECTED = "not_detected", "Não detectado"
+
+
+class DoctorDisposition(models.TextChoices):
+    """Projeção operacional da decisão médica por procedimento (D2)."""
+
+    PENDING = "pending", "Pendente"
+    APPROVED = "approved", "Aprovado"
+    DENIED = "denied", "Negado"
 
 
 class Case(FSMModelMixin, models.Model):
@@ -341,6 +363,95 @@ class Case(FSMModelMixin, models.Model):
     def complete_cleaning(self, *, user: User | None = None, role: str | None = None) -> None:
         """CLEANING → CLEANED (fim da limpeza de dados)."""
         self._run_transition(self._fsm_complete_cleaning, user=user, role=role)
+
+
+def _validate_procedure_type_in_catalog(procedure_type: str) -> None:
+    """Fail-fast (R1): tipo fora do catálogo é rejeitado nomeando o tipo.
+
+    Validação única do campo ``procedure_type`` usada pela ``clean()`` e pelo
+    ``save()``. ``bulk_create``/SQL cru seguem sendo o buraco documentado
+    padrão do Django (métodos do model não rodam nesses caminhos) — fora de
+    cobertura.
+    """
+    try:
+        get_procedure_profile(procedure_type)
+    except KeyError:
+        raise ValidationError(
+            {"procedure_type": f"procedimento fora do catálogo: {procedure_type!r}"}
+        ) from None
+
+
+class CaseProcedure(models.Model):
+    """Dimensão de procedimento por caso, neutra (design D2 / padrão ats-web ADR-0004).
+
+        O conjunto de procedimentos de um caso vive exclusivamente nestas rows
+        (1–N por caso; no máximo uma row por (case, procedure_type)); declaração
+        do NIR (``declared_by_nir``), detecção do pipeline (``detection_status``)
+        e disposição médica (``doctor_disposition`` + ``doctor_reason`` +
+        ``doctor_decided_at``) são fatos distintos por row. Rows não declaradas
+        permanecem (a transformação é auditável); o contrato do conjunto é
+    derivado exclusivamente das rows por ``apps/cases/procedures.py`` — as views
+    nunca escrevem rows direto. ``procedure_type`` é validado contra o catálogo
+    code-first (R1) na ``clean()`` e revalidado no ``save()`` (que também roda
+    quando o ``objects.create()`` pula a ``full_clean()``) — tipo fora do
+    catálogo é rejeitado nos dois caminhos.
+    """
+
+    case = models.ForeignKey(Case, on_delete=models.CASCADE, related_name="procedures")
+    procedure_type = models.CharField(max_length=20)
+    declared_by_nir = models.BooleanField(default=False)
+    detection_status = models.CharField(
+        max_length=20,
+        choices=DetectionStatus.choices,
+        default=DetectionStatus.PENDING,
+    )
+    doctor_disposition = models.CharField(
+        max_length=20,
+        choices=DoctorDisposition.choices,
+        default=DoctorDisposition.PENDING,
+    )
+    doctor_reason = models.TextField(blank=True)
+    # Instante da decisão médica desta row (acréscimo HMD — o ats-web não tem).
+    doctor_decided_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["case", "procedure_type"], name="uniq_case_procedure_type"
+            ),
+        ]
+
+    def clean(self) -> None:
+        super().clean()
+        _validate_procedure_type_in_catalog(self.procedure_type)
+
+    def save(
+        self,
+        *,
+        force_insert: bool | tuple[ModelBase, ...] = False,
+        force_update: bool = False,
+        using: str | None = None,
+        update_fields: Iterable[str] | None = None,
+    ) -> None:
+        """Persiste a row revalidando o tipo contra o catálogo (R1).
+
+        ``objects.create()``/``get_or_create()`` não rodam a ``full_clean()``;
+        o ``save()`` repete a validação do campo como defesa — tipo fora do
+        catálogo nunca persiste por esse caminho. ``bulk_create``/SQL cru
+        seguem sendo o buraco documentado padrão do Django (fora de cobertura).
+        """
+        _validate_procedure_type_in_catalog(self.procedure_type)
+        super().save(
+            force_insert=force_insert,
+            force_update=force_update,
+            using=using,
+            update_fields=update_fields,
+        )
+
+    def __str__(self) -> str:
+        return f"CaseProcedure {self.case_id} [{self.procedure_type}]"
 
 
 class CaseEvent(models.Model):

@@ -18,7 +18,7 @@
 
 ## 3. Procedimentos por caso
 
-- [ ] 3.1 Slice 003 — `CaseProcedure` (neutro, uniq caso+tipo) + serviços de declaração/detecção/decisão atômicos com eventos. Ver `slices/slice-003-case-procedures-services.md`
+- [x] 3.1 Slice 003 — `CaseProcedure` (neutro, uniq caso+tipo) + serviços de declaração/detecção/decisão atômicos com eventos. Ver `slices/slice-003-case-procedures-services.md` (validação de catálogo pré-mutação + defesa em save())
 
 ## 4. Locks
 

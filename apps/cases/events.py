@@ -36,6 +36,15 @@ class CaseEventType(models.TextChoices):
     CASE_STATUS_CLEANING = "CASE_STATUS_CLEANING", "Limpeza de dados em andamento"
     CASE_STATUS_CLEANED = "CASE_STATUS_CLEANED", "Caso concluído"
 
+    # Operações de procedimento por caso (slice 003): declaradas em payloads
+    # enxutos pelos serviços de apps/cases/procedures.py.
+    CASE_PROCEDURES_DECLARED = "CASE_PROCEDURES_DECLARED", "Procedimentos declarados pelo NIR"
+    CASE_PROCEDURES_DETECTED = "CASE_PROCEDURES_DETECTED", "Detecção de procedimentos registrada"
+    CASE_DOCTOR_DECISIONS_RECORDED = (
+        "CASE_DOCTOR_DECISIONS_RECORDED",
+        "Decisões médicas por procedimento registradas",
+    )
+
 
 def case_status_event_type(state: str) -> str:
     """Resolve o tipo canônico do evento de transição para o estado-alvo.

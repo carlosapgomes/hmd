@@ -39,6 +39,16 @@ ALLOWED_HOSTS = [
 
 DATABASES = {"default": dj_database_url.config(conn_max_age=600, conn_health_checks=True)}
 
+# Processamento do intake (change intake-nir-upload, slice 003, R4): em
+# produção o default é enfileirar no cluster pdf — nunca processar inline sem
+# intenção explícita (falha fechado). Só roda inline se a variável estiver
+# explicitamente ligada.
+INTAKE_RUN_TASKS_INLINE = os.environ.get("INTAKE_RUN_TASKS_INLINE", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # Segurança
 CSRF_COOKIE_SECURE = True
 SESSION_COOKIE_SECURE = True

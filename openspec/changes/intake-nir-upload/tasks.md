@@ -17,7 +17,7 @@
 
 ## 3. Worker/cluster
 
-- [ ] 3.1 Slice 003 — django-q2 (cluster `pdf`, `INTAKE_RUN_TASKS_INLINE`) + task `process_case_documents` (lock, FSM, gate, nº) + compose `worker-pdf`/media + env. Ver `slices/slice-003-worker-task-q2.md`
+- [x] 3.1 Slice 003 — django-q2 (cluster `pdf`, `INTAKE_RUN_TASKS_INLINE`) + task `process_case_documents` (lock, FSM, gate, nº) + compose `worker-pdf`/media + env. Ver `slices/slice-003-worker-task-q2.md` (django-q2 1.10.0, Q_CLUSTER orm=default)
 
 ## 4. Meus casos e detalhe
 

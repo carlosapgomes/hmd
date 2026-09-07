@@ -30,3 +30,10 @@ services:
 networks:
   hmd-net:
     driver: bridge
+
+# Volume de media compartilhado entre web e worker-pdf (R5/design D2): o
+# worker do django-q2 lê os PDFs gravados pelo upload no mesmo filesystem
+# local — declarado aqui e montado em MEDIA_ROOT (/app/media) pelos dois
+# serviços no overlay docker-compose.dev.yml.
+volumes:
+  media_data:

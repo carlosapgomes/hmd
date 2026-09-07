@@ -54,3 +54,8 @@ SESSION_COOKIE_SECURE = False
 
 # Determinístico independente de .env local.
 APP_DISPLAY_NAME = "HMD — Hemodinâmica"
+
+# Processamento do intake roda inline na suíte (design D2/R4): as tasks são
+# chamadas direto, sem cluster real — determinístico independente de um .env
+# local com INTAKE_RUN_TASKS_INLINE=false.
+INTAKE_RUN_TASKS_INLINE = True

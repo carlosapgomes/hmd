@@ -6,7 +6,8 @@ Divergências deliberadas do HMD (D1/D7): um upload vira **um** ``Case`` com
 1–N ``CaseDocument`` ordenados (o ats-web cria um caso por PDF); a validação é
 **PDF-only** própria (content-type ``application/pdf`` + extensão + tamanho) —
 o ``validate_attachment_file`` do ats-web NÃO serve (aceita JPEG/PNG para
-anexos); e a criação não enfileira nenhuma task (a extração é o slice 003).
+anexos); a criação dispara o processamento FORA da transação (slice 003,
+D7: inline em dev/teste ou enqueue no cluster pdf do django-q2).
 
 Contrato (R3): toda validação roda ANTES de qualquer persistência — falha =
 zero efeito no banco e o erro nomeia o arquivo/tipo inválido. No sucesso, uma
@@ -30,6 +31,7 @@ from django.db import transaction
 from apps.cases.models import Case, CaseDocument
 from apps.cases.procedure_catalog import get_procedure_profile
 from apps.cases.procedures import set_declared_procedures
+from apps.intake.tasks import enqueue_case_processing
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
@@ -111,10 +113,11 @@ def create_case_with_documents(
     Valida tudo antes de persistir (contagem, PDF-only por arquivo, tipos do
     catálogo). No sucesso, numa transação única: ``Case(NEW, created_by=user)``,
     as rows ``CaseDocument`` (position 1..N, arquivos gravados no storage) e a
-    declaração via ``set_declared_procedures`` (com evento na trilha). Não
-    enfileira processamento — a extração é o slice 003. Em exceção após
-    gravações físicas, remove best-effort os arquivos já escritos (o rollback
-    do banco não reverte o filesystem).
+    declaração via ``set_declared_procedures`` (com evento na trilha). Fora da
+    transação, o processamento é disparado via ``enqueue_case_processing``
+    (inline em dev/teste ou enqueue no cluster pdf — D7, slice 003). Em exceção
+    após gravações físicas, remove best-effort os arquivos já escritos (o
+    rollback do banco não reverte o filesystem).
     """
     uploaded_files = list(files)
     declared_types = tuple(procedure_types)
@@ -145,4 +148,6 @@ def create_case_with_documents(
     except BaseException:
         _delete_saved_files_best_effort(saved_file_names)
         raise
+    # Fora da transação (D7): enfileira no cluster pdf ou executa inline.
+    enqueue_case_processing(case)
     return case

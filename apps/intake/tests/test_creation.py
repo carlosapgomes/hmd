@@ -10,7 +10,7 @@ upload multi-PDF e declaração de tipos".
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -25,6 +25,21 @@ from apps.intake.services import create_case_with_documents
 
 NIR_ROLE = "nir"
 DOCTOR_ROLE = "doctor"
+
+
+@pytest.fixture(autouse=True)
+def _creation_without_processing() -> Iterator[None]:
+    """Criação apenas (slice 001): processamento desligado nos testes deste módulo.
+
+    Os PDFs fake destes testes não têm camada de texto/estrutura lida pelo
+    extrator — o enqueue pós-transação (slice 003) roda inline por default na
+    suíte e processaria/descartaria esses arquivos. Os testes de criação fixam
+    o comportamento que testam (criação até NEW) desligando o processamento;
+    o caminho inline em si é coberto em test_tasks.py.
+    """
+
+    with override_settings(INTAKE_RUN_TASKS_INLINE=False):
+        yield
 
 
 def _assert_nothing_persisted() -> None:

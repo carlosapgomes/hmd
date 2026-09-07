@@ -52,6 +52,22 @@ class CaseEventType(models.TextChoices):
     CASE_LOCK_RENEWED = "CASE_LOCK_RENEWED", "Lease de exclusividade renovada"
     CASE_LOCK_EXPIRED = "CASE_LOCK_EXPIRED", "Lease de exclusividade expirada"
 
+    # Extração e gate do intake (change intake-nir-upload, slice 003, D4/D5):
+    # eventos não-transicionais gravados pela task do worker e pelas ações de
+    # revisão do gate (o bypass é o slice 005).
+    CASE_EXTRACTION_COMPLETED = (
+        "CASE_EXTRACTION_COMPLETED",
+        "Extração de PDF concluída",
+    )
+    CASE_GATE_MANUAL_REVIEW = (
+        "CASE_GATE_MANUAL_REVIEW",
+        "Documento retido pelo gate para revisão manual",
+    )
+    CASE_GATE_BYPASSED = (
+        "CASE_GATE_BYPASSED",
+        "Gate de regulação dispensado na revisão do NIR",
+    )
+
 
 def case_status_event_type(state: str) -> str:
     """Resolve o tipo canônico do evento de transição para o estado-alvo.

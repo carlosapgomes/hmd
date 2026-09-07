@@ -25,6 +25,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Fila de tasks assíncronas (django-q2, design D2) — broker ORM, sem Redis.
+    "django_q",
     # Apps de domínio (apps/).
     "apps.accounts",
     # Núcleo de casos (change 03): slice 001 entrega o catálogo code-first
@@ -185,3 +187,36 @@ INTAKE_REGULATION_MIN_TEXT_CHARS = int(os.environ.get("INTAKE_REGULATION_MIN_TEX
 INTAKE_REGULATION_MIN_OPERATIONAL_SECTIONS = int(
     os.environ.get("INTAKE_REGULATION_MIN_OPERATIONAL_SECTIONS", "3")
 )
+
+# Modo de execução do processamento pós-criação do intake (change
+# intake-nir-upload, slice 003, design D2/R4): ``True`` (default em dev/teste)
+# executa a task sincronamente na criação — UX imediata e testes
+# determinísticos, sem worker; ``False`` enfileira no cluster ``pdf`` do
+# django-q2 (produção/compose com o serviço worker-pdf).
+INTAKE_RUN_TASKS_INLINE = os.environ.get("INTAKE_RUN_TASKS_INLINE", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+# django-q2 (change intake-nir-upload, slice 003, design D2): fila de tasks
+# assíncronas com broker ORM (``orm: "default"`` — sem Redis), no formato do
+# ats-web, com ``ALT_CLUSTERS`` DENTRO de ``Q_CLUSTER``. O cluster ``pdf``
+# (extração de PDF, 2 workers/timeout 180s) é consumido por um processo
+# ``manage.py qcluster`` com ``Q_CLUSTER_NAME=pdf``; o cluster ``llm`` chega no
+# change 06.
+Q_CLUSTER = {
+    "name": "hmd",
+    "orm": "default",
+    # Base (cluster default, não executado no compose dev) com timeout/retry
+    # coerentes para o Conf do django-q2 não reclamar de configuração.
+    "timeout": 900,
+    "retry": 1200,
+    "ALT_CLUSTERS": {
+        "pdf": {
+            "workers": 2,
+            "timeout": 180,
+            "retry": 300,
+        },
+    },
+}

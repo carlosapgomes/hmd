@@ -19,6 +19,7 @@ dependencies = [
     # 002, design D3). Fixado: a suíte gera PDFs de fixture com a API de
     # escrita do PyMuPDF — versão exata travada no lockfile.
     "pymupdf==1.28.2",
+    "django-q2==1.10.0",
 ]
 
 [dependency-groups]
@@ -63,6 +64,14 @@ module = [
     "unicrypto.*",
     "oscrypto.*",
 ]
+ignore_missing_imports = true
+
+# django-q2 1.10.0 sem py.typed (intake-nir-upload, slice 003): enqueue via
+# ``async_task`` é chamada não-tipada do worker (apps/intake/tasks.py); os
+# models do app também são varridos pelo plugin do django-stubs via
+# INSTALLED_APPS — sem stubs, o pacote entra como Any.
+[[tool.mypy.overrides]]
+module = ["django_q.*"]
 ignore_missing_imports = true
 
 [tool.django-stubs]

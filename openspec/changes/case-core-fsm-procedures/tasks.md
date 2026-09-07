@@ -14,7 +14,7 @@
 
 ## 2. Case + FSM + eventos
 
-- [ ] 2.1 Slice 002 — `Case` (17 estados, transições protegidas, `_record_event`) + `CaseEvent` append-only + migration + dependência FSM. Ver `slices/slice-002-case-fsm-events.md`
+- [x] 2.1 Slice 002 — `Case` (17 estados, transições protegidas, `_record_event`) + `CaseEvent` append-only + migration + dependência FSM. Ver `slices/slice-002-case-fsm-events.md` (gravação direta de eventos no mesmo atomic — D5)
 
 ## 3. Procedimentos por caso
 

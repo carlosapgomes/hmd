@@ -12,6 +12,9 @@ dependencies = [
     # Cliente Kerberos puro em Python para validação de senha AD (D1).
     # Fixado: superfície pequena/menos auditada exige pin exato.
     "minikerberos==0.4.9",
+    # FSM de casos (change 03, D1 confirmada): django-fsm-2 (MIT), drop-in da
+    # API django-fsm (@transition/FSMField(protected=True)/signals).
+    "django-fsm-2==4.2.4",
 ]
 
 [dependency-groups]

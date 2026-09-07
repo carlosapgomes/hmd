@@ -14,8 +14,8 @@ Exclusividade de mutação por caso com lease temporária: claim (com token, con
 ## Requisitos
 
 - **R1** Campos de lock no `Case` (migration): `locked_by FK SET_NULL null`, `locked_at`, `locked_until` (indexado), `lock_token UUID null`, `lock_context` (max 40, blank), `lock_role` (max 30, blank).
-- **R2** `claim_case_lock(case, *, user, context, role=None, lease_seconds=None)`: dentro de `transaction.atomic()` + `select_for_update` no case — livre **ou** lease expirada (grava evento `CASE_LOCK_EXPIRED` e assume) → novo `lock_token`, `locked_until = now + lease` (default settings, 300s), evento `CASE_LOCK_CLAIMED`; lock ativo de outro ator → `CaseLockConflict` (erro explícito com dono/contexto) sem alterar nada.
-- **R3** `assert_case_lock(case, token)`: token divergente ou sem lock → `CaseLockConflict`; válido → ok (usado pelos serviços de mutação do slice 003 e futuros).
+- **R2** `claim_case_lock(case, *, user, context, role=None, lease_seconds=None)`: dentro de `transaction.atomic()` + `select_for_update` no case — livre **ou** lease expirada (grava evento `CASE_LOCK_EXPIRED` e assume) → novo `lock_token`, `locked_until = now + lease` (default settings, 300s), evento `CASE_LOCK_CLAIMED`; lock ativo de outro ator → `CaseLockConflictError` (erro explícito com dono/contexto) sem alterar nada.
+- **R3** `assert_case_lock(case, token)`: token divergente ou sem lock → `CaseLockConflictError`; válido → ok (usado pelos serviços de mutação do slice 003 e futuros).
 - **R4** `release_case_lock(case, token)`: só o portador libera (token errado → conflito); evento `CASE_LOCK_RELEASED`.
 - **R5** `renew_case_lock(case, token, lease_seconds=None)`: portador estende `locked_until`; evento `CASE_LOCK_RENEWED`.
 - **R6** `expire_stale_locks()`: varre locks com `locked_until < now`, limpa e grava `CASE_LOCK_EXPIRED` (executável por chamada agendada futura; neste change, função + teste).

@@ -1,4 +1,4 @@
-"""Models de casos (change 03, slices 002–003, design D2/D4/D5/D7).
+"""Models de casos (change 03, slices 002–004, design D2/D4/D5/D6/D7).
 
 ``Case`` é o núcleo enxuto: identificador UUID, FSM de 17 estados com
 transições protegidas (``django-fsm-2``) e os campos de identidade/origem
@@ -104,6 +104,24 @@ class Case(FSMModelMixin, models.Model):
     # Identidade/origem (gate 04 e prior-case 06).
     agency_record_number = models.CharField(max_length=20, blank=True)
     agency_record_extracted_at = models.DateTimeField(null=True, blank=True)
+
+    # Lock/lease de exclusividade de mutação (design D6, slice 004): espelho
+    # do ats-web — dono (FK SET_NULL), concessão/vencimento (indexado), token
+    # de posse, contexto operacional (ex.: doctor_queue, worker_pipeline) e
+    # papel ativo na concessão. Escritos apenas por apps/cases/locks.py;
+    # ``locked_until`` futuro = lock ativo; vencido = assumível por novo claim.
+    locked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="cases_locked",
+    )
+    locked_at = models.DateTimeField(null=True, blank=True)
+    locked_until = models.DateTimeField(null=True, blank=True, db_index=True)
+    lock_token = models.UUIDField(null=True, blank=True)
+    lock_context = models.CharField(max_length=40, blank=True)
+    lock_role = models.CharField(max_length=30, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

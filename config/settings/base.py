@@ -163,3 +163,8 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
+
+# Locks/lease de casos (change 03, slice 004, design D6): duração default da
+# lease de exclusividade de mutação por caso, em segundos (default 300 = 5min,
+# alinhado ao ats-web). Sem variantes por papel/contexto no HMD.
+CASE_LOCK_LEASE_SECONDS = int(os.environ.get("CASE_LOCK_LEASE_SECONDS", "300"))

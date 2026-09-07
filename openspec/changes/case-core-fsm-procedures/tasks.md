@@ -22,7 +22,7 @@
 
 ## 4. Locks
 
-- [ ] 4.1 Slice 004 — campos de lock/lease + `locks.py` (claim/assert/release/renew/expire com token e eventos). Ver `slices/slice-004-case-locks.md`
+- [x] 4.1 Slice 004 — campos de lock/lease + `locks.py` (claim/assert/release/renew/expire com token e eventos; `CaseLockConflictError`). Ver `slices/slice-004-case-locks.md`
 
 ## 5. Comunicações
 

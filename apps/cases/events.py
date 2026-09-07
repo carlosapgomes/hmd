@@ -45,6 +45,13 @@ class CaseEventType(models.TextChoices):
         "Decisões médicas por procedimento registradas",
     )
 
+    # Locks/lease de exclusividade de mutação por caso (slice 004, D6): claim,
+    # liberação, renovação e expiração de leases em apps/cases/locks.py.
+    CASE_LOCK_CLAIMED = "CASE_LOCK_CLAIMED", "Exclusividade de mutação reivindicada"
+    CASE_LOCK_RELEASED = "CASE_LOCK_RELEASED", "Exclusividade de mutação liberada"
+    CASE_LOCK_RENEWED = "CASE_LOCK_RENEWED", "Lease de exclusividade renovada"
+    CASE_LOCK_EXPIRED = "CASE_LOCK_EXPIRED", "Lease de exclusividade expirada"
+
 
 def case_status_event_type(state: str) -> str:
     """Resolve o tipo canônico do evento de transição para o estado-alvo.

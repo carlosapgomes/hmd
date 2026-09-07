@@ -5,11 +5,11 @@
 
 ## 0. Preflight
 
-- [ ] 0.1 Confirmar working tree limpa, registrar `BASE_REF`; baseline verde (gate do change 03 serve)
+- [x] 0.1 Confirmar working tree limpa, registrar `BASE_REF`; baseline verde (gate do change 03 serve) — árvore limpa, BASE_REF `c3ac522`, baseline 277 testes válida
 
 ## 1. Criação do caso (upload + declaração)
 
-- [ ] 1.1 Slice 001 — `CaseDocument` + campos novos do `Case` + `create_case_with_documents` atômico + form/view/template do upload com multi-select de tipos. Ver `slices/slice-001-case-documents-creation.md`
+- [x] 1.1 Slice 001 — `CaseDocument` + campos novos do `Case` + `create_case_with_documents` atômico + form/view/template do upload com multi-select de tipos. Ver `slices/slice-001-case-documents-creation.md`
 
 ## 2. Extração e gate (funções puras)
 

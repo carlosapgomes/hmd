@@ -30,6 +30,8 @@ INSTALLED_APPS = [
     # Núcleo de casos (change 03): slice 001 entrega o catálogo code-first
     # (procedure_catalog + seed/verificação); models chegam no slice 002.
     "apps.cases",
+    # Intake do NIR (change intake-nir-upload, slice 001).
+    "apps.intake",
 ]
 
 # Modelo de usuário customizado (D8) — estendido uma única vez.
@@ -168,3 +170,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # lease de exclusividade de mutação por caso, em segundos (default 300 = 5min,
 # alinhado ao ats-web). Sem variantes por papel/contexto no HMD.
 CASE_LOCK_LEASE_SECONDS = int(os.environ.get("CASE_LOCK_LEASE_SECONDS", "300"))
+
+# Intake do relatório NIR (change intake-nir-upload, slice 001, design D1/R3):
+# limites de upload por caso — quantidade máxima de PDFs do relatório e tamanho
+# máximo por arquivo em MB (defaults 10/20; mesmo padrão de defaults por env).
+INTAKE_MAX_DOCUMENTS = int(os.environ.get("INTAKE_MAX_DOCUMENTS", "10"))
+INTAKE_MAX_FILE_MB = int(os.environ.get("INTAKE_MAX_FILE_MB", "20"))

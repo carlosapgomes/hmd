@@ -2,8 +2,9 @@
 
 ``Case`` é o núcleo enxuto: identificador UUID, FSM de 17 estados com
 transições protegidas (``django-fsm-2``) e os campos de identidade/origem
-(D7). ``CaseProcedure`` é a dimensão de procedimento por caso (D2) — 1–N rows
-por caso, neutras, com unicidade (case, procedure_type). ``CaseEvent`` é a
+(D7). ``CaseDocument`` é o documento PDF do relatório (multi-PDF ordenado,
+intake D1). ``CaseProcedure`` é a dimensão de procedimento por caso (D2) — 1–N
+rows por caso, neutras, com unicidade (case, procedure_type). ``CaseEvent`` é a
 trilha de auditoria append-only. Divergências deliberadas vs ats-web:
 ``actor_role`` (acréscimo HMD) e ``actor_type ∈ {user, system}``; gravação
 direta — cada transição faz ``save()`` e cria o ``CaseEvent`` no mesmo
@@ -104,6 +105,14 @@ class Case(FSMModelMixin, models.Model):
     # Identidade/origem (gate 04 e prior-case 06).
     agency_record_number = models.CharField(max_length=20, blank=True)
     agency_record_extracted_at = models.DateTimeField(null=True, blank=True)
+
+    # Resultado da extração/retenção do gate (change intake-nir-upload,
+    # design D9 — campos chegam no slice 001, consumidos nos slices 002/003):
+    # ``extracted_text`` é a fonte única do texto extraído dos documentos na
+    # ordem; ``manual_review_*`` marcam caso retido pelo gate para revisão NIR.
+    extracted_text = models.TextField(blank=True)
+    manual_review_required = models.BooleanField(default=False)
+    manual_review_reason = models.CharField(max_length=200, blank=True)
 
     # Lock/lease de exclusividade de mutação (design D6, slice 004): espelho
     # do ats-web — dono (FK SET_NULL), concessão/vencimento (indexado), token
@@ -381,6 +390,53 @@ class Case(FSMModelMixin, models.Model):
     def complete_cleaning(self, *, user: User | None = None, role: str | None = None) -> None:
         """CLEANING → CLEANED (fim da limpeza de dados)."""
         self._run_transition(self._fsm_complete_cleaning, user=user, role=role)
+
+
+def case_document_upload_path(instance: CaseDocument, filename: str) -> str:
+    """Path de storage seguro do documento do relatório (R1/D1).
+
+    Pasta por caso (``case_documents/<case_id>/``) com nome gerado UUID + ext
+    ``.pdf`` — o nome original do upload (controlado pelo usuário) nunca entra
+    no path, evitando colisão/sobrescrita e path traversal no filesystem local
+    (``MEDIA_ROOT``; sem dependência extra de storage).
+    """
+    del filename
+    return f"case_documents/{instance.case_id}/{uuid.uuid4().hex}.pdf"
+
+
+class CaseDocument(models.Model):
+    """Documento PDF do relatório de regulação, por caso (multi-PDF ordenado, D1).
+
+    O relatório SESAB chega em 1–N PDFs (scanner); ``position`` preserva a
+    ordem declarada e o texto é extraído nessa ordem e concatenado em
+    ``Case.extracted_text`` (fonte única). Anexos de evidência com OCR (change
+    10) NÃO são ``CaseDocument``. Apenas ``application/pdf`` entra aqui — a
+    validação é do serviço de criação (apps/intake/services.py), não do model.
+    """
+
+    case = models.ForeignKey(Case, on_delete=models.PROTECT, related_name="documents")
+    file = models.FileField(upload_to=case_document_upload_path, max_length=255)
+    position = models.PositiveSmallIntegerField()
+    original_filename = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=100)
+    size_bytes = models.PositiveBigIntegerField()
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="case_documents_uploaded",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["position"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["case", "position"], name="uniq_case_document_position"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"CaseDocument {self.case_id} [{self.position}] {self.original_filename}"
 
 
 def _validate_procedure_type_in_catalog(procedure_type: str) -> None:

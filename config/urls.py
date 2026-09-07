@@ -10,4 +10,7 @@ from django.urls import URLPattern, URLResolver, include, path
 urlpatterns: list[URLPattern | URLResolver] = [
     path("", include("apps.accounts.urls")),
     path("admin/", admin.site.urls),
+    # Intake do NIR (change intake-nir-upload, slice 001): upload do relatório
+    # sob /intake/; a raiz / continua home placeholder de apps.accounts.
+    path("intake/", include("apps.intake.urls")),
 ]

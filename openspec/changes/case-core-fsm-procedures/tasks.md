@@ -30,5 +30,5 @@
 
 ## 6. Gate final do change
 
-- [ ] 6.1 Quality gate completo (`uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest`) + `openspec validate case-core-fsm-procedures`; registrar resultado
-- [ ] 6.2 Atualizar `PROJECT_CONTEXT.md` (estado pós-change; novos contratos: estados do catálogo/FSM como guardrails) e preparar arquivamento
+- [x] 6.1 Quality gate completo (`uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest`) + `openspec validate case-core-fsm-procedures`; registrar resultado — **resultado (2026-09-07): ruff check ✅ · ruff format ✅ (102 arquivos) · mypy ✅ (71 arquivos) · pytest ✅ 277 passed · manage.py check ✅ · makemigrations --check ✅ (sem drift) · openspec validate ✅**
+- [x] 6.2 Atualizar `PROJECT_CONTEXT.md` (estado pós-change; novos contratos: estados do catálogo/FSM como guardrails) e preparar arquivamento — atualizado; arquivamento pendente de revisão final do dono

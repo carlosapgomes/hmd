@@ -35,9 +35,9 @@ django-fsm substituído por django-fsm-2 (MIT; API django-fsm preservada — vie
 
 ## Estado atual (execução do roadmap)
 
-Change 01 `bootstrap-django-hmd-core` **arquivado** (2026-09-06). Change 02 `ad-kerberos-authentication` **arquivado** (2026-09-07; specs promovidas — `account-access` agora cobre autenticação AD completa). Autenticação: usuários com `ad_upn` (UPN completo, realm derivado do sufixo — floresta multi-domínio) autenticam via Kerberos/minikerberos 0.4.9 (AS-REQ, TGT descartado, failover só p/ transporte, código 52 → TCP mesmo DC); break-glass local **apenas superusuário sem ad_upn** com `AD_ALLOW_LOCAL_AUTH` (default False; dev/test True); anti-lockout por CPF normalizado/IP confiável no cache (falhas por indisponibilidade **não** contam — emenda pós-review); `switch-role` com 0 papéis desloga com mensagem. Próximo: change 03 `case-core-fsm-procedures`.
+Change 01 `bootstrap-django-hmd-core` arquivado (2026-09-06). Change 02 `ad-kerberos-authentication` arquivado (2026-09-07). Change 03 `case-core-fsm-procedures` **implementado** (5/5 slices aceitos; gate final verde: ruff + format + mypy + 277 testes + checks; aguardando arquivamento). Núcleo de domínio em `apps/cases`: catálogo code-first dos 13 procedimentos (`procedure_catalog.py` com thresholds S1–S8 e suporte anestésico validado), `Case` com FSM django-fsm-2 (17 estados, 18 transições protegidas, tabela no ADR-0005/design D4), `CaseEvent` append-only (gravação atômica direta, `actor_role` explícito, tipos canônicos em `events.py`), `CaseProcedure` neutro + serviços atômicos (declaração/detecção/decisão com encadeamento transacional da aceitação), locks/lease com `select_for_update` (`CaseLockConflictError`), comunicações user/system projetadas de eventos. **Guardrails**: states do FSM e catálogo são contrato — changes futuros adicionam transições, não estados; procedimentos vivem só em `CaseProcedure`. Próximo: change 04 `intake-nir-upload`.
 
-Notas operacionais: portas host 5432/5433 podem estar ocupadas por outros projetos — use `POSTGRES_HOST_PORT=55432`/`TEST_DB_PORT=55433`. **Produção exige NTP** (clock skew → código 37) e **cache compartilhado** (`config.settings.prod` aborta com LocMemCache; deploy define Redis/Memcached). Diagnóstico AD manual: `uv run python manage.py ad_check --cpf cpf@dominio` (senha via getpass; fora do CI).
+Notas operacionais: portas host 5432/5433 (e eventualmente 55433) podem estar ocupadas por outros projetos — use `POSTGRES_HOST_PORT=55432`/`TEST_DB_PORT=55435` (mecanismo previsto nos compose/env). Produção exige NTP (código 37) e cache compartilhado (`prod` aborta com LocMem). Diagnóstico AD: `manage.py ad_check --cpf cpf@dominio` (getpass; fora do CI).
 
 ## Roadmap — 11 changes (resumo)
 
@@ -63,8 +63,9 @@ templates/         templates raiz + accounts (login/perfil/home/switch-role)
 static/            CSS/JS (tema hospitalar HMD, Bootstrap 5.3 CDN)
 tests/             suíte raiz (smoke + resolução de banco)
 apps/accounts/     User/Role (ad_upn), backends (Kerberos AD + break-glass), kerberos.py (cliente/failover), ratelimit.py (anti-lockout), middleware (papel ativo + guard), admin, ad_check
+apps/cases/        procedure_catalog (13 tipos/S1–S8), Case+FSM (django-fsm-2, 17 estados), CaseEvent/CaseProcedure, procedures.py, locks.py, communications.py+signals
 docker-compose*.yml PostgreSQL 17 dev/test (+ docker/init.sql unaccent/pg_trgm)
-docs/adr/          decisões arquiteturais (0001–0004)
+docs/adr/          decisões arquiteturais (0001–0005)
 ```
 
 ## Regras não negociáveis

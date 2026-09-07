@@ -1,0 +1,60 @@
+# Design: llm-pipeline-per-type
+
+## Contexto
+
+Generalização do pipeline v2 do ats-web (recon `temp/research/ats-web-recon.md` itens 2–4; arquivos `apps/pipeline/{orchestrator,llm1_service_v2,llm2_service_v2}.py`, `schemas/llm1_v2.py`, `policy/`, `prior_case.py`, `ptbr_language_guard.py`, `json_parser.py`; `apps/llm/models.py::PromptTemplate`) para 13 tipos. Plano §7 (pipeline) e §8 (prior-case). O caso chega a `LLM_EXTRACTING` com `anonymized_text` (change 05); consumimos `CaseProcedure`/`set_declared|detected_procedures` e `procedure_catalog` (tipos, thresholds S1–S8, subtipos, suporte anestésico) do change 03.
+
+### D1 — Cliente OpenRouter (apps/pipeline/llm.py)
+
+SDK OpenAI (`openai` pinado) apontando para `OPENROUTER_BASE_URL` (default `https://openrouter.ai/v1`) com `OPENROUTER_API_KEY`; modelos por env `LLM1_MODEL`/`LLM2_MODEL` (escolha por benchmark operacional — candidatos flash do plano; NÃO decidimos aqui); `LLM_TIMEOUT_SECONDS` (default 120). **Transport injetável** (padrão `KERBEROS_CLIENT_FACTORY` do change 02): settings `LLM_CLIENT_FACTORY` aponta o cliente real; testes injetam fakes — suíte 100% sem rede/custo. Erros tipados: `LlmError(kind ∈ {auth, rate_limit, network, timeout, invalid_response, other})`. `manage.py llm_check` (--models l1,l2): 1 chamada mínima por modelo, reporta ok/erro tipado; manual, fora do CI.
+
+### D2 — Schemas por tipo (apps/pipeline/schemas/)
+
+Pydantic v2 `StrictModel` (herdado do ats-web). **Base comum** (`Llm1BaseBlock`): pedido (tipos como tokens/labels, sem PII), contexto clínico, linha do tempo, exames com resultados objetivos (valor+unidade+status), medicações (com classe anticoagulante/antiagregante nomeada em **tokens** — nomes de medicamentos são texto anonimizado? Atenção: medicamentos NÃO são PII e não são tokenizados pelo change 05 (só PERSON/DOC/DATA/LOCAL/ORG/TELEFONE/EMAIL) — nomes de drogas sobrevivem ✓), comorbidades, contraindicações, `trechos_nao_classificados`. **Blocos específicos** por tipo (13): ex. `angio_fav` → estado do acesso; `filtro_cava` → TEp/contraindicação anticoagulação; `permicath` → infecção ativa. Proveniência: todo campo clínico com `evidence_spans` (lista de trechos citados) **obrigatória** + `status ∈ {confirmado, nao_informado, incerto}` (nunca completar ausência). **Composição união**: `build_llm1_schema(types)` monta o modelo com base + blocos dos tipos (1 chamada por caso — lição ADR-0004). `Llm2Response`: sumário + sugestão por procedimento (blocos por tipo). Normalização `oneOf→anyOf` para `response_format` json_schema (herança ats-web).
+
+### D3 — Prompts versionados (apps/llm)
+
+`PromptTemplate(name, version, content, is_active)` — unique `(name,version)`; 1 ativo por nome (constraint parcial, padrão ats-web). **Seeds** (`seed_prompts` idempotente): `llm1.system` e `llm2.system` **neutros** (papéis/guardas/idioma/formato JSON) + `proc.<type>.llm1.user` e `proc.<type>.llm2.user` × 13 (instruções/blocos específicos do tipo). **Montagem por caso**: system = neutro do estágio; user = concatenação dos blocos dos tipos reconcilados + texto anonimizado + (LLM2: visão filtrada + policy + prior-case). Nomes/versões usados vão no evento (auditoria). Versão de prompt = dado versionado; edição exige nova version+ativa (nunca content in place).
+
+### D4 — LLM1: extração com guardas (apps/pipeline/llm1_service.py)
+
+`run_llm1_extraction(case, *, user=None, role="system")`: monta schema união dos **declarados**, prompts (D3), chama LLM1 via cliente (D1) com `response_format` json; `json_parser` tolerante (herança ats-web: fences/espaços) → validação strict pydantic; **language guard pt-BR** (`ptbr_language_guard` adaptado — rejeita resposta majoritariamente em outro idioma); **retry corretivo único tipado**: resposta inválida → 2ª chamada com mensagem de correção específica (schema/idioma); esgotado → `fail_processing("llm1_...")`. Sucesso: persiste `Case.structured_data` (**só tokens** — invariantes do change 05) + evento `CASE_LLM1_COMPLETED` (payload: prompt names+versions, tipos declarados, nº campos, tempos).
+
+### D5 — Reconciliação + gate de divergência (apps/pipeline/procedure_reconciliation.py)
+
+Detectados = tipos presentes em `structured_data.requested_procedures` (com evidência). `reconcile_detected(case, declared, detected)` (puro): classificação `match | missing_declaration | not_detected`. Integração: `set_detected_procedures(case, detection, ...)` (change 03 — atualiza rows `detected/not_detected` + evento). **Divergência** (qualquer `missing_declaration`/`not_detected`) → retenção: grava `manual_review_required=True` + `manual_review_reason="procedure_divergence"` + evento `CASE_GATE_PROCEDURE_DIVERGENCE` (payload com classificação por tipo) e **permanece em `LLM_EXTRACTING`** — nunca sumariza/fila sem resolução. **Nova transição FSM** `bypass_pipeline_divergence` (`LLM_EXTRACTING → LLM_SUMMARIZING`, protected, `*, user, role` + evento `CASE_GATE_BYPASSED` com payload do motivo) — primeira transição adicionada pós-change-03 (guardrail permite transições, não estados; registrada na spec `case-management`? Não — transição é implementação interna; o guardrail de spec é sobre estados). **Extensão do intake**: `gate_release` passa a despachar pela razão/estado da retenção (`PDF_EXTRACTING` → `complete_pdf_extraction`; `LLM_EXTRACTING`+`procedure_divergence` → `bypass_pipeline_divergence`) — mudança mínima no serviço de release do change 04, comportamento do gate de formato intacto; conjunto **declarado** prevalece no bypass.
+
+### D6 — Policy consultiva determinística (apps/pipeline/policy.py)
+
+`evaluate_preop_policy(structured_data, procedure_type) -> PolicyResult` — **pura** (sem LLM/DB): thresholds de `procedure_catalog.CRITERIA_SECTIONS[seção_do_tipo]` (Plt/INR/Hb/Cr/PAS/glicemia/K + condições especiais) + **requisitos gerais** (§2 do plano): anticoagulantes (protocolo de suspensão por fármaco — Marevan/Marcoumar/Cumadin/varfarina/Pradaxa 7d; Xarelto 3d; Eliquis/Lixiana 48h; enoxaparina/heparina 12h/24h) e antiagregantes (não suspender em geral); metformina 48h; alergia contraste/frutos/iodo (dessensibilização); peso > 180 kg; jejum 8h; isolamento; Cr ≥ 1,5 (nefroproteção + Nefrologia); suporte anestésico (flag do catálogo). Por critério: `ok | alerta(motivo) | nao_informado` (valor ausente/incerto → nao_informado). Global: `recomenda_aceitar` (nenhuma recusa) | `recomenda_recusar(motivos)` — **nunca bloqueia**. Entradas vêm do artefato (valores clínicos, não PII). Persistência: `Case.policy_result` (JSON, por procedimento) + evento `CASE_POLICY_EVALUATED` (resumo). Regra de recusa: quais critérios geram recusa vs só alerta? **Consultivo**: nenhum critério "recusa" sozinho é bloqueio — a recomendação global de recusa soma os alertas de threshold crítico (definidos por seção); detalhes de mapeamento alerta↔motivo ficam no módulo com testes por seção (S1–S8) — os thresholds são dados do catálogo; a semântica ok/alerta/nao_informado é determinística e testada.
+
+### D7 — Prior-case (apps/pipeline/prior_case.py)
+
+`lookup_prior_case_context(case, procedure_type) -> PriorCaseSummary | None` — por procedimento; candidatas: casos com `CaseProcedure` do MESMO tipo e decisão semântica registrada (`doctor_disposition != pending` — campos semânticos, **não** status FSM; lição do bug "after closure" do ats-web), excluindo o próprio. Chave primária: `agency_record_number` igual ≠ vazio e decisão há ≤ `PRIOR_CASE_WINDOW_DAYS` (7). Fallback: nome normalizado (`unaccent`+upper+sem espaços — Postgres unaccent ✓ change 01) + `patient_birth_date` iguais e `case.created_at ≤ decisão_prévia + PRIOR_CASE_FALLBACK_WINDOW_DAYS` (15). Prioridade: nº > fallback; 1º match mais recente. Resumo: data, decisão+motivo, `prior_denial_count`. Evento `PRIOR_CASE_LOOKUP` com origem (`occurrence_number|name_birthdate_fallback|none`). Consome `patient_name`/`patient_birth_date` persistidos pelo change 05 ✓.
+
+### D8 — LLM2: sumarização com policy prevalecendo (apps/pipeline/llm2_service.py)
+
+`run_llm2_summarization(case, ...)`: monta **visão filtrada** do artefato LLM1 pelos tipos **reconciliados** (cópia efêmera — padrão `_build_llm2_structured_data_view`), + `policy_result` + prior-case summaries — **tudo em tokens** (assert de sanidade: nenhum valor do `pseudonym_map` no payload). Uma chamada (blocos por procedimento). Saída validada (schema Llm2): `summary_text` (apresentável) + sugestão por procedimento. **Reconciliação final**: `if policy[proc].recomendacao == recusar → sugestão[proc] = recusar(motivos_da_policy)` — o LLM não suaviza; agregado do caso = mais restritiva (`strictest_global_support` herdado). Falha → mesmo regime fail-closed (retry único tipado). Persiste `Case.summary_text` + `Case.suggested_action` + evento `CASE_LLM2_COMPLETED`.
+
+### D9 — Orquestrador/cluster llm (apps/pipeline/{orchestrator,tasks}.py)
+
+`Q_CLUSTER["ALT_CLUSTERS"]["llm"] = {workers: 1, timeout: 900, retry: 960}`; `LLM_RUN_TASKS_INLINE` (base/test True, prod False — padrão dos changes 04/05). **Trigger**: signal `CaseEvent.post_save` — `CASE_STATUS_LLM_EXTRACTING` com `source == "ANONYMIZING"` (entrada real; self-transitions não re-disparam) → `on_commit` → enqueue cluster llm; **e** `CASE_STATUS_LLM_SUMMARIZING` com `source ∈ {LLM_EXTRACTING}` (retomada pós-bypass) → enqueue (task faz branch por estado). `process_case_pipeline(case_id)`: idempotente por estado — `LLM_EXTRACTING` = full (lock `worker_llm`; `start_llm_extraction` self; LLM1; reconcile; divergência → retém e sai; ok → `complete_llm_extraction` (→LLM_SUMMARIZING); policy; prior; LLM2; `complete_llm_summarization` → `AWAITING_DOCTOR`); `LLM_SUMMARIZING` = resume (policy/prior/LLM2/complete — reaproveita artefato persistido); demais → no-op. Exceção → `fail_processing(tipo_erro)` → `FAILED` (fail-closed; artefatos parciais permanecem mas o caso não avança). Coordenação transição+release no mesmo atomic onde houver hook de saída (padrão fixado no change 05). Compose: serviço `worker-llm` (`Q_CLUSTER_NAME=llm`, imagem pronta).
+
+### D10 — Campos, eventos e env
+
+`Case`: +`structured_data JSONField default dict`, `summary_text TextField blank`, `suggested_action JSONField default dict`, `policy_result JSONField default dict` (migration). `events.py`: +`CASE_LLM1_COMPLETED`, `CASE_LLM2_COMPLETED`, `CASE_GATE_PROCEDURE_DIVERGENCE`, `CASE_POLICY_EVALUATED`, `PRIOR_CASE_LOOKUP` (reusa `CASE_GATE_BYPASSED`). Env: `OPENROUTER_API_KEY/BASE_URL`, `LLM1_MODEL/LLM2_MODEL`, `LLM_TIMEOUT_SECONDS`, `LLM_RUN_TASKS_INLINE`, `PRIOR_CASE_WINDOW_DAYS`, `PRIOR_CASE_FALLBACK_WINDOW_DAYS` (+ `.env.example`). Deps: `openai` (pin). ADR-0008 (`docs/adr/ADR-0008-llm-pipeline-per-type.md`): per-type + composição união (ADR-0004 ats-web), guardas anti-alucinação, policy determinística consultiva prevalecendo, prior-case com fallback, fail-closed, escolha de modelo por benchmark operacional.
+
+### D11 — Sem antecipação / desvios registrados
+
+Sem fila médica/decisão (07), agendamento (08), anexos/vision (10), dashboard (11). **Desvios do plano**: `priority_signals` não implementado (sem conceito no documento clínico HMD — plano §3 herdou do ats-web); benchmark de modelos = operacional via `llm_check` + doc (sem benchmark no CI, custo). Event payloads sempre enxutos (names/versions/contagens/classificações — nunca conteúdo clínico bruto).
+
+## Riscos e mitigações
+
+- **Alucinação/omissão LLM**: strict schema + evidence obrigatória + status tri-state + retry único + policy determinística independente + fail-closed.
+- **Custo/latência OpenRouter**: 2 chamadas/caso (+retry eventual); volume leve; timeouts por env; flash models.
+- **Divergência frequente (NIR overload)**: reconciliação tolerante a rótulos (aliases de tipo nos schemas D2) — calibração com corpus real.
+- **Prior-case falso-positivo por nome comum**: fallback exige nascimento idêntico + janela curta + mostra origem ao médico (07).
+
+## Fora de escopo
+
+Doctor UI/decisão (07), scheduler (08), resultado/reenvio (09), OCR de anexos (10), notificações/dashboard (11), benchmark no CI, novos estados FSM.

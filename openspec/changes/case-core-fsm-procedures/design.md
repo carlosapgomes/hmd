@@ -18,15 +18,38 @@ A dimensão de procedimento vive **exclusivamente** em `CaseProcedure` (1–N ro
 
 ### D4 — FSM: 17 estados como contrato
 
-`CaseStatus(TextChoices)` com os 17 estados do plano §4 (renomeados vs ats-web: `R1_ACK_PROCESSING→PDF_EXTRACTING`, `EXTRACTING→ANONYMIZING`, `LLM_STRUCT→LLM_EXTRACTING`, `LLM_SUGGEST→LLM_SUMMARIZING`, `R2_POST_WIDGET` extinto, `WAIT_DOCTOR→AWAITING_DOCTOR`, `R3_POST_REQUEST→SCHEDULER_REQUESTED`, `WAIT_APPT→AWAITING_SCHEDULING`, `APPT_CONFIRMED/DENIED→SCHEDULING_CONFIRMED/DENIED`, `R1_FINAL_REPLY_POSTED→FINAL_REPLY_POSTED`, `WAIT_R1_CLEANUP_THUMBS→AWAITING_NIR_ACK`, `CLEANUP_RUNNING→CLEANING`). Transições com nomes de domínio (`start_pdf_extraction`, `complete_pdf_extraction`, `start_anonymization`, `complete_anonymization`, `start_llm_extraction`, `complete_llm_extraction`, `start_llm_summarization`, `complete_llm_summarization`, `fail_processing` [de qualquer estado de processamento → FAILED], `record_doctor_decision` [AWAITING_DOCTOR → DOCTOR_DENIED|DOCTOR_ACCEPTED], `post_final_reply` [DOCTOR_DENIED|SCHEDULING_*→FINAL_REPLY_POSTED], `request_scheduling` [DOCTOR_ACCEPTED→SCHEDULER_REQUESTED], `await_scheduling_confirmation`, `confirm_scheduling|deny_scheduling`, `post_final_reply`, `nir_acknowledge` [FINAL_REPLY_POSTED→AWAITING_NIR_ACK], `start_cleaning`, `complete_cleaning`). `DOCTOR_ACCEPTED` é estado real: o serviço de decisão médica grava o evento nele e avança `request_scheduling` na **mesma transação** (o estado intermediário fica observável na trilha). `FSMField(protected=True)` — atribuição direta de status fora das transições é rejeitada. **Guardrail**: changes futuros adicionam transições (ex.: reprocessamento no 04, reabertura por intercorrência no 08); estados só mudam por change explícito na spec.
+`CaseStatus(TextChoices)` com os 17 estados do plano §4 (renomeados vs ats-web: `R1_ACK_PROCESSING→PDF_EXTRACTING`, `EXTRACTING→ANONYMIZING`, `LLM_STRUCT→LLM_EXTRACTING`, `LLM_SUGGEST→LLM_SUMMARIZING`, estado `R2_POST_WIDGET` do ats-web deliberadamente extinto, `WAIT_DOCTOR→AWAITING_DOCTOR`, `R3_POST_REQUEST→SCHEDULER_REQUESTED`, `WAIT_APPT→AWAITING_SCHEDULING`, `APPT_CONFIRMED/DENIED→SCHEDULING_CONFIRMED/DENIED`, `R1_FINAL_REPLY_POSTED→FINAL_REPLY_POSTED`, `WAIT_R1_CLEANUP_THUMBS→AWAITING_NIR_ACK`, `CLEANUP_RUNNING→CLEANING`; nota: o ats-web materializa 18 estados — o HMD fecha em 17 por desenho). **Tabela completa de transições** (operação → source → target):
+
+| Operação | Source | Target |
+| --- | --- | --- |
+| `start_pdf_extraction` | `NEW` | `PDF_EXTRACTING` |
+| `complete_pdf_extraction` | `PDF_EXTRACTING` | `ANONYMIZING` |
+| `start_anonymization` | `ANONYMIZING` | `ANONYMIZING` (self, início do worker) |
+| `complete_anonymization` | `ANONYMIZING` | `LLM_EXTRACTING` |
+| `start_llm_extraction` | `LLM_EXTRACTING` | `LLM_EXTRACTING` (self) |
+| `complete_llm_extraction` | `LLM_EXTRACTING` | `LLM_SUMMARIZING` |
+| `start_llm_summarization` | `LLM_SUMMARIZING` | `LLM_SUMMARIZING` (self) |
+| `complete_llm_summarization` | `LLM_SUMMARIZING` | `AWAITING_DOCTOR` |
+| `fail_processing` | `PDF_EXTRACTING, ANONYMIZING, LLM_EXTRACTING, LLM_SUMMARIZING` | `FAILED` |
+| `record_doctor_decision` | `AWAITING_DOCTOR` | `DOCTOR_DENIED` \| `DOCTOR_ACCEPTED` (target dinâmico pela decisão) |
+| `request_scheduling` | `DOCTOR_ACCEPTED` | `SCHEDULER_REQUESTED` |
+| `await_scheduling_confirmation` | `SCHEDULER_REQUESTED` | `AWAITING_SCHEDULING` |
+| `confirm_scheduling` | `AWAITING_SCHEDULING` | `SCHEDULING_CONFIRMED` |
+| `deny_scheduling` | `AWAITING_SCHEDULING` | `SCHEDULING_DENIED` |
+| `post_final_reply` | `DOCTOR_DENIED, SCHEDULING_CONFIRMED, SCHEDULING_DENIED` | `FINAL_REPLY_POSTED` |
+| `nir_acknowledge` | `FINAL_REPLY_POSTED` | `AWAITING_NIR_ACK` |
+| `start_cleaning` | `AWAITING_NIR_ACK` | `CLEANING` |
+| `complete_cleaning` | `CLEANING` | `CLEANED` |
+
+Self-transitions de início de worker existem para registrar o evento de início sem mudar de estado (padrão django-fsm: source=target válido); cada transição é testada individualmente. `FSMField(protected=True)` — atribuição direta de status é rejeitada. **Guardrail**: changes futuros adicionam transições (ex.: reprocessamento no 04, reabertura por intercorrência no 08); estados só mudam por change explícito na spec.
 
 ### D5 — `CaseEvent`: trilha append-only como fonte de verdade
 
-Espelho do ats-web: `case FK`, `timestamp` (indexado), `actor_type ∈ {user, system}`, `actor FK SET_NULL`, `actor_role` (papel ativo no momento), `event_type` (indexado), `payload JSON` enxuto. Gravação centralizada em `_record_event` (chamado por cada transição — padrão pending-event + persistência no mesmo `atomic`) e pelos serviços de procedimento/lock. Nenhuma operação de negócio altera ou remove eventos (append-only por contrato; sem API de edição).
+Base do ats-web com **duas divergências deliberadas**: (1) HMD acrescenta `actor_role` (o ats-web não tem — o papel ativo importa no HMD por causa do multi-role) e usa `actor_type ∈ {user, system}` (o ats-web usa `human`); (2) **gravação direta** — cada transição/serviço cria o `CaseEvent` explicitamente dentro da própria operação transacionada (`save` + `create` no mesmo `atomic`), **sem** o padrão pending-event + signal `Case.post_save` do ats-web (menos peças móveis, mesma garantia append-only; o signal `CaseEvent.post_save` continua existindo só para a projeção de comunicações, D8). Campos: `case FK`, `timestamp` (indexado), `actor_type`, `actor FK SET_NULL`, `actor_role`, `event_type` (indexado), `payload JSON` enxuto. **`actor_role` é parâmetro explícito** de toda operação auditada (transições recebem `*, user, role`; views dos changes 04+ extraem o papel ativo da sessão — padrão `apps/accounts`; workers passam `role="system"`). **Tipos canônicos** em `apps/cases/events.py` (enum/constantes únicos, consumidos por FSM, serviços, locks e projeção): transições `CASE_STATUS_<TARGET>` (ex.: `CASE_STATUS_AWAITING_DOCTOR`, `CASE_STATUS_DOCTOR_DENIED`, `CASE_STATUS_SCHEDULING_CONFIRMED`); operações `CASE_PROCEDURES_DECLARED`, `CASE_PROCEDURES_DETECTED`, `CASE_DOCTOR_DECISIONS_RECORDED`; locks `CASE_LOCK_CLAIMED/RELEASED/RENEWED/EXPIRED`.
 
 ### D6 — Locks/lease por caso
 
-Campos no `Case` (espelho ats-web): `locked_by FK`, `locked_at`, `locked_until` (indexado), `lock_token UUID`, `lock_context` (ex.: `doctor_queue`, `worker_pipeline`), `lock_role`. Serviços em `apps/cases/locks.py`: `claim_case_lock(case, user, context, role, lease_seconds)` (claim condicional com `select_for_update` — livre **ou** lease expirada → novo token; ativo → `CaseLockConflict`), `assert_case_lock(case, token)`, `release_case_lock(case, token)`, `renew_case_lock`, `expire_stale_locks` (varredura de leases vencidas + evento). Lease default por env `CASE_LOCK_LEASE_SECONDS` (default 900). Eventos `CASE_LOCK_CLAIMED/RELEASED/EXPIRED/RENEWED` na trilha.
+Campos no `Case` (espelho ats-web): `locked_by FK`, `locked_at`, `locked_until` (indexado), `lock_token UUID`, `lock_context` (ex.: `doctor_queue`, `worker_pipeline`), `lock_role`. Serviços em `apps/cases/locks.py` (**reorganização HMD** — no ats-web vivem em `services.py`; `renew` com evento e `expire_stale_locks()` genérica são **extensões HMD**): `claim_case_lock(case, *, user, context, role, lease_seconds=None)` (dentro de `transaction.atomic()` + `select_for_update` — livre **ou** lease expirada (grava `CASE_LOCK_EXPIRED` e assume) → novo token; ativo de outro ator → `CaseLockConflict` sem alterar nada), `assert_case_lock(case, token)`, `release_case_lock(case, token)` (evento `CASE_LOCK_RELEASED`), `renew_case_lock` (evento `CASE_LOCK_RENEWED`), `expire_stale_locks()` (varredura + `CASE_LOCK_EXPIRED`). Lease default por env `CASE_LOCK_LEASE_SECONDS` (**300s**, alinhado ao ats-web; sem as variantes por papel do ats-web). **Integração com mutações**: o mecanismo é o contrato deste change; os consumers ligam `assert_case_lock` nas mutações dos seus fluxos (07+/workers 04–06) — "mutação sob lock exige token" vale para os fluxos que operam com lock, não para toda escrita do sistema.
 
 ### D7 — `Case` enxuto, sem antecipação
 
@@ -34,7 +57,7 @@ Campos deste change: `case_id UUID pk`, `status FSMField`, `created_by FK PROTEC
 
 ### D8 — Comunicações por caso
 
-`CaseCommunicationMessage` (espelho ats-web): `message_type ∈ {user, system}`, `author FK PROTECT (null p/ system)`, `author_role`, `body`, `source_event O2O → CaseEvent` (para system), `system_event_type`, `created_at`. Serviço `post_user_communication(case, user, body)` captura papel ativo da sessão; projeção sistêmica via signal `CaseEvent.post_save` → `create_system_communication_notice_for_event` para um conjunto inicial de eventos (`CASE_STATUS_AWAITING_DOCTOR`, `CASE_STATUS_DOCTOR_DENIED_FINAL`, `CASE_STATUS_SCHEDULING_*`) — conjunto constante em código, extensível nos changes de fluxo. Mensagens system não geram notificação/badge (notificações são change 11) e são append-only.
+`CaseCommunicationMessage` (espelho ats-web): `message_type ∈ {user, system}`, `author FK PROTECT (null p/ system)`, `author_role`, `body`, `source_event O2O → CaseEvent` (para system), `system_event_type`, `created_at`. Serviço `post_user_communication(case, *, user, role, body)` com papel explícito (**serviço novo do HMD**; views extraem da sessão nos changes 04+); projeção sistêmica via signal `CaseEvent.post_save` → `create_system_communication_notice_for_event` para o conjunto inicial de **tipos canônicos** (D5): `CASE_STATUS_AWAITING_DOCTOR`, `CASE_STATUS_DOCTOR_DENIED`, `CASE_STATUS_SCHEDULING_CONFIRMED`, `CASE_STATUS_SCHEDULING_DENIED` — constantes em `apps/cases/events.py`, extensível nos changes de fluxo. Mensagens system não geram notificação/badge (notificações são change 11) e são append-only.
 
 ### D9 — Sem UI, sem admin
 

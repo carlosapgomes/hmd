@@ -6,7 +6,7 @@
 ## 0. Preflight
 
 - [ ] 0.1 Confirmar working tree limpa, registrar `BASE_REF`; baseline verde uma vez (gate do change 02 serve)
-- [x] 0.2 Dono confirma D1 — **django-fsm-2 confirmado (2026-09-07)**; plano §4/§11, PROJECT_CONTEXT e ADR-0001 emendados
+- [x] 0.2 Dono confirma D1 — **django-fsm-2 confirmado (2026-09-07)**; plano §3/§4/§11, PROJECT_CONTEXT e ADR-0001 emendados; ADR-0005 (novo) nasce no slice 002
 
 ## 1. Catálogo
 

@@ -102,7 +102,7 @@ A dimensão de procedimento SHALL viver exclusivamente em rows de `CaseProcedure
 
 ### Requirement: Locks de concorrência por caso
 
-O sistema SHALL suportar lock/lease por caso: um ator (com contexto e papel) pode reivindicar exclusividade de mutação; um segundo claim conflitante sobre caso travado e não expirado SHALL ser negado com erro explícito; a mutação exige a posse do lock (token); locks expiram por tempo (lease) e leases expiradas podem ser assumidas por novo claim; release devolve o caso. Workers e papéis usam o mesmo mecanismo.
+O sistema SHALL suportar lock/lease por caso: um ator (com contexto e papel) pode reivindicar exclusividade de mutação; um segundo claim conflitante sobre caso travado e não expirado SHALL ser negado com erro explícito; **fluxos que operam sob lock SHALL exigir a posse do token para mutar o caso** (`assert`; os consumers ligam a checagem nas mutações dos seus fluxos em changes posteriores — o mecanismo é o contrato deste change); locks expiram por tempo (lease) e leases expiradas podem ser assumidas por novo claim; release devolve o caso. Workers e papéis usam o mesmo mecanismo.
 
 #### Scenario: Claim concede exclusividade
 

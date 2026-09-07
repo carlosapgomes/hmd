@@ -38,3 +38,4 @@ O HMD não tem domínio de casos: tudo que existe hoje é accounts (papéis/auth
 - Filas/presenter/decisão médica UI (07), agendamento e unidade 2 (08), encerramento/reenvio corrigido/intercorrência (09).
 - Campos de decisão/agendamento no `Case` (chegam com 07/08 — sem antecipação; migrations incrementais).
 - Dashboard e notificações (11).
+- `specialties` M2M no `User` (change 07 — o catálogo registra o subtipo; o vínculo com doctors chega lá).

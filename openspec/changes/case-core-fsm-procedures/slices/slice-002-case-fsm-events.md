@@ -16,11 +16,11 @@ O coração do domínio: `Case` (núcleo enxuto) com máquina de estados de 17 e
 ## Requisitos
 
 - **R1** `Case`: `case_id UUID pk`, `status` FSM com `CaseStatus.NEW` default (protegido contra atribuição direta), `created_by FK PROTECT`, `agency_record_number` (blank) + `agency_record_extracted_at` (null), `created_at/updated_at`. Migration inicial do app.
-- **R2** Transições de domínio com guards de source (nomes do design D4): cadeia de processamento (`start/complete` de pdf/anonimização/llm1/llm2), `fail_processing` (de qualquer estado de processamento → `FAILED`, recebe motivo), decisão médica (`AWAITING_DOCTOR → DOCTOR_DENIED|DOCTOR_ACCEPTED`), `request_scheduling` (`DOCTOR_ACCEPTED → SCHEDULER_REQUESTED`), `await_scheduling_confirmation`, `confirm_scheduling|deny_scheduling` (`AWAITING_SCHEDULING → SCHEDULING_CONFIRMED|SCHEDULING_DENIED`), `post_final_reply` (`DOCTOR_DENIED|SCHEDULING_CONFIRMED|SCHEDULING_DENIED → FINAL_REPLY_POSTED`), `nir_acknowledge`, `start_cleaning`, `complete_cleaning`.
+- **R2** Tabela completa de transições conforme design D4 (source → target por operação, incl. self-transitions de início de worker em `ANONYMIZING`/`LLM_EXTRACTING`/`LLM_SUMMARIZING` para registrar o início sem mudar estado, e target dinâmico da decisão médica). **Cada transição testada individualmente** (source válido progride; source inválido rejeita).
 - **R3** Transição inválida (operação cujo source não inclui o estado atual) → exceção da lib (`TransitionNotAllowed` ou equivalente), **sem** alterar status nem gravar evento.
-- **R4** `CaseEvent`: `case FK CASCADE`, `timestamp` indexado, `actor_type ∈ {user, system}`, `actor FK SET_NULL null`, `actor_role`, `event_type` indexado, `payload JSON` — append-only (sem métodos de alteração; ordering por timestamp).
-- **R5** Cada transição grava exatamente 1 evento (`CASE_STATUS_<DIREÇÃO>` ou tipo canônico equivalente) com ator (usuário informado ou `system`), papel ativo quando houver, e payload `{source, target, ...}`; `fail_processing` inclui o motivo no payload. Aceitação médica grava evento em `DOCTOR_ACCEPTED` **e** em `SCHEDULER_REQUESTED` (avanço na mesma transação via serviço de decisão — neste slice, método de caso que encadeia as duas transições atomicamente).
-- **R6** Testes: caminho feliz completo até `AWAITING_DOCTOR` (sequência de completes); negação → `DOCTOR_DENIED → FINAL_REPLY_POSTED`; aceitação → `DOCTOR_ACCEPTED → SCHEDULER_REQUESTED → AWAITING_SCHEDULING → SCHEDULING_CONFIRMED → FINAL_REPLY_POSTED → AWAITING_NIR_ACK → CLEANING → CLEANED`; transição inválida rejeitada + estado preservado + sem evento; `fail_processing` de `ANONYMIZING` → `FAILED` + motivo no evento; evento por transição com ator/papel/payload (cenários da spec).
+- **R4** `CaseEvent`: `case FK CASCADE`, `timestamp` indexado, `actor_type ∈ {user, system}` (divergência do ats-web, que usa `human`), `actor FK SET_NULL null`, **`actor_role` (acréscimo HMD — ats-web não tem)**, `event_type` indexado, `payload JSON` — append-only (sem métodos de alteração; ordering por timestamp). Tipos canônicos em `apps/cases/events.py` (enum único consumido por FSM/serviços/locks/projeção — design D5).
+- **R5** **Gravação direta** (divergência do ats-web pending-event+signal — design D5): cada transição recebe `*, user=None, role=None`, faz `save()` e cria o `CaseEvent` **no mesmo `transaction.atomic()`**; `actor_role` é parâmetro explícito (views futuras extraem da sessão; workers passam `role="system"`). Evento de transição = `CASE_STATUS_<TARGET>` com payload `{source, target, ...}`; `fail_processing` inclui motivo. Aceitação médica grava evento em `DOCTOR_ACCEPTED` **e** em `SCHEDULER_REQUESTED` (encadeadas atomicamente).
+- **R6** Testes: **cada transição da tabela D4 individualmente** (source válido progride + grava evento; source inválido rejeita + nada grava); caminhos completos (feliz até `AWAITING_DOCTOR`; negação → `DOCTOR_DENIED → FINAL_REPLY_POSTED`; aceitação → … → `CLEANED`); transição inválida preserva estado e trilha; `fail_processing` de cada estado de processamento → `FAILED` + motivo; eventos com ator/papel para papéis `nir`, `doctor` e `scheduler` (cenários da spec).
 - **R7** `pyproject.toml` + `uv.lock` com a lib de D1 pinada; INSTALLED_APPS e settings mínimos (nenhum worker).
 
 ## Matriz requisito → arquivo → teste/check
@@ -51,8 +51,10 @@ O coração do domínio: `Case` (núcleo enxuto) com máquina de estados de 17 e
 ```yaml
 expected_files:
   - apps/cases/models.py
+  - apps/cases/events.py
   - apps/cases/migrations/0001_initial.py
   - apps/cases/tests/test_fsm.py
+  - docs/adr/ADR-0005-case-neutro-catalogo-code-first-fsm.md
   - pyproject.toml
   - uv.lock
 allowed_incidental_files:

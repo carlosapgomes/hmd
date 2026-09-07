@@ -15,6 +15,10 @@ dependencies = [
     # FSM de casos (change 03, D1 confirmada): django-fsm-2 (MIT), drop-in da
     # API django-fsm (@transition/FSMField(protected=True)/signals).
     "django-fsm-2==4.2.4",
+    # Extração de texto de PDF do relatório (change intake-nir-upload, slice
+    # 002, design D3). Fixado: a suíte gera PDFs de fixture com a API de
+    # escrita do PyMuPDF — versão exata travada no lockfile.
+    "pymupdf==1.28.2",
 ]
 
 [dependency-groups]

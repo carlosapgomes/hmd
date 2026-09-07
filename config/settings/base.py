@@ -176,3 +176,12 @@ CASE_LOCK_LEASE_SECONDS = int(os.environ.get("CASE_LOCK_LEASE_SECONDS", "300"))
 # máximo por arquivo em MB (defaults 10/20; mesmo padrão de defaults por env).
 INTAKE_MAX_DOCUMENTS = int(os.environ.get("INTAKE_MAX_DOCUMENTS", "10"))
 INTAKE_MAX_FILE_MB = int(os.environ.get("INTAKE_MAX_FILE_MB", "20"))
+
+# Gate de regulação (change intake-nir-upload, slice 002, design D4/R5):
+# thresholds do padrão SESAB do relatório — tamanho mínimo do texto extraído
+# (chars) e nº mínimo de seções operacionais reconhecidas (defaults do
+# ats-web: 500/3).
+INTAKE_REGULATION_MIN_TEXT_CHARS = int(os.environ.get("INTAKE_REGULATION_MIN_TEXT_CHARS", "500"))
+INTAKE_REGULATION_MIN_OPERATIONAL_SECTIONS = int(
+    os.environ.get("INTAKE_REGULATION_MIN_OPERATIONAL_SECTIONS", "3")
+)

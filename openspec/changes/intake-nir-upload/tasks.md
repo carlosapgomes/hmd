@@ -13,7 +13,7 @@
 
 ## 2. Extração e gate (funções puras)
 
-- [ ] 2.1 Slice 002 — `pdf_utils` (PyMuPDF, watermark, nº ocorrência) + `regulation_gate` adaptado — funções puras com fixtures geradas em teste. Ver `slices/slice-002-pdf-gate-utils.md`
+- [x] 2.1 Slice 002 — `pdf_utils` (PyMuPDF, watermark, nº ocorrência) + `regulation_gate` adaptado — funções puras com fixtures geradas em teste. Ver `slices/slice-002-pdf-gate-utils.md` (pymupdf 1.28.2, nº do bruto antes do strip)
 
 ## 3. Worker/cluster
 

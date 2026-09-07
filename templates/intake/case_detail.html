@@ -50,6 +50,39 @@
       </div>
     </div>
 
+    {% if case.status == 'PDF_EXTRACTING' and case.manual_review_required %}
+    <div class="card shadow-sm mb-4 border-warning">
+      <div class="card-header bg-warning-subtle">
+        <h2 class="h5 mb-0">Revisão do gate</h2>
+      </div>
+      <div class="card-body">
+        <p class="mb-3">
+          O documento foi retido pelo gate de regulação. Você pode <strong>liberar</strong>
+          o caso (dispensa o gate e avança para a anonimização) ou
+          <strong>reenviar documentos</strong> válidos no padrão SESAB para reprocessar
+          a extração do zero.
+        </p>
+        <form method="post" action="{% url 'intake:gate_release' case.case_id %}"
+              class="d-inline">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-success">Liberar caso</button>
+        </form>
+        <form method="post" action="{% url 'intake:gate_resubmit' case.case_id %}"
+              enctype="multipart/form-data" class="mt-3">
+          {% csrf_token %}
+          <label for="id_gate_documents" class="form-label small text-muted">
+            Novos arquivos PDF do relatório (na ordem em que compõem o relatório)
+          </label>
+          <div class="d-flex flex-wrap gap-2">
+            <input type="file" id="id_gate_documents" name="documents" multiple
+                   accept=".pdf,application/pdf" class="form-control w-auto" required>
+            <button type="submit" class="btn btn-warning">Reenviar documentos</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Documentos</h2>

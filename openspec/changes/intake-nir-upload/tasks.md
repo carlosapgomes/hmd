@@ -25,7 +25,7 @@
 
 ## 5. Revisão do gate
 
-- [ ] 5.1 Slice 005 — ações `gate_release` (bypass com evento) e `gate_resubmit` (substitui docs e reprocessa). Ver `slices/slice-005-gate-review-actions.md`
+- [x] 5.1 Slice 005 — ações `gate_release` (bypass com evento) e `gate_resubmit` (substitui docs e reprocessa). Ver `slices/slice-005-gate-review-actions.md` (ownership re-checada na transação; precedência retenção>lock)
 
 ## 6. Gate final do change
 

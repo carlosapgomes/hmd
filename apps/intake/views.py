@@ -11,8 +11,14 @@ change 11); ``case_detail`` exibe documentos/trilha/comunicações apenas do
 caso do próprio NIR (alheio → 404, sem vazamento — divergência deliberada do
 ats-web, onde o detalhe é visível a qualquer NIR operacional; design D6/D9);
 ``serve_document`` entrega o PDF por id interno (sem path traversal) com
-content-type ``application/pdf`` e filename original. Ações do gate
-(liberar/reenviar) são o slice 005.
+content-type ``application/pdf`` e filename original.
+
+Slice 005 (R1–R3, D6/D7): ``gate_release``/``gate_resubmit`` fecham o ciclo do
+gate no detalhe de um caso retido — liberar avança a ``ANONYMIZING`` com
+``CASE_GATE_BYPASSED``; reenviar substitui os PDFs e reprocessa. Ambas são
+POST restritos a caso retido do próprio criador: caso alheio → 404 (escopo
+por criador); estado fora da retenção → 400; lock ativo do worker → 409.
+
 """
 
 import logging
@@ -24,15 +30,25 @@ from django.core.exceptions import PermissionDenied
 from django.http import FileResponse, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.html import escape
+from django.views.decorators.http import require_POST
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
 from apps.cases.events import CaseEventType
+from apps.cases.locks import CaseLockConflictError
 from apps.cases.models import Case, CaseDocument
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 
 from .forms import IntakeUploadForm
-from .services import PDF_CONTENT_TYPE, create_case_with_documents
+from .services import (
+    PDF_CONTENT_TYPE,
+    CaseNotRetainedError,
+    IntakeValidationError,
+    create_case_with_documents,
+    release_retained_case,
+    resubmit_case_documents,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -225,3 +241,99 @@ def serve_document(
             filename=document.original_filename or "documento.pdf",
         ),
     )
+
+
+# ── Ações de revisão do gate NIR (slice 005, D6/D7) ────────────────────────
+
+
+def _gate_action_error(message: str, case_id: uuid.UUID, *, status: int) -> HttpResponse:
+    """Resposta 4xx das ações do gate com a mensagem e o vínculo de volta ao caso.
+
+    POST de ação sobre caso fora da retenção (400) ou sob lock ativo (409) não
+    redireciona (sem efeito colateral — R3); o corpo é uma página mínima de erro
+    sem depender de template novo fora do escopo do slice.
+    """
+    detail_url = reverse("intake:case_detail", args=[case_id])
+    body = (
+        '<!doctype html><html lang="pt-br"><head><meta charset="utf-8">'
+        "<title>Revisão do gate</title></head><body>"
+        f"<p>{escape(message)}</p>"
+        f'<p><a href="{escape(detail_url)}">Voltar ao caso</a></p>'
+        "</body></html>"
+    )
+    return HttpResponse(body, status=status)
+
+
+@role_required("nir")
+@require_POST
+def gate_release(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    """Libera caso retido: bypass do gate avançando a ANONYMIZING (R1).
+
+    POST escopado ao caso do próprio NIR (alheio/inexistente → 404). O efeito
+    (transição + ``CASE_GATE_BYPASSED`` + flags zeradas) roda no serviço
+    transacional ``release_retained_case``; sucesso → redirect ao detalhe com
+    mensagem; caso fora da retenção → 400; lock ativo (worker reprocessando) → 409.
+    """
+    user = _require_user(request)
+    active_role = request.session.get("active_role", "")
+    case = get_object_or_404(
+        Case.objects.only("pk", "case_id", "created_by_id"),
+        case_id=case_id,
+        created_by=user,
+    )
+    try:
+        release_retained_case(case=case, user=user, role=active_role)
+    except CaseNotRetainedError as exc:
+        logger.warning("gate_release_rejected user=%s case=%s motivo=%s", user.pk, case_id, exc)
+        return _gate_action_error(str(exc), case_id, status=400)
+    except CaseLockConflictError as exc:
+        logger.warning("gate_release_locked user=%s case=%s motivo=%s", user.pk, case_id, exc)
+        return _gate_action_error(str(exc), case_id, status=409)
+    messages.success(
+        request,
+        f"Caso {case.case_id} liberado — o gate foi dispensado e o caso avançou para anonimização.",
+    )
+    return redirect(reverse("intake:case_detail", args=[case.case_id]))
+
+
+@role_required("nir")
+@require_POST
+def gate_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    """Reenvia documentos de um caso retido e reprocessa do zero (R2).
+
+    POST escopado ao caso do próprio NIR (alheio/inexistente → 404). Recebe os
+    novos PDFs no campo ``documents`` e delega ao serviço transacional
+    ``resubmit_case_documents`` (mesma validação do slice 001, substituição de
+    documentos, zeragem de flag/texto/nº e reenfileiramento). Sucesso → redirect
+    ao detalhe com mensagem; arquivo inválido/caso fora da retenção → 400;
+    lock ativo (worker reprocessando) → 409.
+    """
+    user = _require_user(request)
+    active_role = request.session.get("active_role", "")
+    case = get_object_or_404(
+        Case.objects.only("pk", "case_id", "created_by_id"),
+        case_id=case_id,
+        created_by=user,
+    )
+    documents = request.FILES.getlist("documents")
+    try:
+        resubmit_case_documents(
+            case=case,
+            user=user,
+            role=active_role,
+            files=documents,
+        )
+    except IntakeValidationError as exc:
+        logger.warning("gate_resubmit_invalid user=%s case=%s motivo=%s", user.pk, case_id, exc)
+        return _gate_action_error(str(exc), case_id, status=400)
+    except CaseNotRetainedError as exc:
+        logger.warning("gate_resubmit_rejected user=%s case=%s motivo=%s", user.pk, case_id, exc)
+        return _gate_action_error(str(exc), case_id, status=400)
+    except CaseLockConflictError as exc:
+        logger.warning("gate_resubmit_locked user=%s case=%s motivo=%s", user.pk, case_id, exc)
+        return _gate_action_error(str(exc), case_id, status=409)
+    messages.success(
+        request,
+        f"Caso {case.case_id} reenviado — documentos substituídos e reprocessamento iniciado.",
+    )
+    return redirect(reverse("intake:case_detail", args=[case.case_id]))

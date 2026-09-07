@@ -35,9 +35,9 @@ django-fsm substituído por viewflow.fsm com estados renomeados.
 
 ## Estado atual (execução do roadmap)
 
-Change 01 `bootstrap-django-hmd-core` **implementado** (6/6 slices aceitos; gate final verde: ruff + format + mypy + 61 testes + `manage.py check`; aguardando arquivamento). Fundação completa: scaffold Django 5.2 SSR (`config/settings` por ambiente com resolução de banco fail-closed `DATABASE_URL`→`DB_*`→`DB_PASSWORD_FILE` e prefixo `TEST_` isolado), compose dev/test PostgreSQL 17 (+unaccent/pg_trgm), `apps/accounts` (User multi-role com `account_status`/conselho, seed_admin idempotente, auth local transitória com backend que recusa conta não-ativa, papel ativo em sessão revalidado a cada request, switch-role, `role_required` 403, `IntranetGuardMiddleware` nir-only por papel ativo). Próximo: change 02 `ad-kerberos-authentication`.
+Change 01 `bootstrap-django-hmd-core` **arquivado** (2026-09-06; specs promovidas para `openspec/specs/`). Change 02 `ad-kerberos-authentication` **implementado** (5/5 slices aceitos; gate final verde: ruff + format + mypy + 145 testes + `manage.py check`; aguardando arquivamento). Autenticação: usuários com `ad_upn` (UPN completo, realm derivado do sufixo — floresta multi-domínio) autenticam via Kerberos/minikerberos 0.4.9 (AS-REQ, TGT descartado, failover só p/ transporte, código 52 → TCP mesmo DC); break-glass local **apenas superusuário sem ad_upn** com `AD_ALLOW_LOCAL_AUTH` (default False; dev/test True); anti-lockout por CPF normalizado/IP confiável no cache; `switch-role` com 0 papéis desloga com mensagem. Próximo: change 03 `case-core-fsm-procedures`.
 
-Nota ambiental: portas host 5432/5433 podem estar ocupadas por containers de outros projetos — use `POSTGRES_HOST_PORT=55432`/`TEST_DB_PORT=55433` (mecanismo já previsto nos compose/env).
+Notas operacionais: portas host 5432/5433 podem estar ocupadas por outros projetos — use `POSTGRES_HOST_PORT=55432`/`TEST_DB_PORT=55433`. **Produção exige NTP** (clock skew → código 37) e **cache compartilhado** (`config.settings.prod` aborta com LocMemCache; deploy define Redis/Memcached). Diagnóstico AD manual: `uv run python manage.py ad_check --cpf cpf@dominio` (senha via getpass; fora do CI).
 
 ## Roadmap — 11 changes (resumo)
 
@@ -62,9 +62,9 @@ config/            settings por ambiente (base/dev/prod/test), urls, wsgi/asgi
 templates/         templates raiz + accounts (login/perfil/home/switch-role)
 static/            CSS/JS (tema hospitalar HMD, Bootstrap 5.3 CDN)
 tests/             suíte raiz (smoke + resolução de banco)
-apps/accounts/     User/Role, backends, views, middleware (papel ativo + guard), seed
+apps/accounts/     User/Role (ad_upn), backends (Kerberos AD + break-glass), kerberos.py (cliente/failover), ratelimit.py (anti-lockout), middleware (papel ativo + guard), admin, ad_check
 docker-compose*.yml PostgreSQL 17 dev/test (+ docker/init.sql unaccent/pg_trgm)
-docs/adr/          decisões arquiteturais
+docs/adr/          decisões arquiteturais (0001–0004)
 ```
 
 ## Regras não negociáveis

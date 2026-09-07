@@ -29,5 +29,5 @@
 
 ## 6. Gate final do change
 
-- [ ] 6.1 Quality gate completo (`uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest`) + `openspec validate ad-kerberos-authentication`; registrar resultado no relatório do change
-- [ ] 6.2 Atualizar `PROJECT_CONTEXT.md` (estado pós-change, env vars novas, `ad_check` operacional) e preparar arquivamento
+- [x] 6.1 Quality gate completo (`uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest`) + `openspec validate ad-kerberos-authentication`; registrar resultado no relatório do change — **resultado (2026-09-06): ruff check ✅ · ruff format ✅ (73 arquivos) · mypy ✅ (47 arquivos) · pytest ✅ 145 passed · manage.py check ✅ · openspec validate ✅**
+- [x] 6.2 Atualizar `PROJECT_CONTEXT.md` (estado pós-change, env vars novas, `ad_check` operacional) e preparar arquivamento — PROJECT_CONTEXT atualizado; arquivamento pendente de revisão final do dono

@@ -13,7 +13,7 @@
 
 ## 2. Schemas por tipo
 
-- [ ] 2.1 Slice 002 — Pydantic v2: base comum + 13 blocos específicos + composição união + evidence/status + normalização oneOf→anyOf. Ver `slices/slice-002-per-type-schemas.md`
+- [x] 2.1 Slice 002 — Pydantic v2: base comum + 13 blocos específicos + composição união + evidence/status + normalização oneOf→anyOf. Ver `slices/slice-002-per-type-schemas.md` (detecção Literal do catálogo; blocos só dos 3 tipos do plano)
 
 ## 3. Prompts versionados
 

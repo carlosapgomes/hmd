@@ -75,3 +75,34 @@ dedicado (porta 5433), isolado do banco de desenvolvimento:
 ```bash
 uv run pytest
 ```
+
+## Benchmark de anonimização (aceite operacional)
+
+O harness `anonymization_benchmark` avalia um corpus de textos em JSONL (uma
+entrada por linha `{"text": ..., "expected": [{"value": ...,
+"entity_type": ...}]}`) contra o núcleo de anonimização: recall por tipo de
+entidade, contagens, latência p50/p95 por documento, varredura zero-PII no
+output (CPF/CNS com checksum), pico de RSS do processo e documentos
+bloqueados. O comando falha (exit ≠ 0) quando algum tipo fica abaixo do
+recall mínimo, um vestígio de PII é encontrado, um documento bloqueia ou o
+RSS excede o limite opcional:
+
+```bash
+# Corpus sintético versionado (roda na suíte; exit 0 esperado)
+uv run python manage.py anonymization_benchmark \
+  --corpus apps/anonymization/tests/fixtures/benchmark_corpus.jsonl \
+  --settings=config.settings.dev
+
+# Corpus real do serviço (pré-produção) — ajuste o mínimo por env
+ANONYMIZATION_BENCHMARK_MIN_RECALL=0.90 \
+  uv run python manage.py anonymization_benchmark --corpus corpora/reais.jsonl
+
+# Limite duro opcional de RSS (MB; sem limite por default)
+ANONYMIZATION_BENCHMARK_MAX_RSS_MB=900 \
+  uv run python manage.py anonymization_benchmark --corpus corpora/reais.jsonl
+```
+
+O recall mínimo default é o setting `ANONYMIZATION_BENCHMARK_MIN_RECALL`
+(0.90), sobreponível por `--min-recall`. Corpus sintético versionado acompanha
+a suíte; a aceitação com relatórios reais é passo operacional manual,
+pré-produção (ADR-0007).

@@ -223,6 +223,19 @@ ANONYMIZATION_RUN_TASKS_INLINE = os.environ.get(
     "yes",
 )
 
+# Harness de benchmark de anonimização (change presidio-anonymization, slice
+# 005, design D9/R2): recall mínimo por tipo de entidade para o comando
+# ``anonymization_benchmark --corpus <arquivo>`` passar (default 0.90; o corpus
+# sintético versionado roda na suíte; o corpus real é aceite operacional) e
+# limite duro opcional do pico de RSS do processo em MB (ausente/0 = desligado
+# — o RSS é sempre reportado; o limite é critério operacional pré-produção).
+ANONYMIZATION_BENCHMARK_MIN_RECALL = float(
+    os.environ.get("ANONYMIZATION_BENCHMARK_MIN_RECALL", "0.90")
+)
+ANONYMIZATION_BENCHMARK_MAX_RSS_MB = (
+    int(os.environ.get("ANONYMIZATION_BENCHMARK_MAX_RSS_MB", "0")) or None
+)
+
 # django-q2 (change intake-nir-upload, slice 003, design D2): fila de tasks
 # assíncronas com broker ORM (``orm: "default"`` — sem Redis), no formato do
 # ats-web, com ``ALT_CLUSTERS`` DENTRO de ``Q_CLUSTER``. O cluster ``pdf``

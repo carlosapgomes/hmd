@@ -26,7 +26,7 @@
 
 ## 5. Re-identificação + benchmark
 
-- [ ] 5.1 Slice 005 — `reidentify_text` (roundtrip) + comando `anonymization_benchmark` (corpus sintético versionado, recall/p95/zero-PII, exit≠0 abaixo do mínimo). Ver `slices/slice-005-reidentify-benchmark.md`
+- [x] 5.1 Slice 005 — `reidentify_text` (roundtrip) + comando `anonymization_benchmark` (corpus sintético versionado, recall/p95/zero-PII duas camadas, exit≠0 abaixo do mínimo). Ver `slices/slice-005-reidentify-benchmark.md`
 
 ## 6. Gate final do change
 

@@ -25,7 +25,7 @@
 
 ## 5. UX zero papéis
 
-- [ ] 5.1 Slice 005 — `switch_role` com zero papéis encerra sessão com mensagem (fecha nota de arquivamento do change 01). Ver `slices/slice-005-switch-role-zero-roles.md`
+- [x] 5.1 Slice 005 — `switch_role` com zero papéis encerra sessão com mensagem (fecha nota de arquivamento do change 01). Ver `slices/slice-005-switch-role-zero-roles.md`
 
 ## 6. Gate final do change
 

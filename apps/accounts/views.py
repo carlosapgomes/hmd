@@ -16,6 +16,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
 
+from apps.accounts.middleware import NO_ROLES_MESSAGE
 from apps.accounts.models import User
 
 from .forms import HospitalPasswordChangeForm, LoginForm
@@ -121,14 +122,25 @@ def profile_view(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def switch_role_view(request: HttpRequest) -> HttpResponse:
-    """Troca o papel ativo da sessão (slice 005, R2).
+    """Troca o papel ativo da sessão (slice 005, R2; zero papéis → logout).
 
     GET lista os papéis do usuário; POST valida que o papel escolhido
     pertence ao usuário, grava ``session["active_role"]`` e redireciona para a
     home. As homes por papel continuam placeholders neste change.
+
+    Usuário sem nenhum papel (``/switch-role/`` é path isento do
+    ``ActiveRoleMiddleware``, que faria esse logout em paths não isentos):
+    encerra a sessão com ``NO_ROLES_MESSAGE`` e volta ao login, em vez de
+    exibir lista vazia — mesmo padrão do middleware (D8). A checagem roda
+    antes de qualquer processamento do payload no POST.
     """
     user = _require_user(request)
     user_roles = list(user.roles.order_by("name").values_list("name", flat=True))
+
+    if not user_roles:
+        logout(request)
+        messages.error(request, NO_ROLES_MESSAGE)
+        return redirect(reverse("login"))
 
     if request.method == "POST":
         role_name = request.POST.get("role", "")

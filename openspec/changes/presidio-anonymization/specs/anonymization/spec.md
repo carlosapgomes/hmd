@@ -24,7 +24,7 @@ Antes da anonimização, o sistema SHALL extrair deterministicamente (regex) do 
 
 ### Requirement: Anonimização com pseudônimos estáveis por caso
 
-A anonimização SHALL combinar o analyzer Presidio pt-BR (modelo spaCy português) com recognizers brasileiros de CPF e CNS validados por checksum e CRM por padrão, aplicando substituição por tokens estáveis por caso (`<PESSOA_1>`, `<CPF_1>`, `<DATA_1>`, `<CRM_1>`, `<LOCAL_1>`, `<ORGANIZACAO_1>`, `<TELEFONE_1>`, `<EMAIL_1>`), numerados por ordem de primeira ocorrência e consistentes no documento. O texto anonimizado e o mapa (token → valor real + tipo) SHALL ser persistidos no caso, junto de relatório com contagens por tipo de entidade, modelo e versões do engine.
+A anonimização SHALL combinar o analyzer Presidio pt-BR (modelo spaCy português) com recognizers brasileiros de CPF e CNS validados por checksum e CRM por padrão, aplicando substituição por tokens estáveis por caso (`<PESSOA_1>`, `<CPF_1>`, `<DATA_1>`, `<CRM_1>`, `<LOCAL_1>`, `<ORGANIZACAO_1>`, `<TELEFONE_1>`, `<EMAIL_1>`, `<OCORRENCIA_1>` — incluindo o número de ocorrência citado no corpo), numerados por ordem de primeira ocorrência e consistentes no documento. O texto anonimizado e o mapa (token → valor real + tipo) SHALL ser persistidos no caso, junto de relatório com contagens por tipo de entidade, modelo e versões do engine.
 
 #### Scenario: PII substituída por tokens estáveis
 
@@ -82,7 +82,7 @@ O sistema SHALL oferecer re-identificação de texto por caso (substituição de
 
 ### Requirement: Benchmark como critério de aceite técnico
 
-O sistema SHALL incluir um harness de benchmark que avalia um corpus (entradas com texto e valores esperados por tipo de entidade), reportando recall por tipo de entidade, contagens, latência p50/p95 e varredura zero-PII no output, com falha (exit ≠ 0) quando o recall fica abaixo do mínimo configurado. Um corpus sintético versionado acompanha a suíte de testes; a aceitação com relatórios reais é operacional (fora do CI).
+O sistema SHALL incluir um harness de benchmark que avalia um corpus (entradas com texto e valores esperados por tipo de entidade), reportando recall por tipo de entidade, contagens, latência p50/p95, varredura zero-PII no output, pico de memória do processo e documentos bloqueados, com falha (exit ≠ 0) quando o recall fica abaixo do mínimo configurado, houver vestígio de PII ou documento bloqueado. Um corpus sintético versionado acompanha a suíte de testes; a aceitação com relatórios reais é operacional (fora do CI).
 
 #### Scenario: Benchmark reprova corpus abaixo do mínimo
 

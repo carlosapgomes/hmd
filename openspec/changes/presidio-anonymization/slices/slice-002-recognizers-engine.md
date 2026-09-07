@@ -13,7 +13,7 @@ Recognizers brasileiros com validação por checksum (`BR_CPF`, `BR_CNS`, `BR_CR
 
 ## Requisitos
 
-- **R1** `pyproject.toml`/`uv.lock`: `presidio-analyzer==2.2.364`, `presidio-anonymizer==2.2.364`, `spacy==3.8.*` + wheel `pt_core_news_lg` (URL oficial dos releases do spaCy); `uv sync` resolve e importa.
+- **R1** `pyproject.toml`/`uv.lock`: `presidio-analyzer==2.2.364`, `presidio-anonymizer==2.2.364`, `spacy==3.8.*` + wheel `pt_core_news_lg` (URL oficial dos releases do spaCy); **`requires-python = ">=3.13,<3.15"`** (Presidio declara `<3.15` — pesquisa §3; trava o salto acidental); `uv sync` resolve e importa.
 - **R2** Validadores puros em `apps/anonymization/recognizers.py`: `valid_cpf` (checksum completo, rejeita repetidos), `valid_cns` (soma ponderada 15..1 múltipla de 11, rejeita repetidos) — funções públicas testáveis.
 - **R3** `CpfRecognizer`/`CnsRecognizer` (PatternRecognizer + validação por valor casado — só resultado com checksum válido passa), `CrmRecognizer` (padrão CRM/UF/número), entidades `BR_CPF`/`BR_CNS`/`BR_CRM`, `supported_language="pt"`, contextos de reforço da pesquisa.
 - **R4** `apps/anonymization/engine.py`: `config/presidio-nlp-pt.yaml` (mapping PER/LOC/ORG/DATE→Presidio, low-confidence da pesquisa) + `get_anonymization_engine()` singleton (`lru_cache(maxsize=1)`): NlpEngineProvider → RecognizerRegistry (predefined + BR) → `AnalyzerEngine(supported_languages=["pt"])` + `AnonymizerEngine`; `score_threshold` de `ANONYMIZATION_SCORE_THRESHOLD` (default 0.45) exposto como constante/setting lida na análise.

@@ -16,9 +16,9 @@ O processamento assíncrono com fail-closed: cluster `anonymization` no django-q
 
 - **R1** `Q_CLUSTER["ALT_CLUSTERS"]["anonymization"] = {"workers": 2, "timeout": 300, "retry": 360}`; `ANONYMIZATION_RUN_TASKS_INLINE` (base/teste `True`, prod `False`) + `.env.example`.
 - **R2** `enqueue_case_anonymization(case_id)`: inline/async por flag (`q_options={"cluster": "anonymization"}`).
-- **R3** Signal: receiver `CaseEvent.post_save` (registrado no `AppsConfig.ready` do anonymization) para `event_type == CASE_STATUS_ANONYMIZING` → `enqueue_case_anonymization(event.case_id)`; casos que chegam a `ANONYMIZING` por QUALQUER path do change 04 disparam a task (extração ok, gate liberado, reenvio reprocessado) sem alterar o intake.
-- **R4** `process_case_anonymization(case_id)`: idempotente por estado (apenas `ANONYMIZING`; demais no-op com log); claim lock `worker_anonymization`/`system` (release no finally); `start_anonymization` (evento de início); `anonymize_case_text` (slice 003); sucesso → `complete_anonymization` (→ `LLM_EXTRACTING`); exceção → `fail_processing(str(err))` → `FAILED` com motivo (**fail-closed** — `anonymized_text` permanece vazio).
-- **R5** Compose dev: serviço `worker-anonymization` (`manage.py qcluster`, `Q_CLUSTER_NAME=anonymization`) — a imagem do worker instala o modelo spaCy no build (documentar no compose/ADR; mesma imagem base do worker-pdf + modelo). `docker compose config` valida.
+- **R3** Signal **com guarda anti-recursão**: receiver `CaseEvent.post_save` (registrado no `AppsConfig.ready`) para `event_type == CASE_STATUS_ANONYMIZING` **E `payload["source"] == "PDF_EXTRACTING"`** (a self-transition `start_anonymization` da task emite `source=ANONYMIZING` e NÃO re-dispara — sem o filtro, inline recursa com lock na mão e async duplica); enqueue via **`transaction.on_commit`** (rollback não enfileira); os 3 paths de entrada do change 04 disparam sem alterar o intake. Testes: evento de entrada enfileira; evento da self-transition NÃO enfileira; rollback da transação não enfileira.
+- **R4** `process_case_anonymization(case_id)`: idempotente por estado (apenas `ANONYMIZING`; demais no-op com log); claim lock `worker_anonymization`/`system` (release no finally); `start_anonymization` (evento de início); **porteiro do texto vazio** (`extracted_text == ""` → `fail_processing("sem texto extraído")`); sucesso: **`with transaction.atomic(): anonymize_case_text(case); case.complete_anonymization(...)`** (persistência+transição atômicas — falha no meio não deixa `anonymized_text` preenchido); exceção → `fail_processing(str(err))` → `FAILED` com motivo (**fail-closed**).
+- **R5** **Dockerfile de worker com deps no BUILD**: `Dockerfile` passa a instalar `uv sync --frozen` no build (incluindo o modelo spaCy — ~541 MB na imagem); `worker-pdf` e `worker-anonymization` (`Q_CLUSTER_NAME=anonymization`) usam a imagem pronta (sem sync em startup); o web dev mantém volume/runserver como hoje. `docker compose config` valida.
 - **R6** `docs/adr/ADR-0007-anonimizacao-presidio-fail-closed.md` completo (decisão/alternativas/consequências — design D10).
 - **R7** Testes: caso em ANONYMIZING com texto → task → LLM_EXTRACTING com anonymized_text preenchido + eventos início/conclusão; exceção do serviço (monkeypatch) → FAILED + motivo + anonymized_text vazio; reexecução em LLM_EXTRACTING → no-op; lock ativo → `CaseLockConflictError`; signal dispara enqueue ao gravar evento CASE_STATUS_ANONYMIZING (assert com inline); caso ANONYMIZING com extracted_text vazio → comportamento definido (serviço defensivo do 003 → avança com texto vazio? **NÃO** — falha fechada: caso sem texto em ANONYMIZING → fail_processing("sem texto extraído") — teste).
 
@@ -56,6 +56,7 @@ expected_files:
   - docker-compose.dev.yml
   - .env.example
   - docs/adr/ADR-0007-anonimacao-presidio-fail-closed.md
+  - Dockerfile
 allowed_incidental_files: []
 out_of_scope:
   - re-identificação/benchmark (005); qualquer mudança em apps/intake; cluster llm (06)

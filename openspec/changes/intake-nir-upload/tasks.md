@@ -29,5 +29,5 @@
 
 ## 6. Gate final do change
 
-- [ ] 6.1 Quality gate completo (`uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest`) + `openspec validate intake-nir-upload`; registrar resultado
-- [ ] 6.2 Atualizar `PROJECT_CONTEXT.md` (estado pós-change; cluster pdf; env novas) e preparar arquivamento
+- [x] 6.1 Quality gate completo (`uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest`) + `openspec validate intake-nir-upload`; registrar resultado — **resultado (2026-09-07): ruff check ✅ · ruff format ✅ (129 arquivos) · mypy ✅ (89 arquivos) · pytest ✅ 337 passed · manage.py check ✅ · makemigrations --check ✅ · compose config ✅ · openspec validate ✅**
+- [x] 6.2 Atualizar `PROJECT_CONTEXT.md` (estado pós-change; cluster pdf; env novas) e preparar arquivamento — atualizado; arquivamento pendente de revisão final do dono

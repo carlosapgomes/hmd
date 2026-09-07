@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_display_name }} — Meus casos{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+  <div class="col-12 col-lg-10">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <h1 class="h3 mb-0">Meus casos</h1>
+      <a href="{% url 'intake:home' %}" class="btn btn-primary">Enviar relatório</a>
+    </div>
+
+    {% if items %}
+    <div class="list-group shadow-sm">
+      {% for item in items %}
+      <a href="{% url 'intake:case_detail' item.case.case_id %}"
+         class="list-group-item list-group-item-action py-3">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+          <span class="font-monospace small text-muted">Caso {{ item.case.case_id }}</span>
+          {% if item.case.status == 'FAILED' %}
+          <span class="badge rounded-pill text-bg-danger">{{ item.status_label }}</span>
+          {% elif item.case.manual_review_required %}
+          <span class="badge rounded-pill text-bg-warning">{{ item.status_label }}</span>
+          {% else %}
+          <span class="badge rounded-pill text-bg-secondary">{{ item.status_label }}</span>
+          {% endif %}
+          {% if item.case.manual_review_required %}
+          <span class="badge rounded-pill text-bg-warning border" title="{{ item.case.manual_review_reason }}">
+            Retido para revisão
+          </span>
+          {% endif %}
+        </div>
+        <div class="small text-muted">
+          Nº de ocorrência: <strong>{{ item.agency_record_number }}</strong>
+          <span class="mx-2">·</span>
+          {% if item.procedure_labels %}
+          Procedimentos: {{ item.procedure_labels|join:" · " }}
+          {% else %}
+          Procedimentos: —
+          {% endif %}
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="card shadow-sm">
+      <div class="card-body text-muted">
+        Nenhum caso criado por você até agora.
+        <a href="{% url 'intake:home' %}">Envie o primeiro relatório</a>.
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

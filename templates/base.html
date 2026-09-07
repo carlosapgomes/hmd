@@ -18,6 +18,13 @@
     <a href="{% url 'home' %}" class="navbar-brand d-flex align-items-center gap-2 text-white text-decoration-none">
       <span class="app-header__title">{{ app_display_name }}</span>
     </a>
+    {% if active_role == 'nir' %}
+    <!-- Links do intake NIR (slice 004, R4): visíveis só com papel ativo nir -->
+    <nav class="navbar-nav flex-row align-items-center gap-2 ms-3" aria-label="Intake NIR">
+      <a class="nav-link px-2" href="{% url 'intake:my_cases' %}">Meus casos</a>
+      <a class="nav-link px-2" href="{% url 'intake:home' %}">Enviar relatório</a>
+    </nav>
+    {% endif %}
     {% if user.is_authenticated %}
     <!-- Sessão: papel ativo · display name · avatar/perfil · troca de papel · sair -->
     <div class="d-flex align-items-center gap-3 ms-auto">

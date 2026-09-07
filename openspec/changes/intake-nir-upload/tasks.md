@@ -21,7 +21,7 @@
 
 ## 4. Meus casos e detalhe
 
-- [ ] 4.1 Slice 004 — `my_cases` (escopo por criador, flag de retenção) + `case_detail` (documentos servidos, trilha, comunicações). Ver `slices/slice-004-my-cases-detail.md`
+- [x] 4.1 Slice 004 — `my_cases` (escopo por criador, flag de retenção) + `case_detail` (documentos servidos, trilha, comunicações). Ver `slices/slice-004-my-cases-detail.md`
 
 ## 5. Revisão do gate
 

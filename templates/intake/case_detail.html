@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_display_name }} — Caso {{ case.case_id }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+  <div class="col-12 col-lg-10">
+    <nav aria-label="breadcrumb" class="mb-3">
+      <ol class="breadcrumb mb-0">
+        <li class="breadcrumb-item"><a href="{% url 'intake:my_cases' %}">Meus casos</a></li>
+        <li class="breadcrumb-item active" aria-current="page">Caso {{ case.case_id }}</li>
+      </ol>
+    </nav>
+
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+          <h1 class="h3 mb-0 font-monospace">Caso {{ case.case_id }}</h1>
+          {% if case.status == 'FAILED' %}
+          <span class="badge rounded-pill text-bg-danger">{{ status_label }}</span>
+          {% elif case.manual_review_required %}
+          <span class="badge rounded-pill text-bg-warning">{{ status_label }}</span>
+          {% else %}
+          <span class="badge rounded-pill text-bg-secondary">{{ status_label }}</span>
+          {% endif %}
+        </div>
+        <p class="text-muted mb-2">
+          Criado em {{ case.created_at|date:"d/m/Y H:i" }}
+          {% if case.updated_at %}· atualizado em {{ case.updated_at|date:"d/m/Y H:i" }}{% endif %}
+          · Nº de ocorrência: <strong>{{ case.agency_record_number|default:"—" }}</strong>
+        </p>
+
+        {% if case.manual_review_required %}
+        <div class="alert alert-warning mb-3" role="alert">
+          <strong>Retido para revisão manual.</strong>
+          {% if case.manual_review_reason %}{{ case.manual_review_reason }}{% endif %}
+        </div>
+        {% endif %}
+
+        <h2 class="h6 text-muted text-uppercase mb-2">Procedimentos declarados</h2>
+        {% if procedure_labels %}
+        <div class="d-flex flex-wrap gap-2 mb-3">
+          {% for label in procedure_labels %}
+          <span class="badge rounded-pill text-bg-light border">{{ label }}</span>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted">Nenhum tipo declarado.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Documentos</h2>
+      </div>
+      <div class="table-responsive">
+        <table class="table align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th scope="col">#</th>
+              <th scope="col">Arquivo</th>
+              <th scope="col">Tamanho</th>
+              <th scope="col">Enviado em</th>
+              <th scope="col"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for document in documents %}
+            <tr>
+              <td class="text-muted">{{ document.position }}</td>
+              <td class="font-monospace small">{{ document.original_filename }}</td>
+              <td>{{ document.size_bytes|filesizeformat }}</td>
+              <td class="text-muted">{{ document.created_at|date:"d/m/Y H:i" }}</td>
+              <td class="text-end">
+                <a href="{% url 'intake:serve_document' case.case_id document.pk %}"
+                   target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary">
+                  Abrir PDF
+                </a>
+              </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" class="text-muted">Nenhum documento neste caso.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="row g-4">
+      <div class="col-12 col-lg-7">
+        <div class="card shadow-sm mb-4">
+          <div class="card-header bg-white">
+            <h2 class="h5 mb-0">Trilha de eventos</h2>
+          </div>
+          <ul class="list-group list-group-flush">
+            {% for event in events %}
+            <li class="list-group-item">
+              <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                  <strong>{{ event.label }}</strong>
+                  <div class="small text-muted">
+                    {{ event.actor_display }}{% if event.actor_role %} · papel {{ event.actor_role }}{% endif %}
+                  </div>
+                </div>
+                <span class="small text-muted text-nowrap">{{ event.timestamp|date:"d/m/Y H:i" }}</span>
+              </div>
+              {% if event.payload_summary %}
+              <dl class="small text-muted row mb-0 mt-1">
+                {% for key, value in event.payload_summary %}
+                <dt class="col-4 col-md-3 text-truncate">{{ key }}</dt>
+                <dd class="col-8 col-md-9 mb-0">{{ value }}</dd>
+                {% endfor %}
+              </dl>
+              {% endif %}
+            </li>
+            {% empty %}
+            <li class="list-group-item text-muted">Sem eventos registrados.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+
+      <div class="col-12 col-lg-5">
+        <div class="card shadow-sm mb-4">
+          <div class="card-header bg-white">
+            <h2 class="h5 mb-0">Comunicações</h2>
+          </div>
+          <ul class="list-group list-group-flush">
+            {% for communication in communications %}
+            <li class="list-group-item">
+              <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                  {% if communication.message_type == 'system' %}
+                  <strong class="text-secondary">Sistema</strong>
+                  {% else %}
+                  <strong>{{ communication.author.display_name|default:"Operador" }}</strong>
+                  {% if communication.author_role %}
+                  <span class="badge rounded-pill text-bg-light border">{{ communication.author_role }}</span>
+                  {% endif %}
+                  {% endif %}
+                </div>
+                <span class="small text-muted text-nowrap">{{ communication.created_at|date:"d/m/Y H:i" }}</span>
+              </div>
+              <p class="mb-0 mt-1">{{ communication.body }}</p>
+            </li>
+            {% empty %}
+            <li class="list-group-item text-muted">Sem comunicações registradas.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

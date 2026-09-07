@@ -255,7 +255,11 @@ def test_upload_flow_via_view(
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R4/R5: GET renderiza o form; POST cria o caso e redireciona à home com mensagem."""
+    """R4/R5: GET renderiza o form; POST cria o caso e redireciona ao detalhe.
+
+    O destino do redirect mudou no slice 004 (R5): do POST de criação vai para
+    o detalhe do caso criado (antes apontava à home placeholder).
+    """
     client.force_login(nir_user)
     url = reverse("intake:home")
 
@@ -275,7 +279,6 @@ def test_upload_flow_via_view(
         follow=True,
     )
     assert response.status_code == 200
-    assert reverse("home") in response.redirect_chain[-1]
 
     case = Case.objects.get()
     assert case.status == CaseStatus.NEW
@@ -286,6 +289,10 @@ def test_upload_flow_via_view(
         "cat_cardiaco",
     }
     assert "criado com sucesso" in response.content.decode()
+    # R5 (slice 004): o redirect final do POST é o detalhe do caso criado.
+    assert response.redirect_chain[-1][0].endswith(
+        reverse("intake:case_detail", args=[str(case.case_id)])
+    )
 
 
 @pytest.mark.django_db

@@ -5,11 +5,11 @@
 
 ## 0. Preflight
 
-- [ ] 0.1 Confirmar working tree limpa, registrar `BASE_REF`; baseline verde (gate do change 05 serve; 399 testes)
+- [x] 0.1 Confirmar working tree limpa, registrar `BASE_REF`; baseline verde (gate do change 05 serve; 399 testes) — árvore limpa, BASE_REF `4f6a0fd`, baseline válida. Nota: modelo padrão do reviewer (gpt-5.6-luna) esgotou cota até 2026-09-08 21:46Z — reviews deste change usam override deepseek-v4-flash:high
 
 ## 1. Cliente OpenRouter
 
-- [ ] 1.1 Slice 001 — cliente (SDK OpenAI, transport injetável, erros tipados, envs) + `manage.py llm_check` manual. Ver `slices/slice-001-openrouter-client.md`
+- [x] 1.1 Slice 001 — cliente (SDK OpenAI, transport injetável, erros tipados, envs) + `manage.py llm_check` manual. Ver `slices/slice-001-openrouter-client.md` (openai==3.8.0)
 
 ## 2. Schemas por tipo
 

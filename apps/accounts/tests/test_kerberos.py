@@ -17,6 +17,7 @@ usa fakes injetados via ``settings.KERBEROS_CLIENT_FACTORY``
 
 from __future__ import annotations
 
+import logging
 import socket
 import threading
 from dataclasses import FrozenInstanceError
@@ -225,6 +226,28 @@ class TestValidatePassword:
         assert result.code is None
         assert result.reason == "kdc_unreachable"
 
+    def test_failed_attempt_logs_dc_protocol_result_and_latency(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """D5: a tentativa loga DC consultado, protocolo, resultado e latência
+        — sem UPN/CPF nem senha (PII fora dos logs)."""
+        FakeKerbrosClient.script = [_krb_error(24)]
+        self._patch_client(monkeypatch)
+
+        with caplog.at_level(logging.INFO, logger="apps.accounts.kerberos"):
+            result = kerberos.validate_password(UPN, PASSWORD, DC_ONE, 3)
+
+        assert result.ok is False
+        log_text = caplog.text
+        assert f"dc={DC_ONE}" in log_text
+        assert "protocol=udp" in log_text
+        assert "result=falha" in log_text
+        assert "code=24" in log_text
+        assert "reason=kdc_error" in log_text
+        assert "latency_ms=" in log_text
+        assert "12345678901" not in log_text
+        assert PASSWORD not in log_text
+
     def test_timeout_propagated_to_attempt_socket(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """minikerberos 0.4.9 não expõe timeout no socket síncrono — o wrapper
         aplica o timeout ao socket da thread (socket.setdefaulttimeout)."""
@@ -402,3 +425,23 @@ class TestValidateWithFailover:
         assert result.code == 14
         assert result.reason == "kdc_error"
         assert [inst.target.ip for inst in FakeKerbrosClient.instances] == [DC_ONE]
+
+    def test_failover_logs_each_dc_attempt(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """D5: o failover registra cada DC consultado com protocolo e latência
+        das tentativas — sem UPN/CPF nem senha."""
+        monkeypatch.setattr(kerberos, "KerbrosClient", FakeKerbrosClient)
+        FakeKerbrosClient.script = [TimeoutError("DC1 lento"), None]
+
+        with caplog.at_level(logging.INFO, logger="apps.accounts.kerberos"):
+            with override_settings(AD_DCS=[DC_ONE, DC_TWO], AD_KDC_TIMEOUT=3):
+                result = kerberos.validate_with_failover(UPN, PASSWORD)
+
+        assert result.ok is True
+        log_text = caplog.text
+        assert f"dc={DC_ONE}" in log_text
+        assert f"dc={DC_TWO}" in log_text
+        assert "latency_ms=" in log_text
+        assert "12345678901" not in log_text
+        assert PASSWORD not in log_text

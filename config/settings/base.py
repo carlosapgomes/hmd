@@ -32,12 +32,21 @@ INSTALLED_APPS = [
 # Modelo de usuário customizado (D8) — estendido uma única vez.
 AUTH_USER_MODEL = "accounts.User"
 
-# Autenticação local transitória (ADR-0003, slice 004 R1): backend custom que
-# delega a checagem de senha ao ModelBackend e recusa account_status != active.
-# O change ad-kerberos-authentication substitui o login local comum.
+# Autenticação (change ad-kerberos-authentication, slice 003, design D4): dois
+# backends em ordem fixa — Kerberos primeiro (usuários com `ad_upn` autenticam
+# via AD); local só para break-glass (superusuário sem `ad_upn`) e apenas com
+# AD_ALLOW_LOCAL_AUTH=True (default False; dev/test setam True).
 AUTHENTICATION_BACKENDS = [
+    "apps.accounts.backends.KerberosBackend",
     "apps.accounts.backends.LocalAccountBackend",
 ]
+# Break-glass local (ADR-0003): autenticação local permitida apenas para
+# superusuários sem `ad_upn`, e somente quando esta flag está ligada.
+AD_ALLOW_LOCAL_AUTH = os.environ.get("AD_ALLOW_LOCAL_AUTH", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 # Validação Kerberos no Active Directory (change ad-kerberos, D1/D5/D10).
 # ``AD_DCS`` são os KDCs conhecidos do domínio raiz; o realm NÃO é

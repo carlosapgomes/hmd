@@ -1,8 +1,10 @@
-"""Views de autenticação local transitória, home placeholder e switch-role.
+"""Views de conta e sessão (login AD/break-glass, perfil e switch-role).
 
-Fluxo R2/R4/R5 do ADR-0003 (estágio 1): login/logout locais, perfil com
-troca de senha local e home autenticada placeholder. O papel ativo em sessão
-e o switch-role chegam no slice 005 (R1/R2); o guard de intranet no slice 006.
+Fluxo do ADR-0003: o login local comum foi substituído por autenticação AD
+(Kerberos, usuários com ``ad_upn``) com break-glass local de superusuário
+(change ad-kerberos-authentication); logout, perfil com troca de senha local
+(enquanto o break-glass existir) e home autenticada placeholder. O papel ativo
+em sessão e o switch-role chegam no slice 005; o guard de intranet no 006.
 """
 
 from django.contrib import messages
@@ -18,9 +20,15 @@ from apps.accounts.models import User
 
 from .forms import HospitalPasswordChangeForm, LoginForm
 
-# Mensagem genérica: não revela se o motivo é senha errada ou conta
-# bloqueada/removida (R1 — sem vazamento de motivo interno).
+# Mensagens genéricas de login (change ad-kerberos, slice 003/R4/D5): o usuário
+# externo nunca recebe código KDC, existência de CPF nem status interno da
+# conta. A view distingue apenas "credenciais inválidas" de "serviço de
+# autenticação indisponível" — decisão pela marcação request-scoped
+# ``request.kerberos_unavailable`` feita pelo ``KerberosBackend`` (D4).
 INVALID_CREDENTIALS_MESSAGE = "Usuário ou senha inválidos."
+SERVICE_UNAVAILABLE_MESSAGE = (
+    "Não foi possível falar com o serviço de autenticação. Tente novamente."
+)
 
 
 def _require_user(request: HttpRequest) -> User:
@@ -32,10 +40,13 @@ def _require_user(request: HttpRequest) -> User:
 
 
 def login_view(request: HttpRequest) -> HttpResponse:
-    """Login local transitório: GET renderiza o formulário, POST autentica.
+    """Login (Kerberos AD p/ usuários com ``ad_upn``; local só break-glass).
 
-    Login redireciona direto para a home (papel ativo/switch-role é o slice
-    005 — fora do escopo deste slice).
+    GET renderiza o formulário; POST autentica com a ordem de backends das
+    settings (D4). Falha mostra mensagem genérica — credenciais inválidas ou
+    serviço indisponível, conforme a marcação request-scoped do backend
+    (R4/D5); nenhuma mensagem revela motivo interno. Login redireciona direto
+    para a home (papel ativo/switch-role é o slice 005).
     """
     if request.user.is_authenticated:
         return redirect(reverse("home"))
@@ -51,7 +62,10 @@ def login_view(request: HttpRequest) -> HttpResponse:
             if user is not None:
                 login(request, user)
                 return redirect(reverse("home"))
-            messages.error(request, INVALID_CREDENTIALS_MESSAGE)
+            if getattr(request, "kerberos_unavailable", False):
+                messages.error(request, SERVICE_UNAVAILABLE_MESSAGE)
+            else:
+                messages.error(request, INVALID_CREDENTIALS_MESSAGE)
     else:
         form = LoginForm()
 

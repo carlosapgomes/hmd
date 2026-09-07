@@ -10,7 +10,7 @@ de procedimento.
 - `AGENTS.md` — regras, stack, comandos, política de testes, workflow OpenSpec.
 - `PROJECT_CONTEXT.md` — contexto executivo, fontes autoritativas e roadmap
   dos 11 changes.
-- `docs/adr/` — decisões arquiteturais (ADR-0001 a 0003).
+- `docs/adr/` — decisões arquiteturais (ADR-0001 a 0004).
 
 ## Stack
 
@@ -41,6 +41,31 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run p
 Variáveis de ambiente documentadas em `.env.example` (`cp .env.example .env`).
 Settings por ambiente em `config.settings.{base,dev,prod,test}`; `prod` falha
 fechado sem `DJANGO_SECRET_KEY`.
+
+## Autenticação AD (Kerberos) e break-glass
+
+Usuários provisionados com `ad_upn` (`cpf@dominio`, via Django admin)
+autenticam exclusivamente via Active Directory (Kerberos AS-REQ com a senha
+digitada). O realm é derivado do sufixo do UPN no momento da validação — não é
+configurável. DCs e timeout vêm do ambiente (`AD_DCS`, `AD_KDC_TIMEOUT`).
+
+A autenticação local é apenas **break-glass**: superusuário **sem** `ad_upn`,
+quando `AD_ALLOW_LOCAL_AUTH=true` (default **false** em produção; dev/test
+setam `true` explicitamente). A validação contra os DCs reais é manual e fora
+do CI (ver `ad_check` abaixo). Detalhes em `docs/adr/ADR-0004-*.md`.
+
+### `ad_check` — aceitação contra os DCs reais (manual, fora do CI)
+
+Valida uma senha AD contra **cada** DC configurado e imprime por DC o
+resultado (ok/código/razão/latência). A senha é lida via prompt (`getpass`) —
+nunca em argumentos, variável de ambiente ou logs:
+
+```bash
+uv run python manage.py ad_check --cpf 12345678901@dominio-teste.local
+```
+
+Requer rede hospitalar; útil para a matriz de aceitação da pesquisa (senha
+errada `24`, CPF inexistente `6`, DC `.19` fora → `.21`, etc.).
 
 ## Testes
 

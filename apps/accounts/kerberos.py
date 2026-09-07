@@ -14,8 +14,10 @@ aponta esta função real; a suíte injeta fakes e **nunca** toca a rede. A
 validação contra os DCs reais é o comando manual ``ad_check`` (slice 003/D9).
 """
 
+import logging
 import socket
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
@@ -27,6 +29,8 @@ from minikerberos.client import KerbrosClient
 from minikerberos.common.creds import KerberosCredential
 from minikerberos.common.target import KerberosTarget
 from minikerberos.protocol.errors import KerberosError
+
+logger = logging.getLogger(__name__)
 
 # Códigos KRB-ERROR (RFC 4120). ``25`` (PREAUTH_REQUIRED) é passo interno do
 # ``get_TGT`` do minikerberos — nunca resultado final. ``52``
@@ -181,6 +185,45 @@ def _authenticate_once(
             socket.setdefaulttimeout(previous_timeout)
 
 
+def _attempt_once(
+    principal: str,
+    realm: str,
+    password: str,
+    dc: str,
+    timeout: int,
+    protocol: UniProto,
+) -> KerberosAuthResult:
+    """Uma tentativa de AS-REQ (UDP ou TCP) com log estruturado (D5).
+
+    Executa ``_authenticate_once`` no protocolo dado e classifica o resultado
+    (sucesso ou ``code``/``reason`` de protocolo/transporte). Cada tentativa é
+    registrada com DC consultado, protocolo, resultado e latência em ms — sem
+    UPN/CPF/senha (PII e segredos fora dos logs).
+    """
+    start = time.perf_counter()
+    try:
+        _authenticate_once(principal, realm, password, dc, timeout, protocol)
+        result = KerberosAuthResult(ok=True)
+    except KerberosError as exc:
+        result = _classify_kerberos_error(exc)
+    except TimeoutError:
+        result = KerberosAuthResult(False, reason="kdc_timeout")
+    except OSError:
+        result = KerberosAuthResult(False, reason="kdc_unreachable")
+    latency_ms = (time.perf_counter() - start) * 1000
+    log = logger.warning if not result.ok else logger.info
+    log(
+        "kerberos_attempt dc=%s protocol=%s result=%s code=%s reason=%s latency_ms=%.0f",
+        dc,
+        "udp" if protocol is UniProto.CLIENT_UDP else "tcp",
+        "ok" if result.ok else "falha",
+        result.code if result.code is not None else "-",
+        result.reason if result.reason is not None else "-",
+        latency_ms,
+    )
+    return result
+
+
 def validate_password(upn: str, password: str, dc: str, timeout: int) -> KerberosAuthResult:
     """Valida a senha AD contra um DC (R3).
 
@@ -191,30 +234,17 @@ def validate_password(upn: str, password: str, dc: str, timeout: int) -> Kerbero
     ``reason="kdc_error"``; código inextrável/sentinela vira
     ``reason="kdc_unreachable"`` (classe transporte, sem ``code``).
     ``OSError``/``TimeoutError`` viram ``reason`` de transporte sem código.
+    Cada tentativa é registrada por ``_attempt_once`` (D5): DC, protocolo,
+    resultado e latência — sem UPN/CPF/senha.
     """
     principal, realm = _split_upn(upn)
 
-    try:
-        _authenticate_once(principal, realm, password, dc, timeout, UniProto.CLIENT_UDP)
-    except KerberosError as exc:
-        first = _classify_kerberos_error(exc)
-        if first.code != KRB_ERR_RESPONSE_TOO_BIG:
-            return first
-        try:
-            _authenticate_once(principal, realm, password, dc, timeout, UniProto.CLIENT_TCP)
-        except KerberosError as exc:
-            return _classify_kerberos_error(exc)
-        except TimeoutError:
-            return KerberosAuthResult(False, reason="kdc_timeout")
-        except OSError:
-            return KerberosAuthResult(False, reason="kdc_unreachable")
-        return KerberosAuthResult(ok=True)
-    except TimeoutError:
-        return KerberosAuthResult(False, reason="kdc_timeout")
-    except OSError:
-        return KerberosAuthResult(False, reason="kdc_unreachable")
-
-    return KerberosAuthResult(ok=True)
+    first = _attempt_once(principal, realm, password, dc, timeout, UniProto.CLIENT_UDP)
+    if first.code != KRB_ERR_RESPONSE_TOO_BIG:
+        return first
+    # 52 (RESPONSE_TOO_BIG): resposta grande demais para UDP — reprocessa via
+    # TCP no mesmo DC antes de qualquer classificação (D5).
+    return _attempt_once(principal, realm, password, dc, timeout, UniProto.CLIENT_TCP)
 
 
 def _resolve_client_factory() -> ClientFactory:

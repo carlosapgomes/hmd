@@ -1,10 +1,14 @@
-"""Testes do fluxo de autenticação local transitória (slice 004, R1–R6).
+"""Testes do fluxo de login/logout local (slice 004, R1–R6; adaptado p/ slice 003).
 
-Cobre:
-- R1/R6: backend custom recusa contas ``blocked``/``removed`` mesmo com senha
+Desde o slice 003 do change ad-kerberos, a autenticação local comum deixou de
+existir: ``LocalAccountBackend`` só autentica o **break-glass** — superusuário
+sem ``ad_upn`` com ``AD_ALLOW_LOCAL_AUTH=True`` (settings de teste). Os fluxos
+aqui exercitam esse caminho:
+
+- R1/R6: backend recusa contas ``blocked``/``removed`` mesmo com senha
   correta, com mensagem genérica (sem revelar o motivo interno);
-- R2/R6: login válido cria sessão; senha errada nega com mensagem genérica;
-  profile exige login; logout encerra a sessão e volta ao login;
+- R2/R6: login break-glass válido cria sessão; senha errada nega com mensagem
+  genérica; profile exige login; logout encerra a sessão e volta ao login;
 - R2: troca de senha local no perfil preserva a sessão e a nova senha autentica;
 - R4: home autenticada placeholder exige login e cumprimenta o usuário;
 - R5: usuário autenticado em ``/login/`` é redirecionado para a home.
@@ -33,12 +37,17 @@ def _create_user(
     account_status: str = "active",
     role_names: Sequence[str] = ("doctor",),
 ) -> User:
-    """Cria usuário com papéis e status de conta (senha fixa ``PASSWORD``)."""
+    """Cria usuário de teste do fluxo local (senha fixa ``PASSWORD``).
+
+    O fluxo local é o break-glass (slice 003, R2): superusuário **sem**
+    ``ad_upn``, autenticável apenas com ``AD_ALLOW_LOCAL_AUTH=True``.
+    """
     user = User.objects.create_user(username=username, password=PASSWORD)
+    user.is_superuser = True
     user.first_name = first_name
     user.last_name = last_name
     user.account_status = account_status
-    user.save(update_fields=["first_name", "last_name", "account_status"])
+    user.save(update_fields=["is_superuser", "first_name", "last_name", "account_status"])
     for name in role_names:
         role, _ = Role.objects.get_or_create(name=name)
         user.roles.add(role)

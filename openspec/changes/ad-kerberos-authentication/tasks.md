@@ -17,7 +17,7 @@
 
 ## 3. Backend e login
 
-- [ ] 3.1 Slice 003 — `KerberosBackend` + `LocalAccountBackend` recusando usuários AD + ordem de backends + mensagens "serviço indisponível" vs "credenciais inválidas" + ADR-0004. Ver `slices/slice-003-kerberos-backend-login.md`
+- [x] 3.1 Slice 003 — `KerberosBackend` + `LocalAccountBackend` recusando usuários AD + ordem de backends + mensagens "serviço indisponível" vs "credenciais inválidas" + ADR-0004. Ver `slices/slice-003-kerberos-backend-login.md`
 
 ## 4. Anti-lockout
 

@@ -68,6 +68,16 @@ class CaseEventType(models.TextChoices):
         "Gate de regulação dispensado na revisão do NIR",
     )
 
+    # Anonimização (change presidio-anonymization, slice 003, design D6):
+    # evento não-transicional gravado pelo serviço
+    # ``apps/anonymization/services.py::anonymize_case_text`` ao persistir os
+    # artefatos no caso (payload enxuto: contagens + versões). A transição FSM
+    # de conclusão é da task do slice 004.
+    CASE_ANONYMIZATION_COMPLETED = (
+        "CASE_ANONYMIZATION_COMPLETED",
+        "Anonimização concluída",
+    )
+
 
 def case_status_event_type(state: str) -> str:
     """Resolve o tipo canônico do evento de transição para o estado-alvo.

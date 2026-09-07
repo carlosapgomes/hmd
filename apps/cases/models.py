@@ -114,6 +114,17 @@ class Case(FSMModelMixin, models.Model):
     manual_review_required = models.BooleanField(default=False)
     manual_review_reason = models.CharField(max_length=200, blank=True)
 
+    # Artefatos de anonimização (change presidio-anonymization, slice 003,
+    # design D6/R4): texto anonimizado, mapa de pseudônimos (token → valor —
+    # nunca sai do perímetro, D6 invariante b) e relatório (contagens + modelo +
+    # versões); ``patient_name``/``patient_birth_date`` são o linkage persistido
+    # fora do texto (D2 — consumidos pelos prior-case 06/presenter 07).
+    anonymized_text = models.TextField(blank=True)
+    pseudonym_map = models.JSONField(default=dict, blank=True)
+    anonymization_report = models.JSONField(default=dict, blank=True)
+    patient_name = models.CharField(max_length=255, blank=True)
+    patient_birth_date = models.DateField(null=True, blank=True)
+
     # Lock/lease de exclusividade de mutação (design D6, slice 004): espelho
     # do ats-web — dono (FK SET_NULL), concessão/vencimento (indexado), token
     # de posse, contexto operacional (ex.: doctor_queue, worker_pipeline) e

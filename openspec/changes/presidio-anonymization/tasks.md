@@ -18,7 +18,7 @@
 
 ## 3. Serviço de anonimização + artefatos
 
-- [ ] 3.1 Slice 003 — `PseudonymOperator` + merge determinístico×NLP + `anonymize_case_text` + campos do `Case` (anonymized_text/pseudonym_map/anonymization_report/patient_name/patient_birth_date) + evento. Ver `slices/slice-003-anonymize-service.md`
+- [x] 3.1 Slice 003 — `PseudonymOperator` + merge determinístico×NLP + `anonymize_case_text` + campos do `Case` (anonymized_text/pseudonym_map/anonymization_report/patient_name/patient_birth_date) + evento. Ver `slices/slice-003-anonymize-service.md` (spike reprovou operador custom → componente próprio; chave canônica por categoria)
 
 ## 4. Worker/cluster
 

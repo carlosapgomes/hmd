@@ -33,5 +33,5 @@
 
 ## 7. Gate final do change
 
-- [ ] 7.1 Quality gate completo (`uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest`) + `openspec validate llm-pipeline-per-type`; registrar resultado
-- [ ] 7.2 Atualizar `PROJECT_CONTEXT.md` (estado pós-change; invariante "LLM só vê tokens"; envs novas; pendências operacionais: benchmark de modelos + corpus real) e preparar arquivamento
+- [x] 7.1 Quality gate completo (`uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest`) + `openspec validate llm-pipeline-per-type`; registrar resultado — **651 passed, ruff/format/mypy limpos, `openspec validate --strict` valid (2026-09-08)**
+- [x] 7.2 Atualizar `PROJECT_CONTEXT.md` (estado pós-change; invariante "LLM só vê tokens"; envs novas; pendências operacionais: benchmark de modelos + corpus real) e preparar arquivamento

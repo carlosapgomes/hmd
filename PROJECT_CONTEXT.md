@@ -31,7 +31,7 @@ Diferenças fundamentais vs. o projeto-fonte `ats-web` (EDA): autenticação via
 Active Directory (Kerberos) em estágio posterior; anonimização Presidio
 fail-closed; catálogo de 13 tipos de procedimento com schemas/prompts por tipo;
 policy clínica consultiva determinística; agendamento multi-unidade;
-django-fsm substituído por viewflow.fsm com estados renomeados.
+django-fsm substituído por django-fsm-2 (MIT; API django-fsm preservada — viewflow.fsm descartado por AGPLv3+) com estados renomeados.
 
 ## Estado atual (execução do roadmap)
 
@@ -45,7 +45,7 @@ Notas operacionais: portas host 5432/5433 podem estar ocupadas por outros projet
 |---|---|---|
 | 01 | `bootstrap-django-hmd-core` | Scaffold, settings, docker-compose, accounts (papéis/multi-role/guard nir-only), templates base, AGENTS/PROJECT_CONTEXT, ADRs 0001–0003, seed_admin |
 | 02 | `ad-kerberos-authentication` | `ad_upn`, KerberosBackend (minikerberos), failover, códigos, rate-limit, login CPF+senha, ADR |
-| 03 | `case-core-fsm-procedures` | Case/CaseProcedure/CaseEvent/locks/comunicações, FSM viewflow (17 estados), catálogo 13 tipos + exam profiles |
+| 03 | `case-core-fsm-procedures` | Case/CaseProcedure/CaseEvent/locks/comunicações, FSM django-fsm-2 (17 estados), catálogo 13 tipos + exam profiles |
 | 04 | `intake-nir-upload` | Upload multi-PDF, worker pdf (PyMuPDF), regulation gate adaptado, declaração de tipos, meus casos |
 | 05 | `presidio-anonymization` | App anonymization, pré-extração determinística, pseudônimos, worker, fail-closed, recognizers BR, ADR |
 | 06 | `llm-pipeline-per-type` | Cliente OpenRouter, schemas por tipo + composição união, LLM1/LLM2, reconciliação, policy consultiva, prior-case, prompts versionados, ADR |

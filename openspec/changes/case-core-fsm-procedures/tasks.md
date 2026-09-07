@@ -1,12 +1,12 @@
 # Tasks: case-core-fsm-procedures
 
 > Execução slice a slice (worker + reviewer + parent commita, `/slice-loop`). Cada slice tem arquivo próprio em `slices/`.
-> **Pré-decisão pendente do dono** (design D1): biblioteca de FSM — recomendação `django-fsm-2==4.2.4` (MIT) vs `viewflow.fsm`/`django-viewflow` (AGPLv3+). Confirmar ANTES do slice 002.
+> **D1 confirmada pelo dono (2026-09-07): `django-fsm-2==4.2.4`** (MIT).
 
 ## 0. Preflight
 
 - [ ] 0.1 Confirmar working tree limpa, registrar `BASE_REF`; baseline verde uma vez (gate do change 02 serve)
-- [ ] 0.2 Dono confirma D1 (django-fsm-2 ✅ / viewflow com aceite AGPL) — emendar `temp/plano-implementacao-hmd.md` §4 se necessário
+- [x] 0.2 Dono confirma D1 — **django-fsm-2 confirmado (2026-09-07)**; plano §4/§11, PROJECT_CONTEXT e ADR-0001 emendados
 
 ## 1. Catálogo
 

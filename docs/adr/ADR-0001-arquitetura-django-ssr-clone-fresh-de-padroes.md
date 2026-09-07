@@ -32,7 +32,7 @@ escrever o scaffold novo, arquivo por arquivo.
 
 1. **Fork do ats-web com limpeza** — rejeitada: carregaria decisões legadas
    (estados Matrix, prompts EDA, django-fsm) que o roadmap do HMD muda
-   explicitamente (viewflow.fsm, estados renomeados, 13 tipos de procedimento).
+   explicitamente (django-fsm-2, estados renomeados, 13 tipos de procedimento).
 2. **Framework/arquitetura diferente** (ex.: API + SPA) — rejeitada: quebraria
    a paridade operacional com o ats-web e adicionaria superfície nova sem
    benefício para o domínio.

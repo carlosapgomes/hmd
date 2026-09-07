@@ -6,10 +6,10 @@ O coração do domínio: `Case` (núcleo enxuto) com máquina de estados de 17 e
 
 ## Contexto necessário (contexto zero)
 
-- **Pré-condição**: dono confirmou D1 (`../design.md`) — biblioteca `django-fsm-2==4.2.4` (recomendada, MIT) ou `django-viewflow` (AGPL). Os requisitos abaixo são agnósticos; a diferença é a mecânica (decoradores/signals vs flow class/hooks).
+- **Biblioteca (D1 confirmada)**: `django-fsm-2==4.2.4` (MIT, API django-fsm preservada — `@transition`/`FSMField(protected=True)`/signals). Pesquisa: `temp/research/viewflow-fsm.md`.
 - Design: `../design.md` D1 (lib), D4 (17 estados + transições + DOCTOR_ACCEPTED transitório-observável), D5 (CaseEvent), D7 (Case enxuto).
 - Spec: `../specs/case-management/spec.md` — Requirements "FSM de 17 estados com transições protegidas" (5 cenários) e "Trilha de auditoria append-only" (2 cenários).
-- Referência (somente-leitura): `/projects/dev/ats-web/apps/cases/models.py` — `CaseStatus` (TextChoices), `Case` com `FSMField(protected=True)` + `@transition` + `_record_event` (pending-event), `CaseEvent`. **Se D1=django-fsm-2**: padrão vale ~1:1 (renomear estados conforme design D4). **Se D1=viewflow**: adaptar para flow class + getter/setter + `on_success` (ver `temp/research/viewflow-fsm.md` §"Integração Django"), mantendo a mesma semântica de spec.
+- Referência (somente-leitura): `/projects/dev/ats-web/apps/cases/models.py` — `CaseStatus` (TextChoices), `Case` com `FSMField(protected=True)` + `@transition` + `_record_event` (pending-event), `CaseEvent`. Com `django-fsm-2` o padrão vale ~1:1 (renomear estados conforme design D4).
 - Estados (17): `NEW, PDF_EXTRACTING, ANONYMIZING, LLM_EXTRACTING, LLM_SUMMARIZING, AWAITING_DOCTOR, DOCTOR_DENIED, DOCTOR_ACCEPTED, SCHEDULER_REQUESTED, AWAITING_SCHEDULING, SCHEDULING_CONFIRMED, SCHEDULING_DENIED, FAILED, FINAL_REPLY_POSTED, AWAITING_NIR_ACK, CLEANING, CLEANED`.
 - Slice 001 entregou `apps/cases` (catálogo, sem models).
 
@@ -32,7 +32,7 @@ O coração do domínio: `Case` (núcleo enxuto) com máquina de estados de 17 e
 | R4 | `apps/cases/models.py` | `test_fsm.py::test_event_recorded_with_actor_and_role` |
 | R5 | `apps/cases/models.py` (+services/mixin conforme lib) | `test_fsm.py::test_fail_processing_records_reason`, `::test_acceptance_chain_events` |
 | R6 | `apps/cases/tests/test_fsm.py` | `uv run pytest apps/cases/tests/test_fsm.py` |
-| R7 | `pyproject.toml`, `uv.lock` | `rg -n "django-fsm-2\|django-viewflow" pyproject.toml` |
+| R7 | `pyproject.toml`, `uv.lock` | `rg -n "django-fsm-2" pyproject.toml` |
 
 ## RED
 
@@ -56,7 +56,6 @@ expected_files:
   - pyproject.toml
   - uv.lock
 allowed_incidental_files:
-  - apps/cases/fsm.py (flow class, se D1=viewflow)
   - apps/cases/tests/conftest.py (fixtures de usuário/papel)
 out_of_scope:
   - CaseProcedure/serviços de procedimento (slice 003) — a decisão médica deste slice é de ESTADO (transição), sem rows
@@ -65,7 +64,7 @@ out_of_scope:
   - UI/admin
 ```
 
-Escale ao parent se: a lib exigir adaptação além do previsto (ex.: protected quebra `refresh_from_db` no viewflow — ver pesquisa); algum estado/transição da fonte parecer inconsistente com a spec.
+Escale ao parent se: a lib exigir adaptação além do previsto; algum estado/transição da fonte parecer inconsistente com a spec.
 
 ## Critérios de aceitação
 

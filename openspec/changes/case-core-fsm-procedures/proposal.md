@@ -2,7 +2,7 @@
 
 ## Why
 
-O HMD não tem domínio de casos: tudo que existe hoje é accounts (papéis/auth). Este change cria o núcleo de domínio clínico reutilizável — a "mecânica" que todos os changes posteriores (intake 04, anonimização 05, pipeline 06, decisão 07, agendamento 08, encerramento 09) consomem: entidade `Case` com máquina de estados de 17 estados, procedimentos por caso (neutros, catálogo de 13 tipos), trilha de auditoria append-only, locks de concorrência e comunicações por caso. É a generalização do padrão comprovado do `ats-web` (ADR-0004: dimensão de exame vive exclusivamente em `CaseProcedure`; `CaseEvent` é a fonte de verdade da história) para 13 tipos de procedimento, com FSM migrada de `django-fsm` (deprecated) para `viewflow.fsm`.
+O HMD não tem domínio de casos: tudo que existe hoje é accounts (papéis/auth). Este change cria o núcleo de domínio clínico reutilizável — a "mecânica" que todos os changes posteriores (intake 04, anonimização 05, pipeline 06, decisão 07, agendamento 08, encerramento 09) consomem: entidade `Case` com máquina de estados de 17 estados, procedimentos por caso (neutros, catálogo de 13 tipos), trilha de auditoria append-only, locks de concorrência e comunicações por caso. É a generalização do padrão comprovado do `ats-web` (ADR-0004: dimensão de exame vive exclusivamente em `CaseProcedure`; `CaseEvent` é a fonte de verdade da história) para 13 tipos de procedimento, com FSM migrada de `django-fsm` (deprecated) para **`django-fsm-2`** (MIT, API preservada — decisão do dono em 2026-09-07; ver `temp/research/viewflow-fsm.md`).
 
 ## What Changes
 
@@ -27,7 +27,7 @@ O HMD não tem domínio de casos: tudo que existe hoje é accounts (papéis/auth
 
 ## Impact
 
-- Arquivos: `apps/cases/**` (models, fsm, exam_profiles, procedures, services, signals, seed, migrations, tests), `config/settings/base.py` (INSTALLED_APPS + settings de lease), `pyproject.toml` (viewflow.fsm), `.env.example`, `docs/adr/ADR-0005*`.
+- Arquivos: `apps/cases/**` (models, fsm, exam_profiles, procedures, services, signals, seed, migrations, tests), `config/settings/base.py` (INSTALLED_APPS + settings de lease), `pyproject.toml` (django-fsm-2), `.env.example`, `docs/adr/ADR-0005*`.
 - Migrações novas (sem dados existentes — banco ainda sem casos).
 - Contrato consumido por 04–09; mudanças de estado/catálogo após este change exigem change explícito (guardrail).
 

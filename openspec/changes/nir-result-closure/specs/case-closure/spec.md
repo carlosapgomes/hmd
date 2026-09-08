@@ -46,7 +46,7 @@ O criador do caso SHALL poder confirmar o recebimento da resposta final, levando
 
 #### Scenario: Caso encerrado segue elegível como prior-case
 
-- **GIVEN** um caso encerrado (`CLEANED`) há menos de sete dias com decisões médicas registradas
+- **GIVEN** um caso encerrado (`CLEANED`) cuja decisão médica mais recente foi registrada dentro da janela do prior-case
 - **WHEN** um novo caso do mesmo tipo/paciente consulta o contexto de casos anteriores
 - **THEN** o caso encerrado é considerado pelo prior-case com suas decisões
 

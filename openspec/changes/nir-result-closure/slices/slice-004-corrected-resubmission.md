@@ -55,7 +55,10 @@ original só ganha o evento de supersedição e a listagem "corrigido por".
   Guards: `role_required("nir")`, criador (404 caso alheio), botão somente
   em `CLEANED`.
 - **R5** Testes: serviço happy (campos do novo, eventos nos DOIS casos,
-  original intacto, worker pdf disparado — inline); motivo vazio;
+  original intacto, **enqueue do worker pdf — testes do serviço com
+  `INTAKE_RUN_TASKS_INLINE=False` + assert do enqueue, padrão dos testes
+  atuais do intake**; comportamento com inline=True é desvio conhecido
+  documentado no design D4); motivo vazio;
   original não-`CLEANED`; não-criador; tipos distintos (R3); regressão do
   `create_case_with_documents` puro (sem kwargs → sem correção, comportamento
   do 04); view flow (GET/POST/erros/lista corrected_by).

@@ -25,9 +25,12 @@ escrita, transições via ops públicas):
   `post_final_reply` + `post_user_communication` (autor = médico, papel
   `doctor`, template constante `DENIAL_REPLY_TEMPLATE` interpolada com
   tipo+motivo por procedimento). Quem chama: a view `doctor:case_decide`
-  (change 07) imediatamente após `record_doctor_procedure_decisions` retornar
-  negativa total — a decisão parcial (≥1 aprovado) segue para o agendador e
-  **não** toca no fechamento. Falha entre os dois atomics deixa o caso em
+  (change 07) imediatamente após `record_doctor_procedure_decisions` — que
+  **retorna `None` e trabalha sobre um `locked` re-buscado**
+  (`apps/cases/procedures.py`), então a view **re-lê o caso**
+  (`refresh_from_db`) e invoca o fechamento **somente se `status ==
+  DOCTOR_DENIED`**; a decisão parcial (≥1 aprovado → `SCHEDULER_REQUESTED`)
+  segue o fluxo existente e **não** toca no fechamento. Falha entre os dois atomics deixa o caso em
   `DOCTOR_DENIED` (re-chamável pela mesma view em nova submissão? Não — a
   view decide uma vez; caso raro de falha intermediária fica visível no
   estado e é operável via admin; documentado como risco residual aceito).
@@ -45,10 +48,12 @@ zera `extracted_text`, `anonymized_text`, `pseudonym_map` ({}),
 `structured_data`, `summary_text`, `suggested_action`, `policy_result`.
 **Preserva**: identificação (`patient_name`/`patient_birth_date`/
 `agency_record_number` — prior-case 15d + lista de encerrados), rows
-`CaseProcedure` com decisões/motivos (auditoria + prior-case 7d —
+`CaseProcedure` com decisões/motivos (auditoria + prior-case —
 `lookup_prior_case_context` lê apenas `CaseProcedure` + identificação,
-**não** lê artefatos do caso), trilha `CaseEvent`, thread de comunicações,
-campos `scheduled_*` (auditoria operacional).
+**não** lê artefatos do caso e **não** filtra por status: `CLEANED` passa),
+trilha `CaseEvent`, thread de comunicações, campos `scheduled_*`
+(auditoria operacional) e **`anonymization_report`** (contagens/versões da
+anonimização — métrica de auditoria, não PHI; sem racional para zerar).
 
 **Arquivos físicos**: coletar os nomes ANTES do `delete()` das rows; dentro
 do atomic só o banco; a deleção física best-effort roda em
@@ -89,7 +94,12 @@ reutilizando `create_case_with_documents` **com kwargs aditivos opcionais**
 `None`/`""` mantém o comportamento do change 04; o enqueue do worker pdf já
 acontece lá) + posta `CASE_MARKED_SUPERSEDED` no original (ator NIR) e
 `CASE_CORRECTION_CREATED` no novo. O original NÃO muda de status nem perde
-dados. UI: botão "Reenviar corrigido" no detalhe de caso `CLEANED` próprio →
+dados. **Enqueue em cascata**: o enqueue do worker pdf dentro do atomic
+externo é inofensivo em prod (async pós-commit pelo broker); em teste com
+`INTAKE_RUN_TASKS_INLINE=True` o processamento inline ocorre antes do
+commit externo — os testes do serviço usam `INTAKE_RUN_TASKS_INLINE=False`
++ assert do enqueue (padrão dos testes atuais do intake) e o comportamento
+inline é desvio conhecido documentado. UI: botão "Reenviar corrigido" no detalhe de caso `CLEANED` próprio →
 formulário (arquivos + tipos + motivo) → redirect ao detalhe do novo caso; o
 detalhe do original lista `corrected_by` (ordenado por criação).
 

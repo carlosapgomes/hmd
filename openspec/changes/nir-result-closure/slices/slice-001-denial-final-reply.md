@@ -34,24 +34,27 @@ final ao NIR (motivo por procedimento) na thread e leva o caso a
   (label legível do catálogo) e motivo.
 - **R2** Sem rows negadas (estado certo mas dados inconsistentes) → erro
   nomeado sem efeito.
-- **R3** Wiring: `apps/doctor/views.py::case_decide` chama o serviço
-  imediatamente após `record_doctor_procedure_decisions` retornar resultado
-  de negativa **total** (nenhum aprovado); decisão parcial segue o fluxo
-  existente (SCHEDULER_REQUESTED) **sem** chamar o fechamento; falha do
-  serviço na view → `messages.error` + redirect (nunca 500; caso permanece
-  `DOCTOR_DENIED`).
+- **R3** Wiring: `apps/doctor/views.py::case_decide` chama o serviço do
+  change 03 **e ignora seu retorno (ele devolve `None` e trabalha sobre um
+  `locked` re-buscado — o `case` em memória fica stale)**; em seguida
+  **re-lê o caso** (`case.refresh_from_db()`) e invoca
+  `post_doctor_denial_reply` **somente se `status == DOCTOR_DENIED`**
+  (decisão parcial → `SCHEDULER_REQUESTED` segue o fluxo existente, sem
+  fechamento); `ValueError` do fechamento na view → `messages.error` +
+  redirect (nunca 500; caso permanece `DOCTOR_DENIED`).
 - **R4** Testes: negativa total via serviço (estado `FINAL_REPLY_POSTED`,
   evento `CASE_STATUS_FINAL_REPLY_POSTED`, comunicação com tipo+motivo de
   cada negado, autor=médico/papel doctor); estado errado recusado; wiring na
   view (POST negando tudo → thread contém a resposta; POST parcial →
-  SCHEDULER_REQUESTED sem resposta final; erro simulado sem 500 se barato).
+  SCHEDULER_REQUESTED sem resposta final; erro do fechamento simulado via
+  `monkeypatch` → mensagem + redirect, sem 500 — **obrigatório**).
 
 ## Matriz requisito → arquivo → teste/check
 
 | Requisito | Arquivo(s) esperado(s) | Teste/check |
 | --- | --- | --- |
 | R1/R2 | `apps/cases/closure.py` | `test_denial_reply_publishes_motives`, `test_denial_reply_wrong_state_rejected`, `test_denial_reply_no_rows_rejected` |
-| R3 | `apps/doctor/views.py` (case_decide) | `test_decide_all_denied_posts_final_reply`, `test_decide_partial_no_final_reply` |
+| R3 | `apps/doctor/views.py` (case_decide) | `test_decide_all_denied_posts_final_reply`, `test_decide_partial_no_final_reply`, `test_decide_closure_error_no_500` |
 | R4 | `apps/cases/tests/test_closure_denial.py`, `apps/doctor/tests/test_decision.py` | suíte do slice |
 
 ## Escopo e expected blast radius

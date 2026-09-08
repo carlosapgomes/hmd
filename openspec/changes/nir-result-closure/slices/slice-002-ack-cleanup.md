@@ -22,9 +22,16 @@ quebrar o prior-case.
 - Design D1/D2 (`openspec/changes/nir-result-closure/design.md`) — ordem de
   deleção (rows no atomic; arquivos físicos best-effort em
   `transaction.on_commit`); preservados listados.
-- Padrão do storage: testes usam storage temporário real (como
-  `apps/intake/tests/test_creation.py` faz para documentos) — inspecione-o
-  antes de escrever os testes de arquivo.
+- Padrão do storage em teste: os testes do intake usam `InMemoryStorage`
+  via fixture autouse (`apps/intake/tests/conftest.py` — replicar esse
+  fixture para os testes deste slice, ex.: em `apps/cases/tests/conftest.py`
+  ou override no módulo; sem isso os arquivos iriam para o `MEDIA_ROOT`
+  real).
+- `transaction.on_commit` **não dispara** em teste `django_db` comum
+  (rollback descarta callbacks): o teste de deleção física usa
+  `@pytest.mark.django_db(transaction=True)` (precedente:
+  `apps/pipeline/tests/test_signals.py`) — atenção ao quirk de harness
+  conhecido (flush apaga seeds; fixtures `get_or_create` como nos demais).
 
 ## Requisitos verificáveis
 
@@ -39,20 +46,26 @@ quebrar o prior-case.
   `case.documents`; zera `extracted_text`/`anonymized_text`/
   `pseudonym_map`/`structured_data`/`summary_text`/`suggested_action`/
   `policy_result`; PRESERVA `patient_name`/`patient_birth_date`/
-  `agency_record_number`, rows `CaseProcedure`, `CaseEvent`, comunicações e
-  `scheduled_*` (assert de preservação explícito nos testes).
+  `agency_record_number`, `anonymization_report`, rows `CaseProcedure`,
+  `CaseEvent`, comunicações e `scheduled_*` (assert de preservação
+  explícito nos testes).
 - **R3** Arquivos físicos deletados best-effort APÓS commit
   (`transaction.on_commit`), com log em falha; arquivos de OUTROS casos
-  intocados.
+  intocados. Teste com `django_db(transaction=True)` + storage em memória
+  (callbacks de commit disparam de verdade).
 - **R4** Estado errado / não-criador → erros nomeados sem nenhuma escrita.
-- **R5** Regressão prior-case: caso `CLEANED` há <7d com decisões segue
-  retornado por `lookup_prior_case_context` de um novo caso do mesmo
-  paciente/tipo (registro nº igual).
+- **R5** Regressão prior-case: caso `CLEANED` com decisão médica
+  (`doctor_decided_at`) **dentro da janela** — a janela do prior-case mede
+  `doctor_decided_at` da row prévia contra `created_at` do caso novo (7d nº
+  de registro / 15d nome+nascimento; settings do projeto), NÃO a idade da
+  limpeza — segue retornado por `lookup_prior_case_context` de um novo caso
+  do mesmo paciente/tipo (registro nº igual; ancorar o setup na data da
+  decisão, não na data do fechamento).
 - **R6** Testes: happy path (estado/3 eventos na ordem/rows deletas/campos
   zerados/preservados intactos/arquivo físico sumiu do storage); estado
-  errado; não-criador; prior-case pós-limpeza; documento inacessível
-  (`intake:serve_document` → 404 — teste de integração da rota, se barato;
-  senão assert de rows).
+  errado; não-criador; prior-case pós-limpeza; **documento inacessível via
+  rota `intake:serve_document` → 404 (teste OBRIGATÓRIO — cenário de
+  spec)**.
 
 ## Matriz requisito → arquivo → teste/check
 
@@ -60,9 +73,9 @@ quebrar o prior-case.
 | --- | --- | --- |
 | R1/R4 | `apps/cases/closure.py` | `test_ack_chains_to_cleaned`, `test_ack_wrong_state_rejected`, `test_ack_non_creator_rejected` |
 | R2 | `apps/cases/closure.py` | `test_cleanup_removes_clinical_keeps_essential` |
-| R3 | `apps/cases/closure.py` | `test_ack_deletes_physical_files_after_commit`, `test_ack_other_case_files_untouched` |
-| R5 | `apps/cases/tests/test_closure_ack.py` | `test_cleaned_case_still_prior_case` |
-| R6 | `apps/cases/tests/test_closure_ack.py` | suíte do slice |
+| R3 | `apps/cases/closure.py` | `test_ack_deletes_physical_files_after_commit` (django_db transaction=True), `test_ack_other_case_files_untouched` |
+| R5 | `apps/cases/tests/test_closure_ack.py` | `test_cleaned_case_still_prior_case` (setup ancorado em `doctor_decided_at`) |
+| R6 | `apps/cases/tests/test_closure_ack.py` | suíte do slice + `test_serve_document_404_after_cleanup` (rota) |
 
 ## Escopo e expected blast radius
 

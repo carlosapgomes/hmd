@@ -315,6 +315,20 @@ class Case(FSMModelMixin, models.Model):
         """Hook FSM {DOCTOR_DENIED, SCHEDULING_CONFIRMED, SCHEDULING_DENIED} → FINAL_REPLY_POSTED."""
 
     @transition(
+        field="status",
+        source=CaseStatus.FINAL_REPLY_POSTED,
+        target=CaseStatus.AWAITING_SCHEDULING,
+    )
+    def _fsm_reopen_scheduling(self) -> None:
+        """Hook FSM FINAL_REPLY_POSTED → AWAITING_SCHEDULING (intercorrência).
+
+        Segunda transição adicionada pós-change-03 (guardrail: transições
+        sim, estados não) — a reabertura por intercorrência devolve à fila de
+        agendamento um caso cuja resposta final (unidade 1) ainda não teve
+        ciência do NIR.
+        """
+
+    @transition(
         field="status", source=CaseStatus.FINAL_REPLY_POSTED, target=CaseStatus.AWAITING_NIR_ACK
     )
     def _fsm_nir_acknowledge(self) -> None:
@@ -487,6 +501,31 @@ class Case(FSMModelMixin, models.Model):
     def post_final_reply(self, *, user: User | None = None, role: str | None = None) -> None:
         """{DOCTOR_DENIED, SCHEDULING_CONFIRMED, SCHEDULING_DENIED} → FINAL_REPLY_POSTED."""
         self._run_transition(self._fsm_post_final_reply, user=user, role=role)
+
+    def reopen_scheduling(
+        self,
+        *,
+        reason: str,
+        user: User | None = None,
+        role: str | None = None,
+    ) -> None:
+        """FINAL_REPLY_POSTED → AWAITING_SCHEDULING (intercorrência pós-agendamento).
+
+        Transição NOVA pós-change-03 (guardrail: transições sim, estados não):
+        reabre na fila um caso já respondido ao NIR na unidade 1. O ``reason``
+        obrigatório entra no payload do evento ``CASE_STATUS_AWAITING_SCHEDULING``
+        via ``_run_transition`` (que já carrega o ``source`` real
+        ``FINAL_REPLY_POSTED``). Quem valida estado/unidade, limpa os campos de
+        agendamento e posta a comunicação ao NIR é o serviço
+        ``reopen_scheduling_after_incident`` (apps/scheduler) no mesmo atomic.
+        Source inválido → ``TransitionNotAllowed`` sem efeito (django-fsm).
+        """
+        self._run_transition(
+            self._fsm_reopen_scheduling,
+            user=user,
+            role=role,
+            extra_payload={"reason": reason},
+        )
 
     def nir_acknowledge(self, *, user: User | None = None, role: str | None = None) -> None:
         """FINAL_REPLY_POSTED → AWAITING_NIR_ACK (ciência do NIR)."""

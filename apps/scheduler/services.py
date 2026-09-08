@@ -14,9 +14,13 @@ para a view tratar (slice 003) — o atomic desfaz qualquer escrita parcial.
 Branch por estado no encadeamento (review do plano P1-1): a transição
 ``await_scheduling_confirmation`` tem source único ``SCHEDULER_REQUESTED`` na
 FSM real do change 03 — em casos já em ``AWAITING_SCHEDULING`` (reabertos por
-intercorrência, slice 002) o ``await`` é PULADO. Textos de resposta são
-constantes do módulo (dados, não strings espalhadas): unidade 2 usa o texto
-EXATO do plano §4, sem ponto final.
+intercorrência, slice 002) o ``await`` é PULADO. A intercorrência
+(``reopen_scheduling_after_incident``) só vale em ``FINAL_REPLY_POSTED`` com
+agendamento confirmado na unidade 1: transição NOVA ``reopen_scheduling``
+(``FINAL_REPLY_POSTED → AWAITING_SCHEDULING``) + limpeza dos campos de
+agendamento + motivo persistido + comunicação ao NIR no mesmo atomic. Textos
+de resposta são constantes do módulo (dados, não strings espalhadas): unidade
+2 usa o texto EXATO do plano §4, sem ponto final.
 """
 
 from __future__ import annotations
@@ -45,6 +49,11 @@ REPLY_UNIT_1_TEMPLATE = (
 )
 REPLY_UNIT_2_TEXT = "Recusar o relatório — caso agendado na Unidade 2, que comunicará a Secretaria"
 REPLY_DENY_TEMPLATE = "Agendamento negado — {reason}."
+# Intercorrência (slice 002): agendamento desmarcado com o motivo obrigatório;
+# o caso retorna à fila para novo agendamento (texto do design D2, sem ponto).
+REPLY_REOPEN_TEMPLATE = (
+    "Intercorrência — agendamento desmarcado ({reason}); caso retorna à fila para novo agendamento"
+)
 
 # Campos persistidos na decisão do agendador (D1), salvos no mesmo atomic das
 # transições FSM.
@@ -55,6 +64,18 @@ _SCHEDULING_FIELDS = (
     "scheduled_by",
     "scheduled_decided_at",
     "scheduling_denial_reason",
+)
+
+# Campos tocados pela intercorrência (slice 002, R2): os 5 campos de
+# agendamento são limpos e ``scheduling_reopen_reason`` recebe o motivo —
+# histórico completo vive nos eventos, nada de migration nova.
+_REOPEN_FIELDS = (
+    "scheduled_unit",
+    "scheduled_datetime",
+    "scheduled_location",
+    "scheduled_by",
+    "scheduled_decided_at",
+    "scheduling_reopen_reason",
 )
 
 _SCHEDULING_READY_STATES = frozenset(
@@ -102,6 +123,27 @@ def _enter_scheduling_queue(case: Case, *, user: User, role: str) -> None:
     """
     if case.status == CaseStatus.SCHEDULER_REQUESTED:
         case.await_scheduling_confirmation(user=user, role=role)
+
+
+def _validate_final_reply_posted(case: Case) -> None:
+    """Estado da reabertura por intercorrência (R2): erro nomeado caso contrário."""
+    if case.status != CaseStatus.FINAL_REPLY_POSTED:
+        raise ValueError(
+            f"intercorrência indisponível no estado {case.status!r} — esperado FINAL_REPLY_POSTED"
+        )
+
+
+def _validate_reopen_unit_one(case: Case) -> None:
+    """Intercorrência exige agendamento confirmado na unidade 1 (R2/plano §4):
+    unidade 2 → erro nomeado; sem agendamento confirmado (respostas finais de
+    negação médica/de agendamento não têm o que desmarcar) também é bloqueado.
+    """
+    if case.scheduled_unit == SchedulingUnit.UNIT_2:
+        raise ValueError("intercorrência desabilitada para unidade 2")
+    if case.scheduled_unit != SchedulingUnit.UNIT_1:
+        raise ValueError(
+            "intercorrência desabilitada — caso sem agendamento confirmado na unidade 1"
+        )
 
 
 def confirm_case_scheduling(
@@ -182,4 +224,48 @@ def deny_case_scheduling(
         locked.save(update_fields=_SCHEDULING_FIELDS)
 
         body = REPLY_DENY_TEMPLATE.format(reason=stripped_reason)
+        post_user_communication(locked, user=user, role=role, body=body)
+
+
+def reopen_scheduling_after_incident(
+    case: Case,
+    *,
+    reason: str,
+    user: User,
+    role: str,
+) -> None:
+    """Desmarca por intercorrência um caso confirmado na unidade 1 (R1/D2).
+
+    Válido apenas em ``FINAL_REPLY_POSTED`` com agendamento confirmado na
+    unidade 1 (unidade 2 → erro nomeado) e motivo obrigatório — erros nomeados
+    antes de qualquer escrita. No MESMO atomic: transição NOVA
+    ``reopen_scheduling`` (volta a ``AWAITING_SCHEDULING``; o motivo entra no
+    payload do evento ``CASE_STATUS_AWAITING_SCHEDULING``), limpa os 5 campos
+    de agendamento (``scheduled_unit``/``scheduled_datetime``/
+    ``scheduled_location``/``scheduled_by``/``scheduled_decided_at`` — o
+    histórico vive nos eventos), persiste ``scheduling_reopen_reason`` e posta
+    ao NIR a comunicação de retorno à fila (constante ``REPLY_REOPEN_TEMPLATE``
+    interpolada com o motivo). A re-confirmação posterior usa
+    ``confirm_case_scheduling`` (origem ``AWAITING_SCHEDULING`` aceita —
+    branch por estado pula o ``await``).
+    """
+    stripped_reason = reason.strip()
+    with transaction.atomic():
+        locked = Case.objects.select_for_update().get(pk=case.pk)
+        _validate_final_reply_posted(locked)
+        _validate_reopen_unit_one(locked)
+        if not stripped_reason:
+            raise ValueError("informe o motivo da intercorrência")
+
+        locked.reopen_scheduling(reason=stripped_reason, user=user, role=role)
+
+        locked.scheduled_unit = None
+        locked.scheduled_datetime = None
+        locked.scheduled_location = ""
+        locked.scheduled_by = None
+        locked.scheduled_decided_at = None
+        locked.scheduling_reopen_reason = stripped_reason
+        locked.save(update_fields=_REOPEN_FIELDS)
+
+        body = REPLY_REOPEN_TEMPLATE.format(reason=stripped_reason)
         post_user_communication(locked, user=user, role=role, body=body)

@@ -1,9 +1,9 @@
 """Testes do fluxo de login/logout local (slice 004, R1–R6; adaptado p/ slice 003).
 
 Desde o slice 003 do change ad-kerberos, a autenticação local comum deixou de
-existir: ``LocalAccountBackend`` só autentica o **break-glass** — superusuário
-sem ``ad_upn`` com ``AD_ALLOW_LOCAL_AUTH=True`` (settings de teste). Os fluxos
-aqui exercitam esse caminho:
+existir: ``LocalAccountBackend`` autentica o **admin local por design** —
+superusuário sem ``ad_upn``, em qualquer ambiente, sem flag (ADR-0009,
+change admin-local-identity). Os fluxos aqui exercitam esse caminho:
 
 - R1/R6: backend recusa contas ``blocked``/``removed`` mesmo com senha
   correta, com mensagem genérica (sem revelar o motivo interno);
@@ -39,8 +39,8 @@ def _create_user(
 ) -> User:
     """Cria usuário de teste do fluxo local (senha fixa ``PASSWORD``).
 
-    O fluxo local é o break-glass (slice 003, R2): superusuário **sem**
-    ``ad_upn``, autenticável apenas com ``AD_ALLOW_LOCAL_AUTH=True``.
+    O fluxo local é o admin por design (ADR-0009): superusuário **sem**
+    ``ad_upn``, autenticável em qualquer ambiente — sem flag de habilitação.
     """
     user = User.objects.create_user(username=username, password=PASSWORD)
     user.is_superuser = True

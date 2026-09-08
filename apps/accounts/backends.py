@@ -1,7 +1,7 @@
 """Backends de autenticação do HMD (change ad-kerberos-authentication, slice 003).
 
 ``AUTHENTICATION_BACKENDS`` lista os dois backends em ordem fixa (design D4):
-Kerberos primeiro, local apenas para break-glass.
+Kerberos primeiro, local por design para o perfil administrativo (D1).
 
 - ``KerberosBackend``: usuários provisionados com ``ad_upn`` (UPN completo
   ``cpf@dominio``) autenticam exclusivamente via Active Directory (AS-REQ).
@@ -11,17 +11,17 @@ Kerberos primeiro, local apenas para break-glass.
   (``all_kdcs_unreachable``/``kdc_timeout``), marca
   ``request.kerberos_unavailable`` (contrato request-scoped, D4) — a login
   view exibe "serviço indisponível", distinto de credenciais inválidas.
-- ``LocalAccountBackend`` (modificado): **apenas superusuários sem ``ad_upn``**
-  autenticam localmente (ADR-0003: break-glass é do superusuário) e somente
-  com ``AD_ALLOW_LOCAL_AUTH=True`` (default ``False`` em base; dev/test setam
-  ``True``). Usuários com ``ad_upn`` são recusados sempre; usuários comuns sem
-  ``ad_upn`` também — a credencial local transitória deixou de existir.
+- ``LocalAccountBackend`` (change admin-local-identity, D1/ADR-0009):
+  **apenas superusuários sem ``ad_upn``** autenticam localmente, por design,
+  em qualquer ambiente e **sem flag de habilitação** (extinta — ADR-0009);
+  preencher ``ad_upn`` no superusuário o torna AD.
+  Usuários com ``ad_upn`` são recusados sempre; usuários comuns sem
+  ``ad_upn`` também.
 """
 
 import logging
 from typing import Any
 
-from django.conf import settings
 from django.contrib.auth.backends import BaseBackend, ModelBackend
 from django.contrib.auth.models import AnonymousUser
 from django.http import HttpRequest
@@ -118,11 +118,13 @@ class KerberosBackend(BaseBackend):
 
 
 class LocalAccountBackend(ModelBackend):
-    """Break-glass local (ADR-0003/D4): superusuário sem ``ad_upn``.
+    """Admin local por design (ADR-0009): superusuário sem ``ad_upn``.
 
     Herda a checagem de senha do ``ModelBackend`` e adiciona as regras
-    herméticas: ``AD_ALLOW_LOCAL_AUTH`` ligada (default ``False``), usuário
-    sem ``ad_upn`` e superusuário — qualquer outro perfil é recusado.
+    herméticas: usuário sem ``ad_upn`` e superusuário — qualquer outro perfil
+    é recusado. Sem flag de habilitação (change admin-local-identity D1/D2):
+    a credencial assistencial é única no AD e o admin do sistema é uma
+    identidade local permanente.
     """
 
     def authenticate(
@@ -133,8 +135,6 @@ class LocalAccountBackend(ModelBackend):
         **kwargs: Any,
     ) -> User | None:
         if username is None or password is None:
-            return None
-        if not getattr(settings, "AD_ALLOW_LOCAL_AUTH", False):
             return None
         user = _load_user(_normalize_username(username))
         if user is None:

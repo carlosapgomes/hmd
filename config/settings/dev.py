@@ -26,10 +26,6 @@ ALLOWED_HOSTS = ["*"]
 # publicada pelo docker-compose quando diferir de 5432 (colisão com outro PG).
 postgres_host_port = os.environ.get("POSTGRES_HOST_PORT", "5432")
 
-# Break-glass local habilitado em desenvolvimento (slice 003, R2): o default
-# em base é False (produção exige flag explícita).
-AD_ALLOW_LOCAL_AUTH = True
-
 DATABASES = {
     "default": database_config(
         os.environ,

@@ -1,10 +1,10 @@
-"""Views de conta e sessão (login AD/break-glass, perfil e switch-role).
+"""Views de conta e sessão (login AD, perfil e switch-role).
 
 Fluxo do ADR-0003: o login local comum foi substituído por autenticação AD
-(Kerberos, usuários com ``ad_upn``) com break-glass local de superusuário
-(change ad-kerberos-authentication); logout, perfil com troca de senha local
-(enquanto o break-glass existir) e home autenticada placeholder. O papel ativo
-em sessão e o switch-role chegam no slice 005; o guard de intranet no 006.
+(Kerberos, usuários com ``ad_upn``); o admin do sistema é identidade local
+permanente (superuser sem ``ad_upn``, ADR-0009). Logout, perfil e home
+autenticada. O papel ativo em sessão e o switch-role chegam no slice 005; o
+guard de intranet no 006.
 """
 
 from django.contrib import messages
@@ -42,7 +42,7 @@ def _require_user(request: HttpRequest) -> User:
 
 
 def login_view(request: HttpRequest) -> HttpResponse:
-    """Login (Kerberos AD p/ usuários com ``ad_upn``; local só break-glass).
+    """Login (Kerberos AD p/ usuários com ``ad_upn``; admin local p/ superuser sem ``ad_upn`` — ADR-0009).
 
     GET renderiza o formulário; POST autentica com a ordem de backends das
     settings (D4). Falha mostra mensagem genérica — credenciais inválidas ou

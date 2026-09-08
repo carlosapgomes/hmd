@@ -19,7 +19,10 @@ load_dotenv(BASE_DIR / ".env")
 APP_DISPLAY_NAME = os.environ.get("APP_DISPLAY_NAME", "HMD — Hemodinâmica")
 
 INSTALLED_APPS = [
-    "django.contrib.admin",
+    # Admin (change admin-local-identity, slice 001/D3): app config custom com
+    # ``default_site`` = ``config.admin.HmdAdminSite`` — o ``admin.site``
+    # global resolve para a subclass (login coberto pelo anti-lockout local).
+    "config.admin.HmdAdminConfig",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
@@ -52,21 +55,14 @@ INSTALLED_APPS = [
 # Modelo de usuário customizado (D8) — estendido uma única vez.
 AUTH_USER_MODEL = "accounts.User"
 
-# Autenticação (change ad-kerberos-authentication, slice 003, design D4): dois
+# Autenticação (change admin-local-identity, slice 001, design D1): dois
 # backends em ordem fixa — Kerberos primeiro (usuários com `ad_upn` autenticam
-# via AD); local só para break-glass (superusuário sem `ad_upn`) e apenas com
-# AD_ALLOW_LOCAL_AUTH=True (default False; dev/test setam True).
+# via AD); local por design (ADR-0009) para o perfil administrativo
+# (superusuário sem `ad_upn`) — sem flag de habilitação (D2).
 AUTHENTICATION_BACKENDS = [
     "apps.accounts.backends.KerberosBackend",
     "apps.accounts.backends.LocalAccountBackend",
 ]
-# Break-glass local (ADR-0003): autenticação local permitida apenas para
-# superusuários sem `ad_upn`, e somente quando esta flag está ligada.
-AD_ALLOW_LOCAL_AUTH = os.environ.get("AD_ALLOW_LOCAL_AUTH", "false").lower() in (
-    "true",
-    "1",
-    "yes",
-)
 
 # Validação Kerberos no Active Directory (change ad-kerberos, D1/D5/D10).
 # ``AD_DCS`` são os KDCs conhecidos do domínio raiz; o realm NÃO é

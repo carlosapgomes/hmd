@@ -40,10 +40,6 @@ DATABASES = {
     )
 }
 
-# Break-glass local habilitado na suíte (slice 003, R2): testes de login local
-# exercitam o caminho break-glass; o default de produção é False (em base).
-AD_ALLOW_LOCAL_AUTH = True
-
 # Hashers mais rápidos para a suíte.
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.MD5PasswordHasher",

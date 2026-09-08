@@ -9,9 +9,8 @@ Cobre R1–R4/R7 do slice:
 - R1/D4: indisponibilidade (``all_kdcs_unreachable``) marca
   ``request.kerberos_unavailable`` e a view mostra "serviço indisponível";
 - R2: ``LocalAccountBackend`` hermético — usuário AD nunca usa senha local;
-  break-glass é apenas superusuário sem ``ad_upn`` com
-  ``AD_ALLOW_LOCAL_AUTH=True``; usuário comum sem ``ad_upn`` é recusado mesmo
-  com a flag ligada;
+  admin local por design é apenas superusuário sem ``ad_upn`` (sem flag —
+  ADR-0009); usuário comum sem ``ad_upn`` é recusado sempre;
 - R4/R7: mensagens de login distinguem credenciais inválidas de serviço
   indisponível (nenhuma mensagem revela código KDC/status interno);
 - integração do contrato completo de login (rate-limit fora — slice 004 →
@@ -237,14 +236,18 @@ class TestKerberosBackend:
 
 @pytest.mark.django_db
 class TestLocalAccountBackend:
-    """R2: regra hermética por ``ad_upn`` + break-glass superuser-only."""
+    """R2: regra hermética por ``ad_upn`` + admin local superuser-only.
+
+    Contrato novo (change admin-local-identity, D1/D2): sem flag de
+    habilitação — o superusuário sem ``ad_upn`` autentica por design e os
+    demais perfis são recusados sempre.
+    """
 
     def test_ad_user_cannot_use_local_password(self) -> None:
         """Usuário AD com senha local correta no banco → recusado pelo local."""
         _create_user(ad_upn=AD_UPN, password=LOCAL_PASSWORD)
 
-        with override_settings(AD_ALLOW_LOCAL_AUTH=True):
-            result = LocalAccountBackend().authenticate(None, username=CPF, password=LOCAL_PASSWORD)
+        result = LocalAccountBackend().authenticate(None, username=CPF, password=LOCAL_PASSWORD)
 
         assert result is None
 
@@ -252,50 +255,48 @@ class TestLocalAccountBackend:
         """Mesmo superusuário, com ``ad_upn`` → AD manda; senha local recusada."""
         _create_user(username="admin.ad", ad_upn="admin.ad@<dominio-ad>", is_superuser=True)
 
-        with override_settings(AD_ALLOW_LOCAL_AUTH=True):
-            result = LocalAccountBackend().authenticate(
-                None, username="admin.ad", password=LOCAL_PASSWORD
-            )
+        result = LocalAccountBackend().authenticate(
+            None, username="admin.ad", password=LOCAL_PASSWORD
+        )
 
         assert result is None
 
-    def test_breakglass_superuser_only_and_flag(self) -> None:
-        """Break-glass: superusuário sem ``ad_upn`` autentica com a flag ligada
-        e falha com a flag desligada."""
+    def test_superuser_without_ad_upn_authenticates_by_design(self) -> None:
+        """Admin local: superusuário sem ``ad_upn`` autentica sem flag (R1).
+
+        Sem flag de habilitação (extinta — D2): as settings de teste simulam
+        produção.
+        """
         _create_user(username="admin.break", is_superuser=True, password=LOCAL_PASSWORD)
 
-        with override_settings(AD_ALLOW_LOCAL_AUTH=True):
-            assert authenticate(None, username="admin.break", password=LOCAL_PASSWORD) is not None
-        with override_settings(AD_ALLOW_LOCAL_AUTH=False):
-            assert authenticate(None, username="admin.break", password=LOCAL_PASSWORD) is None
-
-    def test_empty_ad_upn_superuser_eligible_for_breakglass(self) -> None:
-        """``ad_upn=""`` (blank persistido via ORM) = sem UPN: o superusuário
-        continua elegível ao break-glass (checagem blank-aware — P1)."""
-        _create_user(username="admin.vazio", ad_upn="", is_superuser=True, password=LOCAL_PASSWORD)
-
-        with override_settings(AD_ALLOW_LOCAL_AUTH=True):
-            result = LocalAccountBackend().authenticate(
-                None, username="admin.vazio", password=LOCAL_PASSWORD
-            )
+        result = authenticate(None, username="admin.break", password=LOCAL_PASSWORD)
 
         assert result is not None
 
-    def test_common_user_without_ad_upn_denied_even_with_flag(self) -> None:
-        """Usuário comum sem ``ad_upn`` é recusado mesmo com senha local e flag."""
+    def test_empty_ad_upn_superuser_eligible_for_local_auth(self) -> None:
+        """``ad_upn=""`` (blank persistido via ORM) = sem UPN: o superusuário
+        continua elegível à autenticação local (checagem blank-aware — P1)."""
+        _create_user(username="admin.vazio", ad_upn="", is_superuser=True, password=LOCAL_PASSWORD)
+
+        result = LocalAccountBackend().authenticate(
+            None, username="admin.vazio", password=LOCAL_PASSWORD
+        )
+
+        assert result is not None
+
+    def test_common_user_without_ad_upn_denied(self) -> None:
+        """Usuário comum sem ``ad_upn`` é recusado mesmo com senha correta."""
         _create_user(username="comum.local", password=LOCAL_PASSWORD)
 
-        with override_settings(AD_ALLOW_LOCAL_AUTH=True):
-            result = authenticate(None, username="comum.local", password=LOCAL_PASSWORD)
+        result = authenticate(None, username="comum.local", password=LOCAL_PASSWORD)
 
         assert result is None
 
-    def test_blocked_breakglass_user_denied(self) -> None:
-        """``user_can_authenticate`` segue valendo para o break-glass."""
+    def test_blocked_local_admin_denied(self) -> None:
+        """``user_can_authenticate`` segue valendo para o admin local."""
         _create_user(username="admin.block", is_superuser=True, account_status="blocked")
 
-        with override_settings(AD_ALLOW_LOCAL_AUTH=True):
-            result = authenticate(None, username="admin.block", password=LOCAL_PASSWORD)
+        result = authenticate(None, username="admin.block", password=LOCAL_PASSWORD)
 
         assert result is None
 

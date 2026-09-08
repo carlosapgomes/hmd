@@ -49,6 +49,8 @@ Usuários provisionados com `ad_upn` (UPN completo `cpf@dominio`) SHALL autentic
 - **WHEN** submete login
 - **THEN** o login é negado com mensagem genérica
 
+## MODIFIED Requirements
+
 ### Requirement: Proteção anti-lockout local
 
 O sistema SHALL limitar tentativas de login malsucedidas por CPF normalizado e por par IP+CPF (IP de origem lido do cabeçalho confiável, mesma regra do guard de intranet), com limiar configurável inferior à política de lockout do AD. Tentativas que falham por **indisponibilidade do serviço de autenticação** (KDCs inalcançáveis) não geram tráfego ao AD e, portanto, SHALL não ser registradas como falha nos contadores. A proteção SHALL aplicar-se também ao login do Django admin: tentativas bloqueadas são recusadas cedo (sem tentativa de autenticação) e falhas de credencial local do perfil administrativo (superusuário sem `ad_upn`) contam para os mesmos contadores; tentativas de outros perfis nessa rota que falhem por indisponibilidade do AD não contam. Ao atingir o limiar dentro da janela, tentativas subsequentes são recusadas temporariamente com mensagem genérica, sem consultar o KDC e sem alterar `account_status`. Tentativa bem-sucedida reinicia os contadores. Em produção, o rate-limit SHALL operar sobre cache compartilhado entre processos.

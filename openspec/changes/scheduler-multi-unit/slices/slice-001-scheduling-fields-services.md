@@ -34,30 +34,37 @@ comunicações do caso.
 - **R2** `confirm_case_scheduling(case, *, unit, scheduled_datetime,
   scheduled_location, user, role)` em `apps/scheduler/services.py`: valida
   estado ∈ {`SCHEDULER_REQUESTED`, `AWAITING_SCHEDULING`}, `unit ∈ {1,2}`,
-  data/hora aware não no passado; no MESMO atomic: encadeia
-  `await_scheduling_confirmation` → `confirm_scheduling` → `post_final_reply`
-  (3 eventos `CASE_STATUS_*`), persiste os 5 campos (`scheduled_unit`,
+  data/hora aware não no passado; encadeia até `post_final_reply` com
+  **branch por estado** (o `await_scheduling_confirmation` tem source único
+  `SCHEDULER_REQUESTED` na FSM real — chamá-lo em `AWAITING_SCHEDULING`
+  levanta `TransitionNotAllowed`): em `SCHEDULER_REQUESTED` dispara `await` →
+  `confirm_scheduling` → `post_final_reply` (3 eventos `CASE_STATUS_*`); em
+  `AWAITING_SCHEDULING` (reaberto por intercorrência, slice 002) **pula o
+  `await`** e dispara `confirm_scheduling` → `post_final_reply` (2 eventos).
+  No MESMO atomic persiste os 5 campos (`scheduled_unit`,
   `scheduled_datetime`, `scheduled_location`, `scheduled_by=user`,
   `scheduled_decided_at=now`) e posta `post_user_communication` com o texto
   por unidade (constantes `REPLY_UNIT_1_TEMPLATE`/`REPLY_UNIT_2_TEXT` —
   unidade 1 interpolada com local + data/hora local formatada;
-  **unidade 2 é o texto exato do plano**).
+  **unidade 2 é o texto exato do plano §4, sem ponto final**).
 - **R3** Validações de R2 levantam erros nomeados (`ValueError` com motivo
   específico: estado, unidade, data no passado) **antes** de qualquer
   escrita; nada persistido em falha (rollback).
 - **R4** `deny_case_scheduling(case, *, reason, user, role)`: motivo não
-  vazio (strip); encadeia `await` → `deny_scheduling` → `post_final_reply`
-  + persiste `scheduling_denial_reason` + posta resposta final ao NIR com o
-  motivo; mesmo regime de erros de R3.
+  vazio (strip); mesmo branch por estado do confirmar (pula o `await` se já
+  em `AWAITING_SCHEDULING`); encadeia até `deny_scheduling` →
+  `post_final_reply` + persiste `scheduling_denial_reason` + posta resposta
+  final ao NIR com o motivo; mesmo regime de erros de R3.
 - **R5** Concorrência/estado errado (`TransitionNotAllowed` do
   encadeamento): nenhuma escrita parcial (atomic); erro propaga tipado para
   a view tratar (slice 003) — nada de 500 silencioso no serviço.
-- **R6** Testes: confirmar unidade 1 (estado final `FINAL_REPLY_POSTED`,
-  campos persistidos, 3+1 eventos na ordem, comunicação com data/local);
-  confirmar unidade 2 (texto exato); data no passado rejeitada sem escrita;
-  negar com motivo (comunicação contém o motivo); negar sem motivo rejeitado;
-  estado inválido sem efeito; confirmação a partir de `AWAITING_SCHEDULING`
-  (reabertura futura do slice 002) funciona.
+- **R6** Testes: confirmar unidade 1 a partir de `SCHEDULER_REQUESTED`
+  (estado final `FINAL_REPLY_POSTED`, campos persistidos, **3 eventos na
+  ordem** + comunicação com data/local); confirmar unidade 2 (texto exato
+  sem ponto final); confirmar a partir de `AWAITING_SCHEDULING` (**2
+  eventos** — sem o `await`; fluxo da intercorrência do slice 002); data no
+  passado rejeitada sem escrita; negar com motivo (comunicação contém o
+  motivo); negar sem motivo rejeitado; estado inválido sem efeito.
 
 ## Matriz requisito → arquivo → teste/check
 
@@ -76,6 +83,7 @@ expected_files:
   - apps/cases/models.py                      # +campos D1 (mínimo)
   - apps/cases/migrations/0008_case_scheduling.py
   - apps/scheduler/__init__.py
+  - apps/scheduler/apps.py                    # AppConfig padrão (espelha apps/doctor)
   - apps/scheduler/services.py                # constantes + 2 serviços
   - apps/scheduler/tests/__init__.py
   - apps/scheduler/tests/test_services.py

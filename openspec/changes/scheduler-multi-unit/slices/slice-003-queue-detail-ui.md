@@ -35,21 +35,24 @@ confirmar (unidade 1|2 + data/hora + local), negar (motivo) e desmarcar
 
 ## Requisitos verificáveis
 
-- **R1** `apps/scheduler` registrado (apps.py, INSTALLED_APPS — se não veio
-  do slice 001 —, urls em `/scheduler/`, `config/urls.py`) + nav no
-  `base.html` para `active_role in scheduler,admin`.
-- **R2** Fila `scheduler:queue`: abas `aguardando` (= `SCHEDULER_REQUESTED`,
-  default) e `processados` (=
+- **R1** Urls em `/scheduler/` + `config/urls.py` + nav no `base.html` para
+  `active_role in scheduler,admin` (o app `apps.scheduler`, `apps.py` e o
+  registro em `INSTALLED_APPS` já vieram do slice 001).
+- **R2** Fila `scheduler:queue`: abas `aguardando` (= `SCHEDULER_REQUESTED`
+  **ou** `AWAITING_SCHEDULING` — pedidos novos e casos reabertos por
+  intercorrência) e `processados` (=
   `SCHEDULING_CONFIRMED|SCHEDULING_DENIED|FINAL_REPLY_POSTED`); FIFO
   `created_at`; paginada; cards com identificação, tipos declarados e unidade
   quando definida; **sem filtro por unidade**. Guard R2: anônimo → redirect;
   `nir`/`doctor`/`manager` → 403; composição `scheduler+manager` com ativo
   `scheduler` → 200.
-- **R3** Detalhe `scheduler:case_detail`: contexto com identificação real,
-  procedimentos declarados c/ disposição médica e motivo das negativas,
-  dados de agendamento atuais e comunicações da thread; **nenhum conteúdo**
-  de `summary_text`/`structured_data`/`policy_result`/`suggested_action` na
-  página (assert de ausência); sem link para PDF.
+- **R3** Detalhe `scheduler:case_detail`: contexto com identificação real
+  (`Case.patient_name`, `Case.patient_birth_date`, `Case.agency_record_number`
+  — nomes reais dos campos), procedimentos declarados c/ disposição médica
+  e motivo das negativas, dados de agendamento atuais e comunicações da
+  thread; **nenhum conteúdo** de `summary_text`/`structured_data`/
+  `policy_result`/`suggested_action` na página (assert de ausência); sem
+  link para PDF.
 - **R4** Form confirmar (`SchedulerConfirmForm`: unidade choice 1|2,
   data/hora futura, local; validação espelhando o serviço) + POST →
   `confirm_case_scheduling` → redirect ao detalhe com flash e resposta
@@ -59,11 +62,13 @@ confirmar (unidade 1|2 + data/hora + local), negar (motivo) e desmarcar
   em unidade 2 exibe banner "intercorrência desabilitada" (sem botão).
 - **R5** Erros do serviço (validação/estado/concorrência) → mensagem de erro
   + redirect/re-render com form; **nunca 500**; nenhuma escrita parcial.
-- **R6** Testes de view: fila (abas/FIFO/guard×papéis/paginação), detalhe
+- **R6** Testes de view: fila (abas/FIFO — inclui caso reaberto em
+  `AWAITING_SCHEDULING` na aba aguardando —/guard×papéis/paginação), detalhe
   (conteúdo presente E artefatos clínicos ausentes), confirmar unidade 1 e 2
   (texto da resposta na thread), negar com/sem motivo, desmarcar unidade 1
-  (volta à aba aguardando) e bloqueio unitário 2 (sem botão + POST direto
-  recusado com erro), estado errado no POST (sem 500).
+  (caso volta à aba aguardando em `AWAITING_SCHEDULING`) e bloqueio
+  unitário 2 (sem botão + POST direto recusado com erro), estado errado no
+  POST (sem 500).
 
 ## Matriz requisito → arquivo → teste/check
 

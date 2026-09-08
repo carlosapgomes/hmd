@@ -8,13 +8,13 @@ Confirmar, negar e reabrir o agendamento de casos aceitos pelo médico nas duas 
 
 ### Requirement: Fila do agendador completa
 
-O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos prontos para agendamento (estado `SCHEDULER_REQUESTED`), ordenada por chegada, paginada, **sem diferenciação por unidade**, com aba de casos processados do agendamento. Outros papéis ativos recebem 403; anônimo é redirecionado ao login.
+O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos prontos para agendamento (estados `SCHEDULER_REQUESTED` e `AWAITING_SCHEDULING` — pedidos novos e casos reabertos por intercorrência), ordenada por chegada, paginada, **sem diferenciação por unidade**, com aba de casos processados do agendamento. Outros papéis ativos recebem 403; anônimo é redirecionado ao login.
 
 #### Scenario: Agendador vê a fila completa
 
-- **GIVEN** casos em `SCHEDULER_REQUESTED` de subtipos distintos
+- **GIVEN** casos em `SCHEDULER_REQUESTED` de subtipos distintos e um caso reaberto por intercorrência em `AWAITING_SCHEDULING`
 - **WHEN** o agendador acessa a fila
-- **THEN** todos são listados em ordem de chegada, sem filtro de unidade
+- **THEN** todos são listados na aba de aguardando, em ordem de chegada, sem filtro de unidade
 
 #### Scenario: Papel não agendador recebe 403
 
@@ -24,7 +24,7 @@ O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos pronto
 
 ### Requirement: Confirmação de agendamento com unidade e resposta final
 
-O sistema SHALL confirmar o agendamento de um caso em `SCHEDULER_REQUESTED` ou `AWAITING_SCHEDULING` registrando unidade (1 ou 2), data/hora e local, encadeando as transições até `FINAL_REPLY_POSTED` no mesmo atomic e postando na thread do caso a resposta final ao NIR: para unidade 1, o texto padrão com local e data/hora; para unidade 2, exatamente "Recusar o relatório — caso agendado na Unidade 2, que comunicará a Secretaria". Data/hora no passado é rejeitada.
+O sistema SHALL confirmar o agendamento de um caso em `SCHEDULER_REQUESTED` ou `AWAITING_SCHEDULING` registrando unidade (1 ou 2), data/hora e local, encadeando as transições até `FINAL_REPLY_POSTED` no mesmo atomic (na origem `AWAITING_SCHEDULING` a transição de entrada de fila não é re-disparada) e postando na thread do caso a resposta final ao NIR: para unidade 1, o texto padrão com local e data/hora; para unidade 2, exatamente "Recusar o relatório — caso agendado na Unidade 2, que comunicará a Secretaria". Data/hora no passado é rejeitada.
 
 #### Scenario: Confirmação na unidade 1 publica resposta com data
 
@@ -46,7 +46,7 @@ O sistema SHALL confirmar o agendamento de um caso em `SCHEDULER_REQUESTED` ou `
 
 ### Requirement: Negação de agendamento com motivo obrigatório
 
-O sistema SHALL permitir negar o agendamento de um caso pronto, exigindo motivo não vazio, encadeando as transições até `FINAL_REPLY_POSTED` no mesmo atomic e postando ao NIR a resposta final com o motivo informado.
+O sistema SHALL permitir negar o agendamento de um caso pronto (`SCHEDULER_REQUESTED` ou `AWAITING_SCHEDULING`), exigindo motivo não vazio, encadeando as transições até `FINAL_REPLY_POSTED` no mesmo atomic e postando ao NIR a resposta final com o motivo informado.
 
 #### Scenario: Negação publica motivo ao NIR
 

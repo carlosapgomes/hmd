@@ -31,17 +31,25 @@ serviços é o app scheduler (o núcleo `apps/cases` fica com FSM/locks/eventos;
 decisão espelha o change 07, onde a UI vive no app do papel):
 
 - **`confirm_case_scheduling(case, *, unit, scheduled_datetime,
-  scheduled_location, user, role)`**: valida estado `SCHEDULER_REQUESTED` (ou
-  `AWAITING_SCHEDULING` pós-reabertura), `unit ∈ {1,2}`, data/hora não no
-  passado; encadeia `await_scheduling_confirmation` → `confirm_scheduling` →
-  `post_final_reply` (3 eventos) + persiste os campos + posta na thread a
-  resposta final ao NIR (user message, autor = agendador):
+  scheduled_location, user, role)`**: valida estado ∈ {`SCHEDULER_REQUESTED`,
+  `AWAITING_SCHEDULING`}, `unit ∈ {1,2}`, data/hora não no passado;
+  encadeia até `post_final_reply` com **branch por estado** (`await_scheduling_confirmation`
+  tem source único `SCHEDULER_REQUESTED` na FSM do change 03): em
+  `SCHEDULER_REQUESTED` dispara `await_scheduling_confirmation` →
+  `confirm_scheduling` → `post_final_reply` (3 eventos `CASE_STATUS_*`); em
+  `AWAITING_SCHEDULING` (caso reaberto por intercorrência, D2 abaixo) **pula
+  o `await`** e dispara `confirm_scheduling` → `post_final_reply` (2
+  eventos). No mesmo atomic persiste os 5 campos (`scheduled_unit`,
+  `scheduled_datetime`, `scheduled_location`, `scheduled_by=user`,
+  `scheduled_decided_at=now`) e posta na thread a resposta final ao NIR
+  (user message, autor = agendador):
   - unidade 1: `Agendamento confirmado — {local}, {data/hora local}. Comparecer
     com documentos e exames.`
   - unidade 2: `Recusar o relatório — caso agendado na Unidade 2, que
-    comunicará a Secretaria.` (texto exato do plano §4)
+    comunicará a Secretaria` (texto exato do plano §4, sem ponto final)
 - **`deny_case_scheduling(case, *, reason, user, role)`**: motivo obrigatório
-  (não vazio); encadeia `await` → `deny_scheduling` → `post_final_reply` +
+  (não vazio); mesmo branch por estado do confirmar (em `AWAITING_SCHEDULING`
+  pula o `await`); encadeia até `deny_scheduling` → `post_final_reply` +
   persiste `scheduling_denial_reason` + posta resposta com o motivo.
 - **`reopen_scheduling_after_incident(case, *, reason, user, role)`**
   (intercorrência): válido apenas em `FINAL_REPLY_POSTED` **e**
@@ -72,7 +80,9 @@ re-identificação — leitura por papel mínimo necessário).
 
 `/scheduler/` (`role_required("scheduler", "admin")`; anônimo → redirect;
 outros papéis → 403 — matriz por papel ativo, mesma semântica do change 07):
-abas `aguardando` (= `SCHEDULER_REQUESTED`, default) e `processados`
+abas `aguardando` (= `SCHEDULER_REQUESTED` **ou** `AWAITING_SCHEDULING` —
+pedidos novos e casos reabertos por intercorrência precisam ser visíveis
+para re-agendar; default) e `processados`
 (= `SCHEDULING_CONFIRMED|SCHEDULING_DENIED|FINAL_REPLY_POSTED` — os dois
 primeiros transitórios, incluídos inofensivos), FIFO por `created_at`,
 paginada (padrão Paginator do change 07), badge por tipo/procedimento e

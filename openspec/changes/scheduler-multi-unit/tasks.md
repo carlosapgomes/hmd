@@ -2,7 +2,7 @@
 
 Baseline: `beb9bcd` (admin-local-identity arquivado; 743 testes verdes).
 
-- [ ] 1. Preflight: árvore limpa; registrar `BASE_REF`; suíte completa uma única vez
+- [x] 1. Preflight: árvore limpa; registrar `BASE_REF`; suíte completa uma única vez — BASE_REF `c0f6594`, 743 passed (2026-09-08)
 - [ ] 2.1 Slice 001 — campos de agendamento (migration 0008) + serviços confirmar/negar com resposta final ao NIR. Ver `slices/slice-001-scheduling-fields-services.md`
 - [ ] 3.1 Slice 002 — transição `reopen_scheduling` + serviço de intercorrência (unidade 1 apenas). Ver `slices/slice-002-incident-reopen.md`
 - [ ] 4.1 Slice 003 — app `scheduler`: fila completa, detalhe limitado (D3) e formulários. Ver `slices/slice-003-queue-detail-ui.md`

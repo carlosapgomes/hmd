@@ -18,8 +18,8 @@ detalhe read-only do caso decidido.
 - `apps/cases/models.py` — `CaseStatus`, `DoctorDisposition`
   (`pending|approved|denied`); transição fora de `AWAITING_DOCTOR` levanta
   `TransitionNotAllowed` (django_fsm_2).
-- `apps/doctor/presenters.py` + `views.py` dos slices 002–003 (guard,
-  `can_access_case`, contexto do presenter — estender, não duplicar).
+- `apps/doctor/access.py::can_access_case` (slice 002) + `presenters.py` dos
+  slices 002–003 (guard, contexto do presenter — estender, não duplicar).
 - ats-web `apps/doctor/forms.py::DoctorDecisionForm` (padrão de campos
   dinâmicos por procedimento — somente-leitura).
 - Design D4/D6 (`openspec/changes/doctor-queue-decision/design.md`).

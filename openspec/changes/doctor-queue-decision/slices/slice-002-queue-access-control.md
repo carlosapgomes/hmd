@@ -11,14 +11,16 @@ pode decidir; generalista/admin veem tudo; outros papéis 403.
 - `apps/accounts/decorators.py::role_required` (guard por papel ativo).
 - `apps/accounts/subtypes.py::user_doctor_subtypes` (slice 001).
 - `apps/cases/procedure_catalog.py` — `get_procedure_profile(type).doctor_subtipo`,
-  `PROCEDURE_TYPES`/ordem canônica.
+  `PROCEDURE_PROFILES` (ordem canônica).
 - `apps/cases/procedures.py::get_declared_procedure_types`.
 - `apps/cases/models.py` — `CaseStatus` (`AWAITING_DOCTOR`, `DOCTOR_DENIED`,
   `DOCTOR_ACCEPTED`, `SCHEDULER_REQUESTED`), campos de exibição
   (`patient_name`, `agency_record_number`, `created_at`, `status`).
 - `apps/intake/{views,urls}.py` + `templates/intake/my_cases.html` — padrão de
-  lista paginada + badge + filtro por papel ativo a replicar (a fila NÃO usa
-  ownership: é papel, não dono).
+  lista + badge + filtro por papel ativo a replicar (a fila NÃO usa
+  ownership: é papel, não dono). **Paginação**: é a primeira view paginada do
+  projeto — use Django `Paginator` (my_cases não pagina; não há padrão
+  anterior).
 - `templates/base.html` — nav por `active_role` (adicionar bloco `doctor`).
 - `config/urls.py` — `path("doctor/", include("apps.doctor.urls"))`.
 - Design D2/D5 (`openspec/changes/doctor-queue-decision/design.md`).
@@ -28,8 +30,9 @@ pode decidir; generalista/admin veem tudo; outros papéis 403.
 - **R1** `apps/doctor` registrado (apps.py, `config/settings/base.py`,
   `config/urls.py` em `/doctor/`); nav no `base.html` visível quando
   `active_role in doctor,admin`.
-- **R2** Guard `role_required("doctor", "admin")` na fila; outros papéis → 403
-  (teste com cada papel ativo relevante: `nir`, `scheduler`, `manager`).
+- **R2** Guard `role_required("doctor", "admin")` na fila; anônimo →
+  redirect ao login (302 — semântica do decorator); papel ativo não
+  autorizado (`nir`, `scheduler`, `manager`) → 403.
 - **R3** Fila: aba por estado — `aguardando` (default) = `AWAITING_DOCTOR`;
   `decididos` = `DOCTOR_DENIED|DOCTOR_ACCEPTED|SCHEDULER_REQUESTED`; FIFO por
   `created_at`; paginada (padrão do projeto).
@@ -40,17 +43,18 @@ pode decidir; generalista/admin veem tudo; outros papéis 403.
 - **R5** Cada card lista tipos declarados com badge de subtipo + contagem de
   pendentes por subtipo no cabeçalho (para o filtro do usuário).
 - **R6** Testes de view (cliente logado com papel ativo): matriz de acesso
-  (R2), estados das abas (R3), filtro por subtipo inclui/exclui corretamente
-  (R4), generalista vê tudo, admin vê tudo.
+  (R2, incluindo anônimo→redirect), estados das abas (R3), filtro por
+  subtipo inclui/exclui corretamente (R4), generalista vê tudo, admin vê
+  tudo.
 
 ## Matriz requisito → arquivo → teste/check
 
 | Requisito | Arquivo(s) esperado(s) | Teste/check |
 | --- | --- | --- |
 | R1 | `apps/doctor/{apps,urls,views}.py`, `config/{settings/base,urls}.py`, `templates/base.html`, `templates/doctor/queue.html` | `test_nav_visible_for_doctor` |
-| R2 | `apps/doctor/views.py` | `test_queue_forbidden_*` (nir/scheduler/manager/anônimo) |
+| R2 | `apps/doctor/views.py` | `test_queue_forbidden_*` (nir/scheduler/manager), `test_anonymous_redirects_login` |
 | R3 | `apps/doctor/views.py` | `test_queue_awaiting_default`, `test_queue_decided_tab` |
-| R4 | `apps/doctor/views.py` (ou `services.py` puro) | `test_subtype_filter_*`, `test_generalist_sees_all`, `test_admin_sees_all` |
+| R4 | `apps/doctor/access.py` | `test_subtype_filter_*`, `test_generalist_sees_all`, `test_admin_sees_all` |
 | R5 | `templates/doctor/queue.html` | `test_queue_shows_types_and_pending_counts` |
 | R6 | `apps/doctor/tests/test_queue.py` | suíte do slice |
 
@@ -58,8 +62,8 @@ pode decidir; generalista/admin veem tudo; outros papéis 403.
 
 ```yaml
 expected_files:
-  - apps/doctor/{__init__,apps,urls,views}.py
-  - apps/doctor/tests/{__init__,test_queue}.py
+  - apps/doctor/{__init__,apps,urls,views,access}.py   # access.py = can_access_case (usado pelos slices 003/004)
+  - apps/doctor/tests/{__init__,conftest,test_queue}.py  # conftest = fixtures de login+papel ativo reutilizáveis
   - templates/doctor/queue.html
   - config/settings/base.py        # INSTALLED_APPS
   - config/urls.py
@@ -88,6 +92,6 @@ out_of_scope:
 ## Critérios de aceitação
 
 - [ ] R1–R6 comprovados; access control testado para TODOS os papéis ativos
-- [ ] Predicado do filtro idêntico ao do access control (mesma função ou
-      mesma fonte)
+- [ ] `can_access_case` entregue em `apps/doctor/access.py` (predicado único
+      fila×detalhe×decisão)
 - [ ] Gate parcial do slice verde

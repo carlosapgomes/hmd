@@ -24,6 +24,12 @@ recebem 403.
 - **WHEN** acessa a fila com o filtro `angio`
 - **THEN** apenas casos com ao menos um tipo declarado de subtipo `angio` são listados, ordenados por `created_at`
 
+#### Scenario: Generalista vê qualquer subtipo
+
+- **GIVEN** um médico sem subtipos atribuídos e casos em `AWAITING_DOCTOR` de subtipos distintos
+- **WHEN** acessa a fila com o filtro `Todas`
+- **THEN** casos de todos os subtipos são listados
+
 #### Scenario: Papel não médico recebe 403
 
 - **GIVEN** usuário com papel ativo `nir`
@@ -66,6 +72,12 @@ persistido nem enviado a qualquer LLM.
 - **WHEN** o médico autorizado abre o detalhe
 - **THEN** o sumário é renderizado com o nome real do paciente no lugar do token
 
+#### Scenario: Requisitos gerais acionáveis exibidos conforme alertas
+
+- **GIVEN** um caso cuja policy gerou alerta de anticoagulante com protocolo de suspensão por fármaco
+- **WHEN** o médico abre o detalhe
+- **THEN** o card do procedimento exibe o requisito geral com o protocolo acionável correspondente ao alerta
+
 #### Scenario: Recomendação consultiva visível por procedimento
 
 - **GIVEN** um caso com `policy_result` recomendando recusar um procedimento com motivos e a sugestão agregada de recusa
@@ -85,6 +97,18 @@ mesmas janelas configuráveis do pipeline.
 - **GIVEN** um caso cujo procedimento tem caso prévio negado há 3 dias com o mesmo número de ocorrência
 - **WHEN** o médico abre o detalhe
 - **THEN** o card exibe data, desfecho negado e o motivo real registrado pelo médico prévio
+
+#### Scenario: PDF original restrito a papel autorizado
+
+- **GIVEN** um caso com documento PDF
+- **WHEN** um usuário com papel ativo `nir` tenta acessar a URL do PDF médico diretamente
+- **THEN** recebe HTTP 403 sem conteúdo do arquivo
+
+#### Scenario: Card de prior-case por fallback nome+nascimento
+
+- **GIVEN** um caso cujo procedimento tem caso prévio negado há 10 dias, número de ocorrência diferente, mesmo nome normalizado e nascimento
+- **WHEN** o médico abre o detalhe
+- **THEN** o card exibe o prévio com desfecho e motivo real, marcando a origem do match
 
 ### Requirement: Decisão por procedimento com motivo obrigatório em negativas
 

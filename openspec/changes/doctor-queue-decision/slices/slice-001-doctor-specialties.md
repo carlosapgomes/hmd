@@ -23,24 +23,25 @@ seguintes.
 - **R1** `DoctorSpecialty(name unique)` em `apps/accounts/models.py`, com
   `__str__`; `User.specialties = M2M(DoctorSpecialty, blank=True,
   related_name="users")`.
-- **R2** Migration única em `apps/accounts` cria model + M2M e semeia
-  exatamente os 4 subtipos de `VALID_DOCTOR_SUBTYPES` (data migration lendo o
-  catálogo — sem strings duplicadas).
+- **R2** Migration única em `apps/accounts` (**próximo número: `0003`** —
+  gere via `makemigrations`, nome sugerido `0003_doctor_specialty`) cria
+  model + M2M e semeia os 4 subtipos **com os nomes escritos na migration**
+  (histórico congelado; sem import de código vivo). A coerência com o
+  catálogo é garantida por teste de invariante (R5), não pela migration.
 - **R3** Helper puro `user_doctor_subtypes(user) -> set[str]`: subtipos do
   usuário (`set()` para generalista; usuários anônimos/inativos não ocorrem —
   helper assume User autenticado). Sem I/O de rede.
 - **R4** Django admin expõe `specialties` no `UserAdmin` existente (atribuição
   manual, sem UI self-service).
-- **R5** Testes: seed completo (4, sem duplicar em re-run da migration),
-  generalista = conjunto vazio, M2M em ambos os lados, helper com 1 e N
-  subtipos.
+- **R5** Testes: seed completo (4, idempotente), **invariante DB == `VALID_DOCTOR_SUBTYPES`** (garante a fonte única), generalista = conjunto
+  vazio, M2M em ambos os lados, helper com 1 e N subtipos.
 
 ## Matriz requisito → arquivo → teste/check
 
 | Requisito | Arquivo(s) esperado(s) | Teste/check |
 | --- | --- | --- |
 | R1 | `apps/accounts/models.py` | `test_specialty_model` |
-| R2 | `apps/accounts/migrations/000X_doctor_specialty.py` | `test_seed_creates_four_subtypes`; `makemigrations --check` |
+| R2 | `apps/accounts/migrations/0003_doctor_specialty.py` | `test_seed_creates_four_subtypes`; `makemigrations --check` |
 | R3 | `apps/accounts/subtypes.py` | `test_helper_*` (generalista/1/N) |
 | R4 | `apps/accounts/admin.py` | inspeção + `test_admin_exposes_specialties` |
 | R5 | `apps/accounts/tests/test_specialties.py` | suíte do slice |
@@ -52,7 +53,7 @@ expected_files:
   - apps/accounts/models.py
   - apps/accounts/subtypes.py            # helper puro (novo)
   - apps/accounts/admin.py
-  - apps/accounts/migrations/000X_doctor_specialty.py
+  - apps/accounts/migrations/0003_doctor_specialty.py
   - apps/accounts/tests/test_specialties.py
 
 out_of_scope:
@@ -80,7 +81,7 @@ out_of_scope:
 
 ## Critérios de aceitação
 
-- [ ] R1–R5 comprovados; seed lê `VALID_DOCTOR_SUBTYPES` (sem duplicação de
-      constantes) e é idempotente
+- [ ] R1–R5 comprovados; seed com nomes congelados na migration + invariante
+      DB == catálogo testada
 - [ ] Nenhum teste existente quebrado no app accounts
 - [ ] Gate parcial do slice verde

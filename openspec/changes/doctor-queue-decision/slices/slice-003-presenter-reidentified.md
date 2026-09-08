@@ -14,20 +14,27 @@ renderização; nenhuma chamada LLM).
 - `apps/anonymization/reidentify.py` — `reidentify(text, pseudonym_map)` /
   `reidentify_text(case, text)`; `Case.pseudonym_map` (token →
   `{"value", "entity_type"}`).
-- Artefatos persistidos pelo change 06 (formatos exatos):
-  `Case.structured_data` (artefato LLM1, tokens), `Case.policy_result`
+- Artefatos persistidos pelo change 06 (formatos exatos, verificados no
+  código):
+  `Case.structured_data` (artefato LLM1, tokens; chaves do schema base em
+  `apps/pipeline/schemas/base.py`: `pedido`, `contexto_clinico`,
+  `linha_do_tempo`, `exames`, `medicacoes`, `comorbidades`,
+  `contraindicacoes`, `trechos_nao_classificados`),
+  `Case.policy_result`
   (`{tipo: {procedure_type, section_id, recommendation, refusal_reasons,
-  criteria: [{name, status, severity, reason}]}}`),
-  `Case.suggested_action` (`{procedures: {tipo: {suggestion, reasons}},
-  aggregate: {suggestion, aggregate_reasons}}`), `Case.summary_text` (tokens).
+  criteria: [{criterion, status, severity, reason}]}}` — atenção: a chave do
+  critério é **`criterion`**),
+  `Case.suggested_action` (`{procedures: {tipo: {suggestion, motivos}},
+  aggregate: {suggestion, motivos}}` — atenção: **`motivos`**, não
+  `reasons`), `Case.summary_text` (tokens).
 - `apps/pipeline/prior_case.py::lookup_prior_case_context(case,
   procedure_type) -> PriorCaseSummary | None` (**read-only**; motivo vem
   ANONIMIZADO; `prior_case_id` identifica o caso prévio) — o card busca o
   motivo REAL na `CaseProcedure` do caso prévio (`doctor_reason`).
 - `apps/cases/models.py::CaseDocument` (PDF por `position`) e
   `apps/cases/procedures.py::get_declared_procedure_types`.
-- `apps/doctor/views.py` + access control do slice 002 (`can_access_case` ou
-  equivalente — reutilizar, não duplicar).
+- `apps/doctor/views.py` + access control do slice 002 (`apps/doctor/access.py::
+  can_access_case` — reutilizar, não duplicar).
 - Padrão de template: `templates/intake/case_detail.html` (cards/badges).
 - Design D3/D7 (`openspec/changes/doctor-queue-decision/design.md`).
 - Padrão de resposta de arquivo: `FileResponse` (Django) — NÃO copiar o
@@ -42,11 +49,15 @@ renderização; nenhuma chamada LLM).
 - **R2** `apps/doctor/presenters.py::build_case_detail_context(case)` puro
   (sem request): identificação real (nome/nº ocorrência/nascimento quando
   presentes), tipos declarados com subtipo e disposição atual,
-  `summary_text` re-identificado, `structured_data` re-identificado
-  (seções-chave: pedido, exames, medicações — não renderizar bruto),
-  alertas da policy por procedimento (motivos de recusa + critérios em
-  alerta) com recomendação e sugestão/agregado do LLM2, prior-case por tipo
-  com motivo real, e flag `can_decide` (= estado `AWAITING_DOCTOR`).
+  `summary_text` re-identificado, `structured_data` re-identificado por
+  seção (pedido, contexto_clinico, linha_do_tempo, exames, medicações,
+  comorbidades, contraindicações, trechos_nao_classificados — não renderizar
+  bruto), alertas da policy por procedimento (motivos de recusa + critérios
+  em alerta) com recomendação e sugestão/agregado do LLM2 (usando as chaves
+  reais `criterion`/`motivos`), **requisitos gerais acionáveis** (protocolos
+  de suspensão/dessensibilização/nefroproteção conforme os alertas do caso),
+  prior-case por tipo com motivo real, e flag `can_decide` (= estado
+  `AWAITING_DOCTOR`).
 - **R3** View `doctor:case_detail` (`/doctor/case/<id>/`): guard
   `role_required("doctor", "admin")` + access control por subtipo (403 fora da
   matriz D2, **sem** expor dados); renderiza o contexto do presenter; estados
@@ -111,7 +122,9 @@ out_of_scope:
 
 ## Critérios de aceitação
 
-- [ ] R1–R6 comprovados; nenhum token `<..._N>` sobrevive na renderização
-      dos artefatos (assert em teste com mapa populado)
+- [ ] R1–R6 comprovados; nenhum token **do mapa do caso** sobrevive na
+      renderização dos artefatos (assert em teste com mapa populado; tokens
+      de espaços alheios — ex. motivos prior-case re-anonimizados — podem
+      sobrar como tokens, sem vazamento)
 - [ ] 403 do detalhe não vaza dados do paciente (corpo sem nome/registro)
 - [ ] Gate parcial do slice verde

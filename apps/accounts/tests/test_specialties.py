@@ -13,7 +13,7 @@ Cobre R1–R5 do slice:
 
 from collections.abc import Callable
 from importlib import import_module
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from django.apps import apps as global_apps
@@ -26,9 +26,31 @@ from apps.accounts.models import DoctorSpecialty
 from apps.accounts.subtypes import user_doctor_subtypes
 from apps.cases.procedure_catalog import VALID_DOCTOR_SUBTYPES
 
+if TYPE_CHECKING:
+    from pytest_django import DjangoDbBlocker
+
 User = get_user_model()
 
 EXPECTED_SEED = ("angio", "neuro", "cardio", "radio")
+
+
+@pytest.fixture(autouse=True)
+def _ensure_seed_subtypes(django_db_setup: None, django_db_blocker: object) -> None:
+    """Garante os 4 subtipos presentes (defesa pós-flush em sessões --reuse-db).
+
+    O seed REAL é da data migration 0003; em banco recém-criado o fixture é
+    no-op. Sessões posteriores a um flush de ``TransactionTestCase`` podem ter
+    perdido os seeds — sem isto, testes de M2M/helper/admin/invariante viram
+    flaky por razões de harness, não de produto.
+    """
+    from apps.accounts.models import DoctorSpecialty
+
+    blocker = cast("DjangoDbBlocker", django_db_blocker)
+    with blocker.unblock():
+        for name in EXPECTED_SEED:
+            DoctorSpecialty.objects.get_or_create(name=name)
+
+
 ADMIN_USERNAME = "admin-specialties"
 ADMIN_PASSWORD = "senha-admin-2026"
 
@@ -76,9 +98,19 @@ class TestDoctorSpecialtyModel:
 
 @pytest.mark.django_db
 class TestSeedMigration:
-    """R2: data migration ``0003`` semeia os 4 subtipos, idempotente."""
+    """R2: data migration ``0003`` semeia os 4 subtipos, idempotente.
+
+    Os testes chamam a **função da migration diretamente** (via
+    ``_migration_seed_fn``): sessões ``--reuse-db`` posteriores a um flush de
+    ``TransactionTestCase`` perdem os seeds da migration e um teste de
+    presença ambiente viraria flaky. O comportamento da migration fica
+    garantido pela execução direta; a presença para os DEMAIS testes é
+    garantida pelo fixture ``_ensure_seed_subtypes`` abaixo.
+    """
 
     def test_seed_creates_four_subtypes(self) -> None:
+        seed = _migration_seed_fn()
+        seed(global_apps, None)
         names = set(DoctorSpecialty.objects.values_list("name", flat=True))
         assert names == set(EXPECTED_SEED)
 

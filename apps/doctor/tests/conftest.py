@@ -64,6 +64,11 @@ def assign_specialties() -> Callable[[User, Sequence[str]], None]:
     """Atribui ao usuário os subtipos do catálogo (seed da migration 0003)."""
 
     def _assign(user: User, names: Sequence[str]) -> None:
+        # get_or_create (defesa em profundidade): sessões --reuse-db posteriores a
+        # um flush podem ter perdido os seeds da migration 0003; o teste que
+        # depende do subtipo não pode virar green falso por rows ausentes.
+        for name in names:
+            DoctorSpecialty.objects.get_or_create(name=name)
         user.specialties.set(DoctorSpecialty.objects.filter(name__in=names))
 
     return _assign

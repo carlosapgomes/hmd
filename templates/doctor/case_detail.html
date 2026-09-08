@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_display_name }} — Caso {{ case_id }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+  <div class="col-12 col-lg-10">
+    <nav aria-label="breadcrumb" class="mb-3">
+      <ol class="breadcrumb mb-0">
+        <li class="breadcrumb-item"><a href="{% url 'doctor:queue' %}">Fila médica</a></li>
+        <li class="breadcrumb-item active" aria-current="page">Caso {{ case_id }}</li>
+      </ol>
+    </nav>
+
+    <!-- Identificação do paciente -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
+        <h1 class="h5 mb-0">Identificação do paciente</h1>
+        <span class="badge rounded-pill text-bg-secondary ms-auto">{{ status_label }}</span>
+      </div>
+      <div class="card-body">
+        <dl class="row mb-2">
+          <dt class="col-sm-3">Paciente</dt>
+          <dd class="col-sm-9">{{ identification.patient_name|default:"—" }}</dd>
+          <dt class="col-sm-3">Nº de ocorrência</dt>
+          <dd class="col-sm-9">{{ identification.agency_record_number|default:"—" }}</dd>
+          <dt class="col-sm-3">Nascimento</dt>
+          <dd class="col-sm-9">
+            {% if identification.birth_date %}
+            {{ identification.birth_date|date:"d/m/Y" }}
+            {% else %}
+            —
+            {% endif %}
+          </dd>
+        </dl>
+        {% if can_decide %}
+        <p class="small text-muted mb-0">
+          Caso aguardando decisão médica — detalhe consultivo dos artefatos do pipeline.
+        </p>
+        {% else %}
+        <p class="small text-muted mb-0">
+          Caso já decidido — exibição read-only do contexto avaliado.
+        </p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Procedimentos declarados -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Procedimentos declarados</h2>
+      </div>
+      <div class="card-body">
+        {% if declared %}
+        <ul class="list-group list-group-flush">
+          {% for procedure in declared %}
+          <li class="list-group-item px-0 d-flex flex-wrap align-items-center gap-2">
+            <span class="fw-semibold">{{ procedure.label }}</span>
+            <span class="badge rounded-pill text-bg-light border text-muted">{{ procedure.subtype }}</span>
+            <span class="small text-muted ms-auto">Disposição: {{ procedure.disposition_label }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-muted mb-0">Nenhum procedimento declarado.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Alertas consultivos por procedimento -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Alertas consultivos</h2>
+      </div>
+      <div class="card-body">
+        {% for advisory in advisories %}
+        <div class="card mb-3{% if advisory.recommendation == 'recomenda_recusar' %} border-danger{% endif %}">
+          <div class="card-header{% if advisory.recommendation == 'recomenda_recusar' %} bg-danger-subtle{% else %} bg-white{% endif %} d-flex flex-wrap align-items-center gap-2">
+            <h3 class="h6 mb-0">{{ advisory.label }}</h3>
+            <span class="badge rounded-pill text-bg-light border text-muted">{{ advisory.subtype }}</span>
+            {% if advisory.section_id %}
+            <span class="badge rounded-pill text-bg-light border text-muted">Seção {{ advisory.section_id }}</span>
+            {% endif %}
+            {% if advisory.recommendation == 'recomenda_recusar' %}
+            <span class="badge rounded-pill text-bg-danger ms-auto">{{ advisory.recommendation_label }}</span>
+            {% elif advisory.recommendation == 'recomenda_aceitar' %}
+            <span class="badge rounded-pill text-bg-success ms-auto">{{ advisory.recommendation_label }}</span>
+            {% else %}
+            <span class="badge rounded-pill text-bg-light border text-muted ms-auto">Sem recomendação</span>
+            {% endif %}
+          </div>
+          <div class="card-body">
+            {% if advisory.refusal_reasons %}
+            <h4 class="h6 text-uppercase text-muted">Motivos de recusa</h4>
+            <ul class="mb-3">
+              {% for reason in advisory.refusal_reasons %}
+              <li>{{ reason }}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+
+            {% if advisory.criteria_alerts %}
+            <h4 class="h6 text-uppercase text-muted">Critérios em alerta</h4>
+            <ul class="mb-3">
+              {% for criterion in advisory.criteria_alerts %}
+              <li>
+                <strong>{{ criterion.label }}</strong>
+                {% if criterion.severity == 'recusa' %}
+                <span class="badge rounded-pill text-bg-danger">recusa</span>
+                {% else %}
+                <span class="badge rounded-pill text-bg-warning">informativo</span>
+                {% endif %}
+                {% if criterion.reason %}<div class="small text-muted">{{ criterion.reason }}</div>{% endif %}
+              </li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+
+            {% if advisory.suggestion %}
+            <div class="small">
+              Sugestão do pipeline:
+              <strong>{{ advisory.suggestion_label }}</strong>
+            </div>
+            {% endif %}
+            {% if advisory.motivos %}
+            <ul class="small text-muted mb-0">
+              {% for motivo in advisory.motivos %}
+              <li>{{ motivo }}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+
+            {% if not advisory.refusal_reasons and not advisory.criteria_alerts and not advisory.motivos %}
+            <p class="text-muted mb-0">Sem alertas consultivos para este procedimento.</p>
+            {% endif %}
+          </div>
+        </div>
+        {% empty %}
+        <p class="text-muted mb-0">Nenhum procedimento declarado para avaliar.</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if aggregate.suggestion %}
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Recomendação agregada do pipeline</h2>
+      </div>
+      <div class="card-body">
+        {% if aggregate.suggestion == 'recusar' %}
+        <span class="badge rounded-pill text-bg-danger mb-2">Recusar</span>
+        {% else %}
+        <span class="badge rounded-pill text-bg-success mb-2">Aceitar</span>
+        {% endif %}
+        {% if aggregate.motivos %}
+        <ul class="small text-muted mb-0">
+          {% for motivo in aggregate.motivos %}
+          <li>{{ motivo }}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Requisitos gerais acionáveis -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Requisitos gerais acionáveis</h2>
+      </div>
+      <div class="card-body">
+        {% if requirements %}
+        <ul class="mb-0">
+          {% for requirement in requirements %}
+          <li><strong>{{ requirement.label }}:</strong> {{ requirement.reason }}</li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-muted mb-0">Nenhum requisito geral acionável derivado dos alertas.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Prior-case -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Prior-case</h2>
+      </div>
+      <div class="card-body">
+        {% if prior_cases %}
+        {% for prior in prior_cases %}
+        <div class="mb-3{% if not forloop.last %} border-bottom pb-3{% endif %}">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="fw-semibold">{{ prior.label }}</span>
+            <span class="badge rounded-pill text-bg-light border text-muted font-monospace small">Caso {{ prior.prior_case_id }}</span>
+            {% if prior.decision_label == 'Negado' %}
+            <span class="badge rounded-pill text-bg-danger ms-auto">{{ prior.decision_label }}</span>
+            {% else %}
+            <span class="badge rounded-pill text-bg-success ms-auto">{{ prior.decision_label }}</span>
+            {% endif %}
+          </div>
+          <dl class="small row mb-0">
+            <dt class="col-3 col-md-2 text-truncate">Motivo real</dt>
+            <dd class="col-9 col-md-10 mb-1">{{ prior.reason }}</dd>
+            <dt class="col-3 col-md-2 text-truncate">Decidido em</dt>
+            <dd class="col-9 col-md-10 mb-1">{{ prior.decided_at }}</dd>
+            <dt class="col-3 col-md-2 text-truncate">Origem do match</dt>
+            <dd class="col-9 col-md-10 mb-1">{{ prior.origin_label }}</dd>
+            <dt class="col-3 col-md-2 text-truncate">Negativas no pool</dt>
+            <dd class="col-9 col-md-10 mb-0">{{ prior.denial_count }}</dd>
+          </dl>
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="text-muted mb-0">Sem caso prévio do mesmo procedimento no período.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Sumário clínico -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Sumário clínico</h2>
+      </div>
+      <div class="card-body">
+        {% if summary_lines %}
+        {% for line in summary_lines %}
+        <p class="mb-2{% if forloop.last %} mb-0{% endif %}">{{ line }}</p>
+        {% endfor %}
+        {% else %}
+        <p class="text-muted mb-0">Sumário clínico não disponível para este caso.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Estrutura extraída -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Estrutura extraída</h2>
+      </div>
+      <div class="card-body">
+        {% for section in sections %}
+        {% if section.lines %}
+        <h3 class="h6 text-muted text-uppercase mt-3{% if forloop.first %} mt-0{% endif %}">{{ section.title }}</h3>
+        <ul class="mb-0">
+          {% for line in section.lines %}
+          <li>{{ line }}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% empty %}
+        <p class="text-muted mb-0">Nenhuma estrutura extraída.</p>
+        {% endfor %}
+        {% if sections and not has_structure %}
+        <p class="text-muted mb-0">Nenhuma estrutura extraída.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Documentos -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Documentos</h2>
+      </div>
+      <div class="table-responsive">
+        <table class="table align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th scope="col">#</th>
+              <th scope="col">Arquivo</th>
+              <th scope="col">Tamanho</th>
+              <th scope="col"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for document in documents %}
+            <tr>
+              <td class="text-muted">{{ document.position }}</td>
+              <td class="font-monospace small">{{ document.original_filename }}</td>
+              <td>{{ document.size_bytes|filesizeformat }}</td>
+              <td class="text-end">
+                <a href="{% url 'doctor:case_pdf' case_id document.position %}"
+                   target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary">
+                  Abrir PDF original
+                </a>
+              </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="4" class="text-muted">Nenhum documento neste caso.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

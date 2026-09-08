@@ -60,6 +60,26 @@ def reidentify(text: str, pseudonym_map: Mapping[str, Any]) -> str:
     return pattern.sub(lambda match: str(entries[match.group(0)]["value"]), text)
 
 
+def reidentify_structure(value: Any, pseudonym_map: Mapping[str, Any]) -> Any:
+    """Re-identifica recursivamente os tokens de dicts/listas/strings (R1/D3).
+
+    Helper **aditivo** da re-identificação para artefatos JSON aninhados
+    (``structured_data``/``policy_result``/``suggested_action``): dict e list
+    são percorridos recursivamente e cada string é re-identificada pelo núcleo
+    puro ``reidentify``; demais tipos (int/float/bool/None) atravessam. A
+    operação é imutável — devolve uma nova estrutura, sem tocar a entrada;
+    mapa vazio → estrutura inalterada. Uso previsto: presenter do slice 07 e
+    anexos do change 10 — sempre na renderização, nunca em payload de LLM.
+    """
+    if isinstance(value, dict):
+        return {key: reidentify_structure(item, pseudonym_map) for key, item in value.items()}
+    if isinstance(value, list):
+        return [reidentify_structure(item, pseudonym_map) for item in value]
+    if isinstance(value, str):
+        return reidentify(value, pseudonym_map)
+    return value
+
+
 def _is_reidentifiable_entry(token: str, value: Any) -> bool:
     """Entrada do mapa utilizável no roundtrip: token str com ``value`` str.
 

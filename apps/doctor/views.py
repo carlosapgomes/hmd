@@ -1,34 +1,44 @@
-"""Views da fila médica (doctor-queue-decision, slice 002, D2/D5).
+"""Views da fila e do detalhe do caso médico (doctor-queue-decision, slices 002/003).
 
-Fila única em ``/doctor/`` para papel ativo doctor/admin: abas por estado
-(``aguardando`` default = ``AWAITING_DOCTOR``; ``decididos`` = estados
-pós-decisão), FIFO por ``created_at``, filtro de subtipo no querystring
-(``?subtype=``: ``Todas`` + subtipos do usuário) e paginação — primeira view
-paginada do projeto, com o ``Paginator`` do Django (D5). O access control
-combina o guard ``role_required`` (papel ativo) com ``apps.doctor.access``
-(fatia por subtipo — predicado único fila×detalhe×decisão, D2). Os fatos do
-usuário (``DoctorAccess``) são computados **1× por request** e reutilizados
-nos filtros SQL, nas contagens e no re-check por caso da página — os tipos
-declarados saem das rows já pré-carregadas (``prefetch_related``), sem query
-por card (P2).
+Slice 002 (R2–R5, D2/D5): fila única em ``/doctor/`` para papel ativo
+doctor/admin — abas por estado (``aguardando`` default = ``AWAITING_DOCTOR``;
+``decididos`` = estados pós-decisão), FIFO por ``created_at``, filtro de
+subtipo no querystring e paginação (``Paginator`` — primeira view paginada do
+projeto). O access control combina o guard ``role_required`` (papel ativo)
+com ``apps.doctor.access`` (fatia por subtipo — predicado único
+fila×detalhe×decisão, D2). Os fatos do usuário (``DoctorAccess``) são
+computados **1× por request** e reutilizados nos filtros SQL, nas contagens e
+no re-check por caso da página.
+
+Slice 003 (R3/R4, D3/D7): ``doctor:case_detail`` renderiza o contexto do
+presenter puro re-identificado (read-only — o formulário/POST de decisão é o
+slice 004) e ``doctor:case_pdf`` serve o PDF original por ``position`` via
+``FileResponse`` (404 sem documento). Ambas reutilizam o MESMO guard do slice
+002 (papel ativo + ``can_access_case``), sem duplicar o predicado.
 """
 
 from __future__ import annotations
 
+import uuid
+from typing import cast
 from urllib.parse import urlencode
 
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db.models import QuerySet
-from django.http import HttpRequest, HttpResponse
-from django.shortcuts import render
+from django.http import FileResponse, HttpRequest, HttpResponse
+from django.shortcuts import get_object_or_404, render
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
-from apps.cases.models import Case, CaseStatus
+from apps.cases.models import Case, CaseDocument, CaseStatus
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES, VALID_DOCTOR_SUBTYPES
 
-from .access import DoctorAccess
+from .access import DoctorAccess, can_access_case
+from .presenters import build_case_detail_context
+
+# Content-type dos documentos do relatório (D7 — mesmo padrão do intake).
+PDF_CONTENT_TYPE = "application/pdf"
 
 # Tamanho de página da primeira view paginada do projeto (D5) — sem padrão
 # anterior no HMD (my_cases não pagina).
@@ -206,3 +216,58 @@ def queue(request: HttpRequest) -> HttpResponse:
         "filter_qs": urlencode(filter_parts),
     }
     return render(request, "doctor/queue.html", context)
+
+
+@role_required("doctor", "admin")
+def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    """Detalhe read-only do caso para o médico (R3, D3).
+
+    Guard do slice 002 (papel ativo doctor/admin + matriz D2 por subtipo via
+    ``can_access_case`` — predicado único, nunca duplicado); caso inexistente
+    → 404. Renderiza o contexto do presenter puro (re-identificação exclusiva
+    na renderização) acrescido dos documentos para o card de PDFs. Aceita
+    AWAITING_DOCTOR e estados pós-decisão; sem formulário neste slice (004).
+    """
+    user = _require_user(request)
+    active_role = request.session.get("active_role", "")
+    case = get_object_or_404(Case, case_id=case_id)
+    if not can_access_case(user, case, active_role=active_role):
+        raise PermissionDenied
+    context = build_case_detail_context(case)
+    context["documents"] = list(case.documents.all())
+    return render(request, "doctor/case_detail.html", context)
+
+
+@role_required("doctor", "admin")
+def case_pdf(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    position: int,
+) -> HttpResponse:
+    """Serve o PDF original do documento na ``position`` (R4, D7).
+
+    Mesmo guard do detalhe (papel ativo + matriz D2). Documento/position
+    inexistente → 404; entrega via ``FileResponse`` (streaming) com
+    content-type ``application/pdf`` e o nome original do upload.
+    """
+    user = _require_user(request)
+    active_role = request.session.get("active_role", "")
+    case = get_object_or_404(
+        Case.objects.only("case_id", "status"),
+        case_id=case_id,
+    )
+    if not can_access_case(user, case, active_role=active_role):
+        raise PermissionDenied
+    document = get_object_or_404(
+        CaseDocument.objects.only("pk", "case_id", "file", "original_filename", "position"),
+        case=case,
+        position=position,
+    )
+    return cast(
+        HttpResponse,
+        FileResponse(
+            document.file.open("rb"),
+            content_type=PDF_CONTENT_TYPE,
+            filename=document.original_filename or "documento.pdf",
+        ),
+    )

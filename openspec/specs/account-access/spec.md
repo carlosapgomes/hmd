@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Gestão de usuários e controle de acesso do HMD: papéis fixos do sistema, papel ativo único por sessão, proteção de views por papel, restrição de intranet para o papel `nir`, autenticação via Active Directory (Kerberos) com break-glass local controlado e provisionamento administrativo.
+Gestão de usuários e controle de acesso do HMD: papéis fixos do sistema, papel ativo único por sessão, proteção de views por papel, restrição de intranet para o papel `nir`, autenticação via Active Directory (Kerberos) com o admin como identidade local permanente (ADR-0009) e provisionamento administrativo.
 
 ## Requirements
 
@@ -77,9 +77,9 @@ O acesso de usuários com papel ativo `nir` SHALL ser bloqueado quando o IP de o
 - **WHEN** o usuário troca o papel ativo para `manager` pela tela de seleção (path isento da restrição)
 - **THEN** o acesso externo passa a ser permitido
 
-### Requirement: Autenticação por Active Directory com break-glass local
+### Requirement: Autenticação por Active Directory com admin local por design
 
-Usuários provisionados com `ad_upn` (UPN completo `cpf@dominio`) SHALL autenticar exclusivamente via Kerberos contra o Active Directory (CPF no login + senha do AD; realm derivado do sufixo do UPN); credenciais locais SHALL ser inutilizáveis para esses usuários. A checagem de `account_status` precede qualquer consulta ao KDC: contas com status diferente de `active` não autenticam e não geram tráfego Kerberos. A autenticação local (break-glass) é permitida **apenas para superusuários sem `ad_upn`** e somente quando habilitada por configuração (ADR-0003). Respostas ao usuário são genéricas, distinguindo apenas "credenciais inválidas" de "serviço de autenticação indisponível".
+Usuários provisionados com `ad_upn` (UPN completo `cpf@dominio`) SHALL autenticar exclusivamente via Kerberos contra o Active Directory (CPF no login + senha do AD; realm derivado do sufixo do UPN); credenciais locais SHALL ser inutilizáveis para esses usuários. A checagem de `account_status` precede qualquer consulta ao KDC: contas com status diferente de `active` não autenticam e não geram tráfego Kerberos. A autenticação local é permitida **apenas para superusuários sem `ad_upn`**, em qualquer ambiente, **por design** (identidade administrativa permanente — ADR-0009; o admin do hospital usa a credencial do AD exclusivamente para atividades assistenciais e não possui segunda identidade no AD). Não existe mais flag de habilitação de autenticação local; preencher `ad_upn` no superusuário o torna autenticável por AD. Respostas ao usuário são genéricas, distinguindo apenas "credenciais inválidas" de "serviço de autenticação indisponível".
 
 #### Scenario: Login com credenciais válidas
 
@@ -105,18 +105,17 @@ Usuários provisionados com `ad_upn` (UPN completo `cpf@dominio`) SHALL autentic
 - **WHEN** o backend local é consultado com qualquer senha local
 - **THEN** a autenticação local é recusada para esse usuário
 
-#### Scenario: Break-glass local autentica quando habilitado
+#### Scenario: Admin local autentica em qualquer ambiente
 
-- **GIVEN** um superusuário sem `ad_upn`, com senha local válida e autenticação local habilitada por configuração
-- **WHEN** submete login
+- **GIVEN** um superusuário sem `ad_upn`, com senha local válida, em ambiente de produção sem nenhuma configuração extra
+- **WHEN** submete login (página comum ou Django admin)
 - **THEN** a sessão é criada normalmente
 
 #### Scenario: Usuário comum sem ad_upn não usa autenticação local
 
-- **GIVEN** um usuário não-superusuário sem `ad_upn`, com senha local correta e autenticação local habilitada
+- **GIVEN** um usuário não-superusuário sem `ad_upn`, com senha local correta
 - **WHEN** submete login
 - **THEN** o login é negado com mensagem genérica
-
 ### Requirement: Registro de conselho profissional opcional e consistente
 
 O usuário pode registrar conselho profissional (`CRM` ou `COREN`) e número. Os dois campos SHALL ser preenchidos juntos ou deixados vazios juntos; combinação parcial é rejeitada na validação do modelo.
@@ -161,7 +160,7 @@ A validação Kerberos SHALL usar o principal derivado do `ad_upn` (realm do suf
 
 ### Requirement: Proteção anti-lockout local
 
-O sistema SHALL limitar tentativas de login malsucedidas por CPF normalizado e por par IP+CPF (IP de origem lido do cabeçalho confiável, mesma regra do guard de intranet), com limiar configurável inferior à política de lockout do AD. Tentativas que falham por **indisponibilidade do serviço de autenticação** (KDCs inalcançáveis) não geram tráfego ao AD e, portanto, SHALL não ser registradas como falha nos contadores. Ao atingir o limiar dentro da janela, tentativas subsequentes são recusadas temporariamente com mensagem genérica, sem consultar o KDC e sem alterar `account_status`. Tentativa bem-sucedida reinicia os contadores. Em produção, o rate-limit SHALL operar sobre cache compartilhado entre processos.
+O sistema SHALL limitar tentativas de login malsucedidas por CPF normalizado e por par IP+CPF (IP de origem lido do cabeçalho confiável, mesma regra do guard de intranet), com limiar configurável inferior à política de lockout do AD. Tentativas que falham por **indisponibilidade do serviço de autenticação** (KDCs inalcançáveis) não geram tráfego ao AD e, portanto, SHALL não ser registradas como falha nos contadores. A proteção SHALL aplicar-se também ao login do Django admin: tentativas bloqueadas são recusadas cedo (sem tentativa de autenticação) e falhas de credencial local do perfil administrativo (superusuário sem `ad_upn`) contam para os mesmos contadores; tentativas de outros perfis nessa rota que falhem por indisponibilidade do AD não contam. Ao atingir o limiar dentro da janela, tentativas subsequentes são recusadas temporariamente com mensagem genérica, sem consultar o KDC e sem alterar `account_status`. Tentativa bem-sucedida reinicia os contadores. Em produção, o rate-limit SHALL operar sobre cache compartilhado entre processos.
 
 #### Scenario: Limiar atingido bloqueia temporariamente
 
@@ -185,4 +184,16 @@ O sistema SHALL limitar tentativas de login malsucedidas por CPF normalizado e p
 
 - **GIVEN** tentativas de login que falham porque o serviço de autenticação está indisponível (KDCs inalcançáveis), em quantidade acima do limiar
 - **WHEN** o serviço volta e o usuário submete login com credenciais corretas
+- **THEN** o login é bem-sucedido sem bloqueio local residual
+
+#### Scenario: Força-bruta no Django admin é limitada
+
+- **GIVEN** um superusuário sem `ad_upn` e tentativas de senha incorreta no login do Django admin em quantidade suficiente para atingir o limiar
+- **WHEN** uma nova tentativa é submetida no Django admin
+- **THEN** ela é recusada cedo com mensagem genérica, sem chegar à checagem de senha
+
+#### Scenario: Falha de AD no Django admin não conta para o limite
+
+- **GIVEN** um usuário com `ad_upn` (e `is_staff`) cujas tentativas no login do Django admin falham por indisponibilidade do AD
+- **WHEN** o serviço volta e ele submete login correto na página comum
 - **THEN** o login é bem-sucedido sem bloqueio local residual

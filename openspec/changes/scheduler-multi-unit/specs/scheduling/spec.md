@@ -84,7 +84,7 @@ O sistema SHALL permitir desmarcar, por intercorrência, um caso confirmado na u
 
 ### Requirement: Visão do agendador limitada ao necessário
 
-O detalhe do caso para o agendador SHALL exibir apenas a identificação do paciente (nome, data de nascimento, número de ocorrência), o diagnóstico resumido (primeira linha do sumário, re-identificada apenas na renderização), os procedimentos com as decisões médicas (incluindo motivos das negativas), os dados de agendamento e a thread de comunicações — sem os demais artefatos do pipeline (linhas seguintes do sumário, estrutura extraída, alertas da policy, sugestão). O PDF do relatório original SHALL ficar disponível ao agendador somente após a decisão de agendamento, para casos processados por ele mesmo.
+O detalhe do caso para o agendador SHALL exibir apenas a identificação do paciente (nome, data de nascimento, número de ocorrência), o diagnóstico resumido (primeira linha do sumário, re-identificada apenas na renderização), os procedimentos com as decisões médicas (incluindo motivos das negativas), os dados de agendamento e a thread de comunicações — sem os demais artefatos do pipeline (linhas seguintes do sumário, estrutura extraída, alertas da policy, sugestão). O PDF do relatório original SHALL ficar disponível ao agendador somente após a decisão de agendamento, para casos processados por ele mesmo — por documento do relatório (o relatório pode chegar em múltiplos PDFs ordenados).
 
 #### Scenario: Agendador vê o diagnóstico resumido re-identificado
 
@@ -100,9 +100,9 @@ O detalhe do caso para o agendador SHALL exibir apenas a identificação do paci
 
 #### Scenario: PDF disponível apenas de caso processado pelo próprio agendador
 
-- **GIVEN** um caso confirmado pelo agendador autenticado
-- **WHEN** ele solicita o PDF do caso
-- **THEN** o documento original é servido como PDF
+- **GIVEN** um caso confirmado pelo agendador autenticado, com dois documentos de relatório
+- **WHEN** ele solicita o PDF de cada documento do caso
+- **THEN** cada documento original é servido como PDF
 
 #### Scenario: PDF negado a outro agendador ou a caso reaberto
 

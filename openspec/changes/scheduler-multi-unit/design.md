@@ -83,15 +83,20 @@ agendador renderiza, portanto:
 3. **Decisões médicas por procedimento** (aprovadas **e** negadas, com
    motivos) + dados de agendamento atuais + thread de comunicações.
 
-**PDF pós-decisão, caso próprio**: `case.pdf_file` (documento original)
-servido por view própria (`FileResponse` + `Cache-Control: no-store` —
-padrão do PDF médico do change 07) SOMENTE quando `scheduled_by ==
+**PDF pós-decisão, caso próprio**: os documentos originais do relatório
+(`CaseDocument` — **multi-PDF por design**: o relatório SESAB chega em 1–N
+PDFs com `position`) servidos por view própria por `position` (`FileResponse`
++ `Cache-Control: no-store` — padrão do `doctor:case_pdf` do change 07,
+`apps/doctor/urls.py`/`views.py`) SOMENTE quando `scheduled_by ==
 request.user` E status ∈ {`SCHEDULING_CONFIRMED`, `SCHEDULING_DENIED`,
 `FINAL_REPLY_POSTED`, `AWAITING_NIR_ACK`} (semântica do
-`_get_scheduler_processed_case_or_404` do ats-web). Sem link na
-fila/pré-decisão; caso reaberto por intercorrência (`scheduled_by` limpo) →
-404 fail-closed. O PDF é domínio humano (como para o médico): nunca é
-enviado à LLM nem ao pipeline anonimizado.
+`_get_scheduler_processed_case_or_404` do ats-web — decisão do dono).
+Sem link na fila/pré-decisão; na condição satisfeita o detalhe lista links
+para **todos** os documentos do caso (por `position`); caso reaberto por
+intercorrência (`scheduled_by` limpo) → 404 fail-closed. Servir só o
+primeiro documento entregaria relatório incompleto quando N>1 — por isso a
+rota por `position`. Os PDFs são domínio humano (como para o médico): nunca
+são enviados à LLM nem ao pipeline anonimizado.
 
 ## D4 — Fila do agendador
 

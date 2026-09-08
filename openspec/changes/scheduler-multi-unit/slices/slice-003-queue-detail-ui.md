@@ -72,13 +72,19 @@ confirmar (unidade 1|2 + data/hora + local), negar (motivo) e desmarcar
   botão **desmarcar** (motivo obrigatório) aparece SOMENTE em
   `FINAL_REPLY_POSTED` com `scheduled_unit == 1` → `reopen_scheduling_after_incident`;
   em unidade 2 exibe banner "intercorrência desabilitada" (sem botão).
-- **R7** View de PDF `scheduler:case_pdf`: serve `case.pdf_file` (FileResponse,
-  `application/pdf`, `Cache-Control: no-store`) SOMENTE quando
-  `case.scheduled_by == request.user` E status ∈ {`SCHEDULING_CONFIRMED`,
-  `SCHEDULING_DENIED`, `FINAL_REPLY_POSTED`, `AWAITING_NIR_ACK`} (404
-  fail-closed caso contrário — inclusive caso reaberto por intercorrência,
-  cujo `scheduled_by` foi limpo); link exibido no detalhe apenas nessa
-  condição; decorator `role_required` como as demais views.
+- **R7** View de PDF `scheduler:case_pdf` com `<int:position>`: serve o
+documento `case.documents.get(position=position).file` (FileResponse,
+  `application/pdf`, `Cache-Control: no-store` — padrão do `doctor:case_pdf`,
+  `apps/doctor/{urls,views}.py`) com gate por CASO antes de resolver o
+  documento: `case.scheduled_by == request.user` E status ∈ {
+  `SCHEDULING_CONFIRMED`, `SCHEDULING_DENIED`, `FINAL_REPLY_POSTED`,
+  `AWAITING_NIR_ACK`} (404 fail-closed caso contrário — inclusive caso
+  reaberto por intercorrência, cujo `scheduled_by` foi limpo; position
+  inexistente → 404); o detalhe lista links para **todos** os documentos
+  (`case.documents.order_by("position")`) apenas nessa condição;
+  decorator `role_required` como as demais views. (O HMD é multi-PDF por
+  design — relatório em 1–N `CaseDocument`; servir só o primeiro entregaria
+  relatório incompleto.)
 - **R5** Erros do serviço (validação/estado/concorrência) → mensagem de erro
   + redirect/re-render com form; **nunca 500**; nenhuma escrita parcial.
 - **R6** Testes de view: fila (abas/FIFO — inclui caso reaberto em
@@ -99,7 +105,7 @@ confirmar (unidade 1|2 + data/hora + local), negar (motivo) e desmarcar
 | R2 | `apps/scheduler/views.py` | `test_queue_awaiting_default`, `test_queue_processed_tab`, `test_queue_forbidden_*`, `test_anonymous_redirects_login` |
 | R3 | `apps/scheduler/{views,presenters}.py`, `templates/scheduler/case_detail.html` | `test_detail_shows_identification_and_decisions`, `test_detail_one_liner_reidentified`, `test_detail_has_no_clinical_artifacts` |
 | R4 | `apps/scheduler/forms.py`, `templates/scheduler/{case_detail,decide-like forms}` | `test_confirm_unit_1_flow`, `test_confirm_unit_2_exact_reply`, `test_deny_flow`, `test_reopen_button_only_unit_1`, `test_reopen_unit_2_post_rejected` |
-| R7 | `apps/scheduler/views.py` (rota `case_pdf`) | `test_pdf_own_processed_case_200`, `test_pdf_other_scheduler_404`, `test_pdf_reopened_case_404` |
+| R7 | `apps/scheduler/views.py` (rota `case_pdf` por position) | `test_pdf_own_processed_case_200` (com 2 documentos, ambos acessíveis), `test_pdf_other_scheduler_404`, `test_pdf_reopened_case_404`, `test_pdf_missing_position_404` |
 | R5 | `apps/scheduler/views.py` | `test_wrong_state_post_no_500` |
 | R6 | `apps/scheduler/tests/test_views.py` (+conftest se preciso) | suíte do slice |
 

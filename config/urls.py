@@ -16,4 +16,8 @@ urlpatterns: list[URLPattern | URLResolver] = [
     # Fila médica (change doctor-queue-decision, slice 002): /doctor/ — fila
     # por estado com filtro de subtipo (detalhe/decisão nos slices 003/004).
     path("doctor/", include("apps.doctor.urls")),
+    # Fila/agendamento (change scheduler-multi-unit, slice 003): /scheduler/ —
+    # fila por estado com abas (aguardando/processados), detalhe limitado,
+    # POSTs de ação (confirmar/negar/desmarcar) e PDF pós-decisão.
+    path("scheduler/", include("apps.scheduler.urls")),
 ]

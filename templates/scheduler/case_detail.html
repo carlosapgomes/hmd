@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_display_name }} — Caso {{ case_id }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+  <div class="col-12 col-lg-10">
+    <nav aria-label="breadcrumb" class="mb-3">
+      <ol class="breadcrumb mb-0">
+        <li class="breadcrumb-item"><a href="{% url 'scheduler:queue' %}">Fila de agendamento</a></li>
+        <li class="breadcrumb-item active" aria-current="page">Caso {{ case_id }}</li>
+      </ol>
+    </nav>
+
+    <!-- Identificação do paciente -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
+        <h1 class="h5 mb-0">Identificação do paciente</h1>
+        <span class="badge rounded-pill text-bg-secondary ms-auto">{{ status_label }}</span>
+      </div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-3">Paciente</dt>
+          <dd class="col-sm-9">{{ identification.patient_name|default:"—" }}</dd>
+          <dt class="col-sm-3">Nº de ocorrência</dt>
+          <dd class="col-sm-9">{{ identification.agency_record_number|default:"—" }}</dd>
+          <dt class="col-sm-3">Nascimento</dt>
+          <dd class="col-sm-9">
+            {% if identification.birth_date %}
+            {{ identification.birth_date|date:"d/m/Y" }}
+            {% else %}
+            —
+            {% endif %}
+          </dd>
+        </dl>
+      </div>
+    </div>
+
+    <!-- Diagnóstico resumido (one-liner re-identificado na renderização) -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Diagnóstico resumido</h2>
+      </div>
+      <div class="card-body">
+        {% if summary_line %}
+        <p class="mb-0">{{ summary_line }}</p>
+        {% else %}
+        <p class="text-muted mb-0">Diagnóstico não disponível para este caso.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Procedimentos declarados + decisões médicas -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Procedimentos declarados e decisões médicas</h2>
+      </div>
+      <div class="card-body">
+        {% if declared %}
+        <ul class="list-group list-group-flush">
+          {% for procedure in declared %}
+          <li class="list-group-item px-0">
+            <div class="d-flex flex-wrap align-items-center gap-2">
+              <span class="fw-semibold">{{ procedure.label }}</span>
+              <span class="badge rounded-pill text-bg-light border text-muted">{{ procedure.subtype }}</span>
+              {% if procedure.disposition == 'approved' %}
+              <span class="badge rounded-pill text-bg-success ms-auto">Aprovado</span>
+              {% elif procedure.disposition == 'denied' %}
+              <span class="badge rounded-pill text-bg-danger ms-auto">Negado</span>
+              {% else %}
+              <span class="badge rounded-pill text-bg-light border text-muted ms-auto">Pendente</span>
+              {% endif %}
+            </div>
+            {% if procedure.reason %}
+            <p class="small text-muted mb-0 mt-1">{{ procedure.reason }}</p>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-muted mb-0">Nenhum procedimento declarado.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if has_scheduling %}
+    <!-- Dados de agendamento atuais -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Agendamento</h2>
+      </div>
+      <div class="card-body">
+        <dl class="row mb-2">
+          <dt class="col-sm-3">Unidade</dt>
+          <dd class="col-sm-9">{{ scheduling.unit_label|default:"—" }}</dd>
+          <dt class="col-sm-3">Data/hora</dt>
+          <dd class="col-sm-9">{{ scheduling.scheduled_at|default:"—" }}</dd>
+          <dt class="col-sm-3">Local</dt>
+          <dd class="col-sm-9">{{ scheduling.location|default:"—" }}</dd>
+          {% if scheduling.decided_by %}
+          <dt class="col-sm-3">Decidido por</dt>
+          <dd class="col-sm-9">
+            {{ scheduling.decided_by }}{% if scheduling.decided_at %} em {{ scheduling.decided_at }}{% endif %}
+          </dd>
+          {% endif %}
+        </dl>
+        {% if scheduling.denial_reason %}
+        <p class="small text-muted mb-0"><strong>Motivo da negação:</strong> {{ scheduling.denial_reason }}</p>
+        {% endif %}
+        {% if scheduling.reopen_reason %}
+        <p class="small text-muted mb-0"><strong>Motivo da intercorrência:</strong> {{ scheduling.reopen_reason }}</p>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if can_decide_scheduling %}
+    <!-- Ações do agendador (estado aguardando) -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Confirmar agendamento</h2>
+      </div>
+      <div class="card-body">
+        <form method="post" action="{% url 'scheduler:case_confirm' case_id %}">
+          {% csrf_token %}
+          <div class="row g-3">
+            <div class="col-md-3">
+              <label for="{{ confirm_form.unit.id_for_label }}" class="form-label">Unidade de destino</label>
+              {{ confirm_form.unit }}
+            </div>
+            <div class="col-md-3">
+              <label for="{{ confirm_form.scheduled_date.id_for_label }}" class="form-label">Data</label>
+              {{ confirm_form.scheduled_date }}
+            </div>
+            <div class="col-md-3">
+              <label for="{{ confirm_form.scheduled_time.id_for_label }}" class="form-label">Horário</label>
+              {{ confirm_form.scheduled_time }}
+            </div>
+            <div class="col-md-3">
+              <label for="{{ confirm_form.scheduled_location.id_for_label }}" class="form-label">Local</label>
+              {{ confirm_form.scheduled_location }}
+            </div>
+          </div>
+          <button type="submit" class="btn btn-success mt-3">Confirmar</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Negar agendamento</h2>
+      </div>
+      <div class="card-body">
+        <form method="post" action="{% url 'scheduler:case_deny' case_id %}">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label for="{{ deny_form.reason.id_for_label }}" class="form-label">Motivo da negação</label>
+            {{ deny_form.reason }}
+          </div>
+          <button type="submit" class="btn btn-danger">Negar</button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if can_reopen %}
+    <!-- Intercorrência (unidade 1): desmarcar e retornar o caso à fila -->
+    <div class="card shadow-sm mb-4 border-warning">
+      <div class="card-header bg-warning-subtle">
+        <h2 class="h5 mb-0">Desmarcar agendamento (intercorrência)</h2>
+      </div>
+      <div class="card-body">
+        <p class="small text-muted mb-3">
+          O agendamento foi desmarcado por uma intercorrência — informe o motivo;
+          o caso retorna à fila de agendamento para uma nova confirmação.
+        </p>
+        <form method="post" action="{% url 'scheduler:case_reopen' case_id %}">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label for="{{ reopen_form.reason.id_for_label }}" class="form-label">Motivo da intercorrência</label>
+            {{ reopen_form.reason }}
+          </div>
+          <button type="submit" class="btn btn-warning">Desmarcar agendamento</button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if incident_disabled %}
+    <div class="alert alert-secondary" role="alert">
+      <strong>intercorrência desabilitada.</strong>
+      O agendamento foi confirmado na Unidade 2, que comunicará a Secretaria —
+      este caso não pode ser desmarcado por intercorrência.
+    </div>
+    {% endif %}
+
+    {% if can_view_pdf %}
+    <!-- PDFs originais do caso processado pelo próprio agendador (R7) -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Documentos</h2>
+      </div>
+      <div class="table-responsive">
+        <table class="table align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th scope="col">#</th>
+              <th scope="col">Arquivo</th>
+              <th scope="col"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for document in pdf_documents %}
+            <tr>
+              <td class="text-muted">{{ document.position }}</td>
+              <td class="font-monospace small">{{ document.original_filename }}</td>
+              <td class="text-end">
+                <a href="{% url 'scheduler:case_pdf' case_id document.position %}"
+                   target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary">
+                  Abrir PDF original
+                </a>
+              </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="3" class="text-muted">Nenhum documento neste caso.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Thread de comunicações -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Comunicações</h2>
+      </div>
+      <ul class="list-group list-group-flush">
+        {% for communication in communications %}
+        <li class="list-group-item">
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+              {% if communication.message_type == 'system' %}
+              <strong class="text-secondary">Sistema</strong>
+              {% else %}
+              <strong>{{ communication.author.display_name|default:"Operador" }}</strong>
+              {% if communication.author_role %}
+              <span class="badge rounded-pill text-bg-light border">{{ communication.author_role }}</span>
+              {% endif %}
+              {% endif %}
+            </div>
+            <span class="small text-muted text-nowrap">{{ communication.created_at|date:"d/m/Y H:i" }}</span>
+          </div>
+          <p class="mb-0 mt-1">{{ communication.body }}</p>
+        </li>
+        {% empty %}
+        <li class="list-group-item text-muted">Sem comunicações registradas.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}

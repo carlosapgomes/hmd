@@ -8,15 +8,24 @@ Cobre:
   decisão");
 - R2: ``GET doctor:case_decide`` — renderiza form apenas em ``AWAITING_DOCTOR``;
   caso já decidido → redirect ao detalhe com mensagem; guard papel/subtipo;
-- R3: ``POST doctor:case_decide`` — negado-total → ``DOCTOR_DENIED`` com
-  rows/eventos; misto (≥1 aprovado) → ``SCHEDULER_REQUESTED``; guard por
-  subtipo → 403 sem escrita;
+- R3: ``POST doctor:case_decide`` — negado-total → decisão registrada e o
+  wiring do fechamento (nir-result-closure) publica a resposta final ao NIR
+  (caso sai de ``DOCTOR_DENIED`` para ``FINAL_REPLY_POSTED`` com rows,
+  eventos e thread); misto (≥1 aprovado) → ``SCHEDULER_REQUESTED``; guard
+  por subtipo → 403 sem escrita;
 - R4: submissão concorrente/estado inválido → sem efeito parcial + mensagem
   "já decidido por outro médico" + redirect (nunca 500);
 - R5: detalhe read-only pós-decisão — presenter exibe decisões por procedimento
   (disposição + motivo + ``doctor_decided_at``), ator/data do evento
   ``CASE_DOCTOR_DECISIONS_RECORDED`` e trilha de eventos; template sem
-  formulário fora de ``AWAITING_DOCTOR``.
+  formulário fora de ``AWAITING_DOCTOR``;
+- R6: wiring do fechamento da negativa (nir-result-closure, slice 001) — a
+  view re-lê o caso após o serviço do change 03 (que devolve ``None`` e
+  trabalha sobre um ``locked`` re-buscado — o ``case`` em memória fica stale)
+  e fecha SOMENTE a negativa total (``DOCTOR_DENIED`` → resposta final na
+  thread); decisão parcial → ``SCHEDULER_REQUESTED`` sem chamada ao
+  fechamento; falha do fechamento (``ValueError``) → mensagem + redirect,
+  nunca 500, caso permanece ``DOCTOR_DENIED``.
 """
 
 from __future__ import annotations
@@ -30,7 +39,7 @@ from django.urls import reverse
 
 from apps.accounts.models import User
 from apps.cases.events import CaseEventType
-from apps.cases.models import Case, CaseProcedure, CaseStatus, DoctorDisposition
+from apps.cases.models import Case, CaseProcedure, CaseStatus, DoctorDisposition, MessageType
 from apps.cases.procedures import record_doctor_procedure_decisions
 from apps.doctor import views as doctor_views
 from apps.doctor.forms import DoctorDecisionForm
@@ -229,12 +238,18 @@ def test_decide_get_forbidden_for_subtype_outside_case(
 
 
 @pytest.mark.django_db
-def test_submit_denied_all(
+def test_decide_all_denied_posts_final_reply(
     client: Client,
     nir_user: User,
     user_factory: Callable[..., User],
 ) -> None:
-    """R3: POST negado-total → DOCTOR_DENIED com rows, evento e flash."""
+    """R3/R6: POST negado-total → decisão + resposta final publicada ao NIR.
+
+    O wiring do fechamento re-lê o caso (o serviço do change 03 trabalha sobre
+    um ``locked`` re-buscado) e sai de ``DOCTOR_DENIED`` para
+    ``FINAL_REPLY_POSTED`` — evento com o médico e thread com a resposta
+    autoral (label + motivo de cada procedimento negado) e flash registrada.
+    """
     case = _make_awaiting_case(nir_user, (ANGIO_TYPE, RADIO_TYPE))
     doctor = user_factory("medico-denies-all", (DOCTOR_ROLE,))
     _login(client, doctor, DOCTOR_ROLE)
@@ -255,7 +270,7 @@ def test_submit_denied_all(
     assert response.headers["Location"] == detail_url
 
     case.refresh_from_db()
-    assert case.status == CaseStatus.DOCTOR_DENIED
+    assert case.status == CaseStatus.FINAL_REPLY_POSTED
     rows = _rows_by_type(case)
     assert rows[ANGIO_TYPE].doctor_disposition == DoctorDisposition.DENIED
     assert rows[ANGIO_TYPE].doctor_reason == "sem indicação clínica"
@@ -266,8 +281,109 @@ def test_submit_denied_all(
     decision_event = case.events.get(event_type=CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED)
     assert decision_event.actor == doctor
     assert decision_event.actor_role == DOCTOR_ROLE
+    # Encadeamento do wiring: decisão → DOCTOR_DENIED → FINAL_REPLY_POSTED.
+    event_types = [event.event_type for event in case.events.order_by("id")]
+    assert event_types[-3:] == [
+        CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED,
+        f"CASE_STATUS_{CaseStatus.DOCTOR_DENIED}",
+        f"CASE_STATUS_{CaseStatus.FINAL_REPLY_POSTED}",
+    ]
+    final_event = case.events.get(event_type=f"CASE_STATUS_{CaseStatus.FINAL_REPLY_POSTED}")
+    assert final_event.actor == doctor
+    assert final_event.actor_role == DOCTOR_ROLE
+
+    # Thread contém a resposta final user do médico: label + motivo de cada
+    # procedimento negado (dados reais — o NIR é o destinatário).
+    replies = list(case.communication_messages.filter(message_type=MessageType.USER))
+    assert len(replies) == 1
+    reply = replies[0]
+    assert reply.author == doctor
+    assert reply.author_role == DOCTOR_ROLE
+    assert f"- {ANGIO_LABEL}: sem indicação clínica" in reply.body
+    assert f"- {RADIO_LABEL}: risco elevado" in reply.body
+
     # Flash "decisão registrada" no redirect ao detalhe.
     assert "Decisão registrada" in client.get(detail_url).content.decode()
+
+
+@pytest.mark.django_db
+def test_decide_partial_no_final_reply(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R6: POST parcial (≥1 aprovado) segue o fluxo existente até
+    SCHEDULER_REQUESTED — SEM chamada ao fechamento nem resposta final."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE, RADIO_TYPE))
+    doctor = user_factory("medico-partial-no-reply", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.post(
+        reverse("doctor:case_decide", args=[case.case_id]),
+        _form_payload(
+            {
+                ANGIO_TYPE: ("approved", ""),
+                RADIO_TYPE: ("denied", "via de acesso inviável"),
+            }
+        ),
+    )
+
+    assert response.status_code == 302
+    case.refresh_from_db()
+    assert case.status == CaseStatus.SCHEDULER_REQUESTED
+    event_types = [event.event_type for event in case.events.order_by("id")]
+    assert f"CASE_STATUS_{CaseStatus.FINAL_REPLY_POSTED}" not in event_types
+    assert not case.communication_messages.filter(message_type=MessageType.USER).exists()
+
+
+@pytest.mark.django_db
+def test_decide_closure_error_no_500(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R6: falha do fechamento (``ValueError`` simulado) → mensagem de erro +
+    redirect ao detalhe, nunca 500; caso permanece ``DOCTOR_DENIED``."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE, RADIO_TYPE))
+    doctor = user_factory("medico-closure-error", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    def _failed_closure(case_: Case, *, user: User, role: str) -> None:
+        del case_, user, role
+        raise ValueError("falha simulada na publicação da resposta final")
+
+    monkeypatch.setattr(doctor_views, "post_doctor_denial_reply", _failed_closure)
+    detail_url = reverse("doctor:case_detail", args=[case.case_id])
+
+    response = client.post(
+        reverse("doctor:case_decide", args=[case.case_id]),
+        _form_payload(
+            {
+                ANGIO_TYPE: ("denied", "sem indicação clínica"),
+                RADIO_TYPE: ("denied", "risco elevado"),
+            }
+        ),
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == detail_url
+    case.refresh_from_db()
+    # Decisão registrada; fechamento falhou sem qualquer efeito.
+    assert case.status == CaseStatus.DOCTOR_DENIED
+    rows = _rows_by_type(case)
+    assert rows[ANGIO_TYPE].doctor_disposition == DoctorDisposition.DENIED
+    assert rows[ANGIO_TYPE].doctor_reason == "sem indicação clínica"
+    assert rows[RADIO_TYPE].doctor_disposition == DoctorDisposition.DENIED
+    assert rows[RADIO_TYPE].doctor_reason == "risco elevado"
+    assert not case.events.filter(
+        event_type=f"CASE_STATUS_{CaseStatus.FINAL_REPLY_POSTED}"
+    ).exists()
+    assert not case.communication_messages.filter(message_type=MessageType.USER).exists()
+    # Mensagem de erro no redirect ao detalhe — nunca 500.
+    body = client.get(detail_url).content.decode()
+    assert "Decisão registrada" in body
+    assert "não pôde ser publicada" in body
 
 
 @pytest.mark.django_db

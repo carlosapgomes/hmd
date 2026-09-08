@@ -27,6 +27,17 @@ outro médico" + redirect ao detalhe — nunca 500 (D4: sem lock de posse; o
 segundo POST perde a corrida no atomic do serviço e é desfeito por inteiro).
 O detalhe pós-decisão (R5) continua read-only — decisões por procedimento,
 ator/data do evento e trilha vêm do presenter estendido.
+
+Fechamento da negativa total (nir-result-closure, slice 001): a decisão de
+negação de TODOS os procedimentos é seguida, no POST do ``case_decide``, da
+publicação automática da resposta final ao NIR (``post_doctor_denial_reply``
+— caso → ``FINAL_REPLY_POSTED`` com a resposta na thread). O serviço do
+change 03 devolve ``None`` e trabalha sobre um ``locked`` re-buscado
+(``select_for_update``), então o ``case`` em memória fica STALE: a view o
+re-lê (``refresh_from_db``) e invoca o fechamento SOMENTE quando o status é
+``DOCTOR_DENIED`` — decisão parcial (``SCHEDULER_REQUESTED``) segue o fluxo
+existente sem fechamento. ``ValueError`` do fechamento → mensagem + redirect
+(nunca 500; o caso permanece ``DOCTOR_DENIED``, visível e operável).
 """
 
 from __future__ import annotations
@@ -47,6 +58,7 @@ from django_fsm import TransitionNotAllowed
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
+from apps.cases.closure import post_doctor_denial_reply
 from apps.cases.models import Case, CaseDocument, CaseStatus
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES, VALID_DOCTOR_SUBTYPES
 from apps.cases.procedures import get_declared_procedure_types, record_doctor_procedure_decisions
@@ -84,6 +96,13 @@ ALREADY_DECIDED_DETAIL_MESSAGE = (
 )
 ALREADY_DECIDED_RACE_MESSAGE = "Caso já decidido por outro médico — sua decisão não foi registrada."
 NO_DECLARED_PROCEDURES_MESSAGE = "Não há procedimentos declarados para este caso — nada a decidir."
+# Fechamento da negativa total (nir-result-closure, slice 001): falha rara
+# entre a decisão e a publicação da resposta final ao NIR — a decisão fica
+# registrada e o caso permanece DOCTOR_DENIED, visível e operável via admin
+# (design D1, risco residual aceito). Mensagem + redirect, nunca 500.
+DENIAL_REPLY_ERROR_MESSAGE = (
+    "Decisão registrada, mas a resposta final ao NIR não pôde ser publicada."
+)
 
 # Perfil do catálogo por tipo (ordem/rotulo/subtipo dos cards da fila).
 _PROFILE_BY_TYPE = {profile.procedure_type: profile for profile in PROCEDURE_PROFILES}
@@ -308,11 +327,16 @@ def case_decide(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     GET: presenter (slice 003) + ``DoctorDecisionForm`` dinâmico — apenas em
     ``AWAITING_DOCTOR``; caso já decidido → redirect ao detalhe com mensagem.
     POST: guard completo ANTES de qualquer escrita; form válido → serviço
-    atômico do change 03 (rows + evento + transição FSM no mesmo atomic) →
-    redirect ao detalhe com flash "decisão registrada". Caso fora de
-    ``AWAITING_DOCTOR`` ou perda da corrida concorrente
-    (``TransitionNotAllowed`` do serviço) → mensagem "já decidido por outro
-    médico" + redirect ao detalhe — HTTP redirect, nunca 500.
+    atômico do change 03 (rows + evento + transição FSM no mesmo atomic) e,
+    para a negativa total, o fechamento automático (resposta final ao NIR na
+    thread, D1) → redirect ao detalhe com flash "decisão registrada". Como o
+    serviço devolve ``None`` e trabalha sobre um ``locked`` re-buscado, o caso
+    em memória fica STALE: a view o re-lê (``refresh_from_db``) e chama
+    ``post_doctor_denial_reply`` somente se o status for ``DOCTOR_DENIED``;
+    decisão parcial → ``SCHEDULER_REQUESTED`` sem fechamento. Caso fora de
+    ``AWAITING_DOCTOR``, perda da corrida concorrente (``TransitionNotAllowed``
+    do serviço) ou falha do fechamento (``ValueError``) → mensagem + redirect
+    ao detalhe — HTTP redirect, nunca 500.
     """
     user = _require_user(request)
     active_role = request.session.get("active_role", "")
@@ -368,6 +392,28 @@ def case_decide(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
                 )
                 messages.error(request, ALREADY_DECIDED_RACE_MESSAGE)
                 return redirect(detail_url)
+            # Fechamento da negativa total (nir-result-closure): o serviço do
+            # change 03 devolve None e trabalha sobre um ``locked`` re-buscado
+            # — o ``case`` em memória fica stale; re-lemos o caso e publicamos
+            # a resposta final SOMENTE quando todos os procedimentos foram
+            # negados (DOCTOR_DENIED). Decisão parcial (≥1 aprovado, em
+            # SCHEDULER_REQUESTED) segue o fluxo existente, sem fechamento.
+            case.refresh_from_db()
+            if case.status == CaseStatus.DOCTOR_DENIED:
+                try:
+                    post_doctor_denial_reply(case, user=user, role=active_role)
+                except ValueError:
+                    # D1 (risco residual aceito): falha rara entre a decisão e
+                    # o fechamento deixa o caso em DOCTOR_DENIED, visível e
+                    # operável via admin — mensagem + redirect, nunca 500.
+                    logger.warning(
+                        "doctor_decide_closure_error user=%s case=%s status=%s",
+                        user.pk,
+                        case.case_id,
+                        case.status,
+                    )
+                    messages.error(request, DENIAL_REPLY_ERROR_MESSAGE)
+                    return redirect(detail_url)
             messages.success(request, DECISION_RECORDED_MESSAGE)
             return redirect(detail_url)
     else:

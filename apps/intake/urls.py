@@ -6,7 +6,9 @@ Incluídas em ``config/urls.py`` sob o prefixo ``/intake/``. A raiz ``/intake/``
 de caso é sempre o UUID interno (nunca o path de storage). As ações de
 revisão do gate (slice 005, D6) são POSTs sob o caso: ``gate/release/``
 (liberar retido → ANONYMIZING com bypass) e ``gate/resubmit/`` (substituir
-documentos e reprocessar), ambas escopadas ao criador.
+documentos e reprocessar), ambas escopadas ao criador. O ack do fechamento
+(slice 003 do nir-result-closure, R2) é POST ``cases/<id>/ack/`` escopado ao
+criador apenas no estado ``FINAL_REPLY_POSTED``.
 """
 
 from django.urls import URLPattern, path
@@ -35,5 +37,12 @@ urlpatterns: list[URLPattern] = [
         "cases/<uuid:case_id>/gate/resubmit/",
         views.gate_resubmit,
         name="gate_resubmit",
+    ),
+    # Confirmação de recebimento da resposta final (nir-result-closure, 003):
+    # POST escopado ao criador no estado FINAL_REPLY_POSTED → CLEANED.
+    path(
+        "cases/<uuid:case_id>/ack/",
+        views.case_ack,
+        name="case_ack",
     ),
 ]

@@ -5,10 +5,29 @@
 {% block content %}
 <div class="row justify-content-center mt-4">
   <div class="col-12 col-lg-10">
-    <div class="d-flex align-items-center justify-content-between mb-3">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
       <h1 class="h3 mb-0">Meus casos</h1>
       <a href="{% url 'intake:home' %}" class="btn btn-primary">Enviar relatório</a>
     </div>
+
+    <!-- Abas ativos/encerrados (nir-result-closure, slice 003, R3): a aba
+         ativa (default, tudo exceto CLEANED) e a encerrados (apenas CLEANED). -->
+    <ul class="nav nav-pills mb-3" role="tablist" aria-label="Filtro pela situação do caso">
+      <li class="nav-item" role="presentation">
+        <a href="{% url 'intake:my_cases' %}?tab=active"
+           class="nav-link{% if current_tab == 'active' %} active{% endif %}"
+           {% if current_tab == 'active' %}aria-current="page"{% endif %}>
+          Ativos{% if active_count %} <span class="badge rounded-pill text-bg-secondary">{{ active_count }}</span>{% endif %}
+        </a>
+      </li>
+      <li class="nav-item" role="presentation">
+        <a href="{% url 'intake:my_cases' %}?tab=closed"
+           class="nav-link{% if current_tab == 'closed' %} active{% endif %}"
+           {% if current_tab == 'closed' %}aria-current="page"{% endif %}>
+          Encerrados{% if closed_count %} <span class="badge rounded-pill text-bg-secondary">{{ closed_count }}</span>{% endif %}
+        </a>
+      </li>
+    </ul>
 
     {% if items %}
     <div class="list-group shadow-sm">
@@ -54,7 +73,11 @@
     {% else %}
     <div class="card shadow-sm">
       <div class="card-body text-muted">
-        Nenhum caso criado por você até agora.
+        {% if current_tab == 'closed' %}
+        Nenhum caso encerrado até agora.
+        {% else %}
+        Nenhum caso ativo no momento.
+        {% endif %}
         <a href="{% url 'intake:home' %}">Envie o primeiro relatório</a>.
       </div>
     </div>

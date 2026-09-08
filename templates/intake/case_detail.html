@@ -60,6 +60,69 @@
       </div>
     </div>
 
+    {% if has_outcome %}
+    <!-- Seção de resultado (nir-result-closure, slice 003, R1): decisões por
+         procedimento + agendamento quando houver + ciência do NIR. -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
+        <h2 class="h5 mb-0">Resultado</h2>
+        <span class="badge rounded-pill text-bg-secondary ms-auto">{{ status_label }}</span>
+      </div>
+      <div class="card-body">
+        <h3 class="h6 text-muted text-uppercase mb-2">Decisões médicas por procedimento</h3>
+        <ul class="list-group list-group-flush mb-3">
+          {% for decision in procedure_decisions %}
+          <li class="list-group-item px-0">
+            <div class="d-flex flex-wrap align-items-center gap-2">
+              <span class="fw-semibold">{{ decision.label }}</span>
+              {% if decision.disposition == 'approved' %}
+              <span class="badge rounded-pill text-bg-success ms-auto">{{ decision.disposition_label }}</span>
+              {% else %}
+              <span class="badge rounded-pill text-bg-danger ms-auto">{{ decision.disposition_label }}</span>
+              {% endif %}
+            </div>
+            {% if decision.reason %}
+            <p class="small text-muted mb-0 mt-1">{{ decision.reason }}</p>
+            {% endif %}
+          </li>
+          {% empty %}
+          <li class="list-group-item px-0 text-muted">Nenhuma decisão registrada.</li>
+          {% endfor %}
+        </ul>
+
+        {% if scheduling.has_scheduling %}
+        <h3 class="h6 text-muted text-uppercase mb-2">Agendamento</h3>
+        <dl class="row mb-2">
+          <dt class="col-sm-3">Unidade</dt>
+          <dd class="col-sm-9">{{ scheduling.unit_label|default:"—" }}</dd>
+          <dt class="col-sm-3">Data/hora</dt>
+          <dd class="col-sm-9">{{ scheduling.scheduled_at|default:"—" }}</dd>
+          <dt class="col-sm-3">Local</dt>
+          <dd class="col-sm-9">{{ scheduling.location|default:"—" }}</dd>
+        </dl>
+        {% if scheduling.denial_reason %}
+        <p class="small text-muted mb-0">
+          <strong>Motivo da negação:</strong> {{ scheduling.denial_reason }}
+        </p>
+        {% endif %}
+        {% endif %}
+      </div>
+      {% if can_ack %}
+      <div class="card-footer bg-white">
+        <p class="small text-muted mb-2">
+          A resposta final deste caso foi publicada. Ao confirmar o recebimento,
+          o caso é <strong>encerrado</strong> e os dados clínicos sensíveis são
+          removidos — a ciência fica registrada na trilha.
+        </p>
+        <form method="post" action="{% url 'intake:case_ack' case.case_id %}" class="d-inline">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-success">Confirmar recebimento</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
     {% if case.manual_review_required %}
       {% if case.status == 'LLM_EXTRACTING' and case.manual_review_reason == 'procedure_divergence' %}
       <div class="card shadow-sm mb-4 border-info">
@@ -192,7 +255,7 @@
           </div>
           <ul class="list-group list-group-flush">
             {% for communication in communications %}
-            <li class="list-group-item">
+            <li class="list-group-item{% if final_reply and communication == final_reply %} border-primary border-2{% endif %}">
               <div class="d-flex justify-content-between align-items-start gap-2">
                 <div>
                   {% if communication.message_type == 'system' %}
@@ -201,6 +264,9 @@
                   <strong>{{ communication.author.display_name|default:"Operador" }}</strong>
                   {% if communication.author_role %}
                   <span class="badge rounded-pill text-bg-light border">{{ communication.author_role }}</span>
+                  {% endif %}
+                  {% if final_reply and communication == final_reply %}
+                  <span class="badge rounded-pill text-bg-primary">Resposta final</span>
                   {% endif %}
                   {% endif %}
                 </div>

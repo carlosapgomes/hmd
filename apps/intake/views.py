@@ -19,6 +19,14 @@ gate no detalhe de um caso retido — liberar avança a ``ANONYMIZING`` com
 POST restritos a caso retido do próprio criador: caso alheio → 404 (escopo
 por criador); estado fora da retenção → 400; lock ativo do worker → 409.
 
+Slice 003 do nir-result-closure (R1–R4): ``case_detail`` ganha a seção de
+resultado quando o caso passou da decisão médica (decisões por procedimento
+com motivo real, dados de agendamento quando houver e resposta final em
+destaque na thread); ``case_ack`` (POST novo) confirma o recebimento no estado
+``FINAL_REPLY_POSTED`` do próprio criador via ``acknowledge_case_receipt``;
+``my_cases`` ganha as abas **ativos** (default, tudo exceto ``CLEANED``) e
+**encerrados** (apenas ``CLEANED``), com ``?tab=`` e fallback seguro.
+
 """
 
 import logging
@@ -30,14 +38,16 @@ from django.core.exceptions import PermissionDenied
 from django.http import FileResponse, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.html import escape
 from django.views.decorators.http import require_POST
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
+from apps.cases.closure import acknowledge_case_receipt
 from apps.cases.events import CaseEventType
 from apps.cases.locks import CaseLockConflictError
-from apps.cases.models import Case, CaseDocument, CaseStatus
+from apps.cases.models import Case, CaseDocument, CaseStatus, DoctorDisposition, SchedulingUnit
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 
 from .forms import IntakeUploadForm
@@ -61,6 +71,33 @@ _EVENT_TYPE_LABELS: dict[str, str] = {
 _PROCEDURE_LABELS_BY_TYPE: dict[str, str] = {
     profile.procedure_type: profile.label for profile in PROCEDURE_PROFILES
 }
+
+# ── Resultado/ciência/encerrados (nir-result-closure, slice 003) ──────────
+
+# Disposições que configuram decisão médica registrada (R1): a seção de
+# resultado existe quando há rows decididas (approved/denied).
+_DECIDED_DISPOSITIONS = frozenset({DoctorDisposition.APPROVED, DoctorDisposition.DENIED})
+# Rótulo legível por disposição/unidade (dados de ``DoctorDisposition`` e
+# ``SchedulingUnit``, mesmas choices dos demais apresentadores).
+_DISPOSITION_LABELS: dict[str, str] = dict(DoctorDisposition.choices)
+_UNIT_LABELS: dict[int, str] = dict(SchedulingUnit.choices)
+# Estados em que a resposta final do fechamento/agendamento já foi publicada
+# na thread (R1): o destaque é a última comunicação autoral.
+_FINAL_REPLY_STATES = frozenset(
+    {
+        CaseStatus.FINAL_REPLY_POSTED,
+        CaseStatus.AWAITING_NIR_ACK,
+        CaseStatus.CLEANING,
+        CaseStatus.CLEANED,
+    }
+)
+# Formato de exibição da data/hora do agendamento (fuso local da aplicação).
+_SCHEDULED_AT_FORMAT = "%d/%m/%Y %H:%M"
+
+# Abas de "meus casos" (R3): ``active`` é a default; ``closed`` lista apenas
+# casos ``CLEANED``. Valor desconhecido de ``?tab=`` cai na default (seguro).
+_MY_CASES_TABS = frozenset({"active", "closed"})
+_DEFAULT_MY_CASES_TAB = "active"
 
 
 def _require_user(request: HttpRequest) -> User:
@@ -105,6 +142,55 @@ def _summarize_payload(payload: dict[str, Any]) -> list[tuple[str, str]]:
     return [(key, _render(value)) for key, value in payload.items()]
 
 
+def _procedure_decisions(case: Case) -> list[dict[str, str]]:
+    """Decisões médicas por procedimento do resultado (R1, D3).
+
+    Itens das rows com disposição registrada (``approved``/``denied``), na
+    ordem canônica do catálogo — label legível + disposição + motivo real. As
+    rows ``CaseProcedure`` com decisões/motivos são preservadas pela limpeza
+    do ack (D2), então o resultado permanece exibível no caso ``CLEANED``.
+    """
+    rows_by_type = {row.procedure_type: row for row in case.procedures.all()}
+    decisions: list[dict[str, str]] = []
+    for procedure_type, label in _PROCEDURE_LABELS_BY_TYPE.items():
+        row = rows_by_type.get(procedure_type)
+        if row is None or row.doctor_disposition not in _DECIDED_DISPOSITIONS:
+            continue
+        disposition = row.doctor_disposition
+        decisions.append(
+            {
+                "label": label,
+                "disposition": disposition,
+                "disposition_label": _DISPOSITION_LABELS.get(disposition, disposition),
+                "reason": row.doctor_reason,
+            }
+        )
+    return decisions
+
+
+def _scheduling_context(case: Case) -> dict[str, object]:
+    """Dados de agendamento do resultado (R1, D3): unidade/data/local.
+
+    Expõe o que existe nos campos ``scheduled_*`` decididos pelo agendador
+    (confirmação: unidade + data/hora local + local; negação: motivo) — o
+    template decide a apresentação por ``has_scheduling``.
+    """
+    scheduled_at = ""
+    if case.scheduled_datetime is not None:
+        scheduled_at = timezone.localtime(case.scheduled_datetime).strftime(_SCHEDULED_AT_FORMAT)
+    unit_label = (
+        _UNIT_LABELS.get(case.scheduled_unit, "") if case.scheduled_unit is not None else ""
+    )
+    denial_reason = case.scheduling_denial_reason
+    return {
+        "unit_label": unit_label,
+        "scheduled_at": scheduled_at,
+        "location": case.scheduled_location,
+        "denial_reason": denial_reason,
+        "has_scheduling": bool(case.scheduled_unit is not None or scheduled_at or denial_reason),
+    }
+
+
 @role_required("nir")
 def intake_home(request: HttpRequest) -> HttpResponse:
     """Home do intake NIR: form de envio do relatório com tipos declarados."""
@@ -140,19 +226,25 @@ def intake_home(request: HttpRequest) -> HttpResponse:
 
 @role_required("nir")
 def my_cases(request: HttpRequest) -> HttpResponse:
-    """Lista "meus casos": apenas os criados pelo NIR logado (R1, sem filtros).
+    """Lista "meus casos" com abas ativos/encerrados (R3, escopo por criador).
 
-    Ordenação ``created_at desc``; cada item leva o caso, o label legível do
-    status, os tipos declarados (labels do catálogo) — badges de
-    retenção/FAILED são decididos no template pelos campos
-    ``manual_review_required``/``status``.
+    A aba **ativos** (default de ``?tab=``, com fallback seguro para valores
+    desconhecidos) lista os casos do criador em tudo exceto ``CLEANED``; a
+    aba **encerrados** lista apenas os ``CLEANED`` — mesmo formato de items,
+    badges e ordenação (``created_at desc``). ``?tab=`` desconhecido/ausente
+    nunca vaza nem quebra: cai em ativos.
     """
     user = _require_user(request)
-    cases = (
-        Case.objects.filter(created_by=user).prefetch_related("procedures").order_by("-created_at")
-    )
+    requested_tab = request.GET.get("tab", _DEFAULT_MY_CASES_TAB)
+    current_tab = requested_tab if requested_tab in _MY_CASES_TABS else _DEFAULT_MY_CASES_TAB
+
+    own_cases = Case.objects.filter(created_by=user)
+    active_cases = own_cases.exclude(status=CaseStatus.CLEANED)
+    closed_cases = own_cases.filter(status=CaseStatus.CLEANED)
+    selected_cases = closed_cases if current_tab == "closed" else active_cases
+
     items = []
-    for case in cases:
+    for case in selected_cases.prefetch_related("procedures").order_by("-created_at"):
         items.append(
             {
                 "case": case,
@@ -161,18 +253,33 @@ def my_cases(request: HttpRequest) -> HttpResponse:
                 "agency_record_number": case.agency_record_number or "—",
             }
         )
-    return render(request, "intake/my_cases.html", {"items": items})
+    return render(
+        request,
+        "intake/my_cases.html",
+        {
+            "items": items,
+            "current_tab": current_tab,
+            "active_count": active_cases.count(),
+            "closed_count": closed_cases.count(),
+        },
+    )
 
 
 @role_required("nir")
 def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
-    """Detalhe do caso do próprio NIR: docs, trilha e comunicações (R2).
+    """Detalhe do caso do próprio NIR: docs, trilha, comunicações e resultado.
 
     O queryset filtra ``created_by=user`` — caso alheio (ou inexistente)
     responde 404 sem vazar informação (D6/D9). Exibe status/timestamps, tipos
     declarados, flag de retenção com motivo, documentos com link de abertura
     (``serve_document``), trilha de eventos (tipo, ator+papel, timestamp,
-    payload resumido) e a thread de comunicações do change 03.
+    payload resumido) e a thread de comunicações do change 03. Quando o caso
+    passou da decisão médica (slice 003, R1/D3), ganha também a seção de
+    resultado: decisões por procedimento (label + disposição + motivo real),
+    dados de agendamento (unidade/data/local quando houver) e a resposta final
+    em destaque na thread — além do botão de ciência apenas no estado
+    ``FINAL_REPLY_POSTED`` (``can_ack``), escopado ao criador pelo próprio
+    queryset.
     """
     user = _require_user(request)
     case = get_object_or_404(
@@ -197,6 +304,14 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
             }
         )
 
+    procedure_decisions = _procedure_decisions(case)
+    # Resposta final em destaque (R1): a última comunicação autoral da thread
+    # quando o fechamento/agendamento já publicou a resposta final. Mensagens
+    # ``system`` (sem autor) nunca são a resposta final.
+    final_reply = None
+    if case.status in _FINAL_REPLY_STATES:
+        final_reply = next((m for m in reversed(communications) if m.author is not None), None)
+
     context = {
         "case": case,
         "status_label": case.get_status_display(),
@@ -204,8 +319,47 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         "procedure_labels": _procedure_labels(_declared_types_from_rows(case)),
         "events": enriched_events,
         "communications": communications,
+        "has_outcome": bool(procedure_decisions),
+        "procedure_decisions": procedure_decisions,
+        "scheduling": _scheduling_context(case),
+        "final_reply": final_reply,
+        "can_ack": case.status == CaseStatus.FINAL_REPLY_POSTED,
     }
     return render(request, "intake/case_detail.html", context)
+
+
+@role_required("nir")
+@require_POST
+def case_ack(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    """Confirma o recebimento da resposta final e encerra o caso (R2/D1).
+
+    POST escopado ao caso do próprio NIR — caso alheio/inexistente → 404
+    (``created_by`` no queryset; sem vazar informação). Delega ao serviço
+    transacional ``acknowledge_case_receipt`` com o papel ativo da sessão:
+    sucesso → flash + redirect ao detalhe (caso ``CLEANED``); estado fora de
+    ``FINAL_REPLY_POSTED`` → mensagem de erro + redirect ao detalhe, nunca 500.
+    """
+    user = _require_user(request)
+    active_role = request.session.get("active_role", "")
+    case = get_object_or_404(
+        Case.objects.only("pk", "case_id", "created_by_id"),
+        case_id=case_id,
+        created_by=user,
+    )
+    detail_url = reverse("intake:case_detail", args=[case.case_id])
+    try:
+        acknowledge_case_receipt(case=case, user=user, role=active_role)
+    except ValueError as exc:
+        logger.warning("case_ack_rejected user=%s case=%s motivo=%s", user.pk, case.case_id, exc)
+        messages.error(request, str(exc))
+        return redirect(detail_url)
+    logger.info("case_ack_ok user=%s case=%s", user.pk, case.case_id)
+    messages.success(
+        request,
+        f"Recebimento confirmado — o caso {case.case_id} foi encerrado e os "
+        "dados sensíveis foram removidos.",
+    )
+    return redirect(detail_url)
 
 
 @role_required("nir")

@@ -27,8 +27,15 @@ contagem apenas para o perfil local) e a decisão é registrada no ADR-0009.
   mudança; é a identidade do admin).
 - ADRs existentes em `docs/adr/` (0003 autenticação dois estágios; 0004 AD
   minikerberos) — o ADR-0009 os emenda.
-- Tests existentes que assumem o gate: buscar `AD_ALLOW_LOCAL_AUTH` em
-  `apps/accounts/tests/` (backends/views) e reescrever para o contrato novo.
+- Tests existentes que assumem o gate: `apps/accounts/tests/test_kerberos_backend.py`
+  (8× `override_settings`; `test_breakglass_superuser_only_and_flag` ~241–305
+  assere "flag False → recusa" — quebra com a remoção e vira o contrato novo) e
+  docstrings em `test_kerberos_backend.py:13` / `test_auth_flow.py:5,43`
+  (mencionam a flag). `README.md` (raiz, ~49–56) também documenta a flag.
+- `config/admin.py` é importado durante a população do app registry (antes de
+  `apps.accounts`): imports de models DEVEM ser lazy (dentro do método ou
+  `apps.get_model`) — mesmo padrão dos inner-imports de
+  `django/contrib/admin/sites.py`.
 
 ## Requisitos verificáveis
 
@@ -43,9 +50,12 @@ contagem apenas para o perfil local) e a decisão é registrada no ADR-0009.
   username bloqueado (`is_login_locked`) responde cedo (200 com form
   re-renderizado + mensagem genérica) **sem** chamar `super().login` (sem
   tentativa de autenticação); (b) POST que falha (resposta 200 do fluxo padrão)
-  cujo username resolve para superuser sem `ad_upn` → `register_failed_login`;
-  (c) POST com sucesso (redirect) → `clear_login_failures`; (d) falhas de
-  outros perfis (com `ad_upn`) nessa rota **não** registram.
+  cujo username resolve para superuser sem `ad_upn` **e com `password`
+  não-vazio** (form inválido sem senha não é falha de credencial) →
+  `register_failed_login` (usar a MESMA normalização de username da view de
+  login — strip/lower — para não desviar dos contadores); (c) POST com sucesso
+  (redirect) → `clear_login_failures`; (d) falhas de outros perfis (com
+  `ad_upn`) nessa rota **não** registram.
 - **R4** `HmdAdminConfig(AdminConfig)` com `default_site`; `INSTALLED_APPS`
   usa o config custom; admin do Django segue funcional (página de login e
   índice renderizam; `admin.site.register` existentes intactos).
@@ -55,7 +65,8 @@ contagem apenas para o perfil local) e a decisão é registrada no ADR-0009.
   2026-09-08), alternativas (segunda identidade no AD; flag default-on;
   break-glass mantido), consequências (superfície de força-bruta no `/admin`
   mitigada pelo anti-lockout estendido; preencher `ad_upn` no superuser o
-  torna AD).
+  torna AD; **o desligamento rápido pós-extinção da flag é fora de banda:
+  `account_status=blocked` no usuário via shell/banco**).
 - **R6** Testes: backend (R1: autentica sem flag; hermético ×3; custo
   constante); admin login (R3: bloqueio cedo sem tocar autenticação — usar
   backend fake ou senha errada + assert de não-chamada via monkeypatch do
@@ -68,7 +79,7 @@ contagem apenas para o perfil local) e a decisão é registrada no ADR-0009.
 | Requisito | Arquivo(s) esperado(s) | Teste/check |
 | --- | --- | --- |
 | R1 | `apps/accounts/backends.py` | `test_local_admin_authenticates_without_flag`, `test_local_backend_hermetic_*` |
-| R2 | `config/settings/{base,dev,test}.py`, `.env.example` | `rg -n "AD_ALLOW_LOCAL_AUTH" config .env.example apps` → vazio |
+| R2 | `config/settings/{base,dev,test}.py`, `.env.example`, `README.md` | `rg -n "AD_ALLOW_LOCAL_AUTH" config .env.example README.md apps` → vazio |
 | R3 | `config/admin.py` | `test_admin_login_locked_refuses_early`, `test_admin_login_counts_local_failures`, `test_admin_login_success_clears`, `test_admin_login_ad_profile_failure_not_counted` |
 | R4 | `config/settings/base.py`, `config/admin.py` | `test_admin_site_is_hmd_subclass`, `test_superuser_local_logs_into_admin` |
 | R5 | `docs/adr/ADR-0009-*.md` | inspeção |
@@ -80,13 +91,14 @@ contagem apenas para o perfil local) e a decisão é registrada no ADR-0009.
 expected_files:
   - apps/accounts/backends.py            # remoção do gate (mínima)
   - apps/accounts/tests/test_local_admin.py
-  - apps/accounts/tests/test_backends.py # ajuste dos testes do gate (se existirem)
-  - apps/accounts/tests/test_login_view.py # idem, se referenciar a flag
+  - apps/accounts/tests/test_kerberos_backend.py  # reescreve testes do gate p/ contrato novo
+  - apps/accounts/tests/test_auth_flow.py         # docstrings da flag
   - config/admin.py                      # HmdAdminSite + HmdAdminConfig (novo)
   - config/settings/base.py              # INSTALLED_APPS + remoção da flag
   - config/settings/dev.py               # remoção da flag
   - config/settings/test.py              # remoção da flag
   - .env.example
+  - README.md                            # seção da flag (~49-56)
   - docs/adr/ADR-0009-admin-identidade-local-por-design.md
 
 out_of_scope:
@@ -113,7 +125,11 @@ out_of_scope:
 
 ## Critérios de aceitação
 
-- [ ] R1–R6 comprovados; `rg AD_ALLOW_LOCAL_AUTH` vazio em código/env (só ADR)
+- [ ] R1–R6 comprovados; `rg AD_ALLOW_LOCAL_AUTH` vazio em código/env/README
+      (só ADR-0009)
 - [ ] Superuser local loga no `/admin` end-to-end sem nenhuma flag definida
-- [ ] Bloqueio do anti-lockout recusa cedo no `/admin` sem tocar autenticação
+- [ ] Bloqueio do anti-lockout recusa cedo no `/admin` sem tocar autenticação;
+      POST sem senha não conta como falha
+- [ ] Purpose da spec `account-access` atualizado pelo parent no archive
+      ("break-glass local controlado" → admin local por design)
 - [ ] Gate parcial do slice verde

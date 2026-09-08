@@ -48,9 +48,17 @@ subtipo — a cobertura operacional de um subtipo sem médico dedicado cai para
 generalistas/admin (plano §2, nota de habilitação). Implementado por guard de
 view (`role_required("doctor", "admin")` + `apps/doctor/access.py::
 can_access_case(user, case)`) e **reforçado no POST de decisão** (nunca só no
-template). Manager fica de fora da fila: perfil de gestão, dashboard no
-change 11 — **decisão pendente de validação do dono** (o plano §6 cita
-manager na re-identificação, mas o §10 não o menciona na fila).
+template).
+
+Manager: **decisão do dono (2026-09-08)** — o papel `manager` sozinho nunca
+acessa filas (dashboard no change 11); o acesso operacional é **composicional
+via multi-role** já implementado no change 01 (papéis acumulados + papel
+ativo na sessão): manager do NIR = `nir+manager`; manager dos médicos =
+`doctor+manager` (fila médica sob papel ativo `doctor`, sujeito a
+`specialties` como qualquer médico); manager do agendamento =
+`scheduler+manager`; chefe/diretor = `nir,doctor,scheduler,manager`; admin do
+sistema = todos. Nenhuma mudança de código: a D2 fecha exatamente esse
+modelo (papel ativo é o único critério de acesso à fila).
 
 ## D3 — Presenter re-identificado como serviço puro + helper recursivo
 

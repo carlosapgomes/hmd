@@ -82,6 +82,17 @@ class DoctorDisposition(models.TextChoices):
     DENIED = "denied", "Negado"
 
 
+class SchedulingUnit(models.IntegerChoices):
+    """Unidade de destino do agendamento (change scheduler-multi-unit, D1).
+
+    Unidade 1 (local) e unidade 2 (internet) — a resposta final ao NIR e as
+    regras de intercorrência (slice 002) diferenciam por unidade.
+    """
+
+    UNIT_1 = 1, "Unidade 1"
+    UNIT_2 = 2, "Unidade 2"
+
+
 # Razão canônica de retenção por divergência declarado × detectado (design
 # D5, slice 004): gravada em ``Case.manual_review_reason`` pelo llm1_service
 # ao reter o caso, verificada pelo despacho do release do intake e usada no
@@ -161,6 +172,29 @@ class Case(FSMModelMixin, models.Model):
     lock_token = models.UUIDField(null=True, blank=True)
     lock_context = models.CharField(max_length=40, blank=True)
     lock_role = models.CharField(max_length=30, blank=True)
+
+    # Agendamento (change scheduler-multi-unit, design D1): dados da decisão
+    # do agendador (confirmação ou negação) persistidos pelos serviços de
+    # apps/scheduler/services.py no MESMO atomic das transições FSM — nunca
+    # escritos direto por views. Todos opcionais (rows existentes não quebram);
+    # ``scheduling_reopen_reason`` nasce aqui e só é consumido pela
+    # intercorrência (slice 002); o histórico completo vive nos eventos.
+    scheduled_unit = models.PositiveSmallIntegerField(
+        choices=SchedulingUnit.choices, null=True, blank=True
+    )
+    # Data/hora aware da confirmação (armazenada em UTC; exibida no fuso local).
+    scheduled_datetime = models.DateTimeField(null=True, blank=True)
+    scheduled_location = models.CharField(max_length=200, blank=True)
+    scheduled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="cases_scheduled",
+    )
+    scheduled_decided_at = models.DateTimeField(null=True, blank=True)
+    scheduling_denial_reason = models.TextField(blank=True)
+    scheduling_reopen_reason = models.TextField(blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

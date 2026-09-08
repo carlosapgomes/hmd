@@ -50,6 +50,10 @@ INSTALLED_APPS = [
     # PromptTemplate (1 ativo por nome via constraint parcial) + seeds
     # idempotentes (28 templates) + montagem dos prompts do caso.
     "apps.llm",
+    # Fila do agendador (change scheduler-multi-unit, slice 001): serviços
+    # transacionais de confirmar/negar o agendamento sobre os campos de D1;
+    # a fila/detalhe/UI do papel scheduler chegam no slice 003.
+    "apps.scheduler",
 ]
 
 # Modelo de usuário customizado (D8) — estendido uma única vez.

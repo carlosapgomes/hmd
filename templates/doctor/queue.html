@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_display_name }} — Fila médica{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+  <div class="col-12 col-lg-10">
+    <h1 class="h3 mb-3">Fila médica</h1>
+
+    <ul class="nav nav-tabs mb-3">
+      <li class="nav-item">
+        <a class="nav-link{% if tab == 'aguardando' %} active{% endif %}"
+           href="{% url 'doctor:queue' %}?tab=aguardando{% if subtype %}&subtype={{ subtype }}{% endif %}">
+          Aguardando decisão
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link{% if tab == 'decididos' %} active{% endif %}"
+           href="{% url 'doctor:queue' %}?tab=decididos{% if subtype %}&subtype={{ subtype }}{% endif %}">
+          Decididos
+        </a>
+      </li>
+    </ul>
+
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+      <form method="get" action="{% url 'doctor:queue' %}" class="d-flex align-items-center gap-2">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <label for="subtype-filter" class="form-label mb-0">Subtipo</label>
+        <select class="form-select form-select-sm w-auto" name="subtype" id="subtype-filter">
+          <option value=""{% if not subtype %} selected{% endif %}>Todas</option>
+          {% for option in subtype_options %}
+          <option value="{{ option }}"{% if subtype == option %} selected{% endif %}>{{ option }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-sm btn-outline-primary">Filtrar</button>
+      </form>
+      <span class="small text-muted">Pendentes por subtipo:</span>
+      {% for option, count in pending_counts.items %}
+      <span class="badge rounded-pill text-bg-light border text-muted"
+            title="Casos aguardando decisão do subtipo {{ option }}">
+        {{ option }}: {{ count }}
+      </span>
+      {% endfor %}
+    </div>
+
+    {% if items %}
+    <div class="list-group shadow-sm">
+      {% for item in items %}
+      <div class="list-group-item py-3">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+          <span class="font-monospace small text-muted">Caso {{ item.case_id }}</span>
+          <span class="badge rounded-pill text-bg-secondary">{{ item.status_label }}</span>
+        </div>
+        <div class="fw-semibold">{{ item.patient_name }}</div>
+        <div class="small text-muted">
+          Nº de ocorrência: <strong>{{ item.agency_record_number }}</strong>
+          <span class="mx-2">·</span>
+          Recebido em {{ item.created_at|date:"d/m/Y H:i" }}
+        </div>
+        {% if item.procedures %}
+        <div class="mt-2 d-flex flex-wrap align-items-center gap-2">
+          {% for procedure in item.procedures %}
+          <span class="small">{{ procedure.label }}</span>
+          <span class="badge rounded-pill text-bg-light border text-muted">{{ procedure.subtype }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="card shadow-sm">
+      <div class="card-body text-muted">
+        {% if tab == 'decididos' %}
+        Nenhum caso decidido até agora.
+        {% else %}
+        Nenhum caso aguardando decisão médica.
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if page_obj.paginator.num_pages > 1 %}
+    <nav class="mt-3" aria-label="Paginação da fila">
+      <ul class="pagination pagination-sm justify-content-center">
+        <li class="page-item{% if not page_obj.has_previous %} disabled{% endif %}">
+          {% if page_obj.has_previous %}
+          <a class="page-link" href="{% url 'doctor:queue' %}?page={{ page_obj.previous_page_number }}{% if filter_qs %}&{{ filter_qs }}{% endif %}">Anterior</a>
+          {% else %}
+          <span class="page-link">Anterior</span>
+          {% endif %}
+        </li>
+        <li class="page-item disabled">
+          <span class="page-link">Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
+        </li>
+        <li class="page-item{% if not page_obj.has_next %} disabled{% endif %}">
+          {% if page_obj.has_next %}
+          <a class="page-link" href="{% url 'doctor:queue' %}?page={{ page_obj.next_page_number }}{% if filter_qs %}&{{ filter_qs }}{% endif %}">Próxima</a>
+          {% else %}
+          <span class="page-link">Próxima</span>
+          {% endif %}
+        </li>
+      </ul>
+    </nav>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

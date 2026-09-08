@@ -25,6 +25,13 @@
       <a class="nav-link px-2" href="{% url 'intake:home' %}">Enviar relatório</a>
     </nav>
     {% endif %}
+    {% if active_role == 'doctor' or active_role == 'admin' %}
+    <!-- Fila médica (doctor-queue-decision, slice 002, R1): visível com papel
+         ativo doctor ou admin -->
+    <nav class="navbar-nav flex-row align-items-center gap-2 ms-3" aria-label="Fila médica">
+      <a class="nav-link px-2" href="{% url 'doctor:queue' %}">Fila médica</a>
+    </nav>
+    {% endif %}
     {% if user.is_authenticated %}
     <!-- Sessão: papel ativo · display name · avatar/perfil · troca de papel · sair -->
     <div class="d-flex align-items-center gap-3 ms-auto">

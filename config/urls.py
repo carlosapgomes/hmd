@@ -13,4 +13,7 @@ urlpatterns: list[URLPattern | URLResolver] = [
     # Intake do NIR (change intake-nir-upload, slice 001): upload do relatório
     # sob /intake/; a raiz / continua home placeholder de apps.accounts.
     path("intake/", include("apps.intake.urls")),
+    # Fila médica (change doctor-queue-decision, slice 002): /doctor/ — fila
+    # por estado com filtro de subtipo (detalhe/decisão nos slices 003/004).
+    path("doctor/", include("apps.doctor.urls")),
 ]

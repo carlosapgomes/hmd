@@ -34,6 +34,9 @@ INSTALLED_APPS = [
     "apps.cases",
     # Intake do NIR (change intake-nir-upload, slice 001).
     "apps.intake",
+    # Fila médica (change doctor-queue-decision, slice 002): fila por estado
+    # com filtro de subtipo sob access control fechado (matriz D2).
+    "apps.doctor",
     # Anonimização (change presidio-anonymization, slice 001): módulo puro de
     # pré-extração determinística; sem models/recognizers neste slice.
     "apps.anonymization",

@@ -57,8 +57,50 @@
         {% else %}
         <p class="text-muted">Nenhum tipo declarado.</p>
         {% endif %}
+
+        {% if can_resubmit %}
+        <!-- Reenvio corrigido (nir-result-closure, slice 004, R4): ação
+             apenas em caso CLEANED do próprio criador — abre o form de um
+             novo caso vinculado; o original permanece encerrado e íntegro. -->
+        <div class="d-flex flex-wrap align-items-center gap-2 border-top pt-3 mt-3">
+          <p class="small text-muted mb-0">
+            Este caso está encerrado. Para reenviá-lo com correções, um
+            <strong>novo caso</strong> é criado e vinculado a este.
+          </p>
+          <a href="{% url 'intake:case_resubmit' case.case_id %}"
+             class="btn btn-sm btn-primary ms-auto">Reenviar corrigido</a>
+        </div>
+        {% endif %}
       </div>
     </div>
+
+    {% if corrections %}
+    <!-- Correções do original (nir-result-closure, slice 004, R4): os novos
+         casos que reenviam este caso, ordenados por criação. -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Reenvios corrigidos deste caso</h2>
+      </div>
+      <ul class="list-group list-group-flush">
+        {% for correction in corrections %}
+        <li class="list-group-item">
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+              <a href="{% url 'intake:case_detail' correction.case_id %}"
+                 class="font-monospace small fw-semibold text-decoration-none">
+                Caso {{ correction.case_id }}
+              </a>
+              <p class="small text-muted mb-0 mt-1">{{ correction.correction_reason }}</p>
+            </div>
+            <span class="small text-muted text-nowrap">
+              {{ correction.created_at|date:"d/m/Y H:i" }}
+            </span>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
 
     {% if has_outcome %}
     <!-- Seção de resultado (nir-result-closure, slice 003, R1): decisões por

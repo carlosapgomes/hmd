@@ -129,6 +129,9 @@ def create_case_with_documents(
     role: str | None,
     files: Iterable[UploadedFile[Any]],
     procedure_types: Iterable[str],
+    corrects_case: Case | None = None,
+    correction_reason: str = "",
+    correction_created_by: User | None = None,
 ) -> Case:
     """Cria atomicamente um caso em NEW com N documentos e tipos declarados (R3).
 
@@ -140,6 +143,11 @@ def create_case_with_documents(
     (inline em dev/teste ou enqueue no cluster pdf — D7, slice 003). Em exceção
     após gravações físicas, remove best-effort os arquivos já escritos (o
     rollback do banco não reverte o filesystem).
+
+    Os kwargs aditivos ``corrects_case``/``correction_reason``/
+    ``correction_created_by`` (design D4) materializam o vínculo de reenvio
+    corrigido — os defaults ``None``/``""`` preservam o comportamento do
+    change 04 (criação pura, sem correção — regressão coberta por teste).
     """
     uploaded_files = list(files)
     declared_types = tuple(procedure_types)
@@ -149,7 +157,12 @@ def create_case_with_documents(
     saved_file_names: list[str] = []
     try:
         with transaction.atomic():
-            case = Case.objects.create(created_by=user)
+            case = Case.objects.create(
+                created_by=user,
+                corrects_case=corrects_case,
+                correction_reason=correction_reason,
+                correction_created_by=correction_created_by,
+            )
             for position, uploaded_file in enumerate(uploaded_files, start=1):
                 document = CaseDocument(
                     case=case,
@@ -400,3 +413,87 @@ def resubmit_case_documents(
         _delete_saved_files_best_effort(old_file_names)
     # Fora da transação (D7): reprocessa inline ou enfileira no cluster pdf.
     enqueue_case_processing(locked)
+
+
+# ── Reenvio corrigido de caso encerrado (nir-result-closure, D4) ──────────
+
+
+def create_corrected_resubmission(
+    *,
+    original_case: Case,
+    user: User,
+    role: str | None,
+    files: Iterable[UploadedFile[Any]],
+    procedure_types: Iterable[str],
+    correction_reason: str,
+) -> Case:
+    """Cria um NOVO caso vinculado a um caso encerrado do criador (R2/D4).
+
+    Reenvio corrigido (semântica ats-web, design D4): de um caso ``CLEANED``
+    do próprio criador, o NIR declara um novo lote de documentos + tipos
+    EXPLÍCITOS (nunca herdados — R3) e um motivo obrigatório; no MESMO
+    ``atomic`` nasce um novo caso em ``NEW`` (pipeline completo) vinculado por
+    ``corrects_case`` com ``correction_reason``/``correction_created_by``,
+    o original ganha ``CASE_MARKED_SUPERSEDED`` (payload com o id do novo) e o
+    novo ganha ``CASE_CORRECTION_CREATED`` (payload com id do original +
+    motivo). O original NÃO muda de status nem de dados.
+
+    Validações ANTES de qualquer criação, na ordem do escopo por criador:
+    motivo não-vazio (strip), criador (``_assert_owned_by`` → ``Http404`` sem
+    vazar informação), estado ``CLEANED``, lote e tipos (fontes únicas
+    existentes — ``_validate_batch``/``_validate_declared_types``). O enqueue
+    do worker pdf do novo caso já acontece dentro do ``create_case_with_documents``
+    (D7); o enqueue em cascata no atomic externo é inofensivo em prod (async
+    pós-commit pelo broker) e, em teste com ``INTAKE_RUN_TASKS_INLINE=False``,
+    é assertado — o comportamento inline é desvio conhecido (design D4).
+
+    Raises:
+        IntakeValidationError: motivo/estado/lote/tipos inválidos (nada muda).
+        Http404: caso não é do criador (escopo por criador, sem vazar informação).
+    """
+    reason = (correction_reason or "").strip()
+    if not reason:
+        raise IntakeValidationError("Informe o motivo do reenvio corrigido.")
+    _assert_owned_by(original_case, user)
+    if original_case.status != CaseStatus.CLEANED:
+        raise IntakeValidationError(
+            "reenvio corrigido disponível apenas para casos encerrados (CLEANED) — "
+            f"estado atual {original_case.status!r}"
+        )
+    uploaded_files = list(files)
+    declared_types = tuple(procedure_types)
+    _validate_batch(uploaded_files)
+    _validate_declared_types(declared_types)
+
+    with transaction.atomic():
+        new_case = create_case_with_documents(
+            user=user,
+            role=role,
+            files=uploaded_files,
+            procedure_types=declared_types,
+            corrects_case=original_case,
+            correction_reason=reason,
+            correction_created_by=user,
+        )
+        actor_type = ActorType.USER if user is not None else ActorType.SYSTEM
+        actor_role = role or ""
+        CaseEvent.objects.create(
+            case=original_case,
+            event_type=CaseEventType.CASE_MARKED_SUPERSEDED,
+            actor_type=actor_type,
+            actor=user,
+            actor_role=actor_role,
+            payload={"corrected_case_id": str(new_case.case_id)},
+        )
+        CaseEvent.objects.create(
+            case=new_case,
+            event_type=CaseEventType.CASE_CORRECTION_CREATED,
+            actor_type=actor_type,
+            actor=user,
+            actor_role=actor_role,
+            payload={
+                "original_case_id": str(original_case.case_id),
+                "correction_reason": reason,
+            },
+        )
+    return new_case

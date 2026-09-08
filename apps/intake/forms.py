@@ -79,3 +79,23 @@ class IntakeUploadForm(forms.Form):
             attrs={"class": "form-check-input"},
         ),
     )
+
+
+class CorrectedResubmissionForm(IntakeUploadForm):
+    """Reenvio corrigido de um caso encerrado (nir-result-closure, D4/R4).
+
+    Mesmo shape do envio do slice 001 (documentos + tipos declarados) com o
+    campo adicional ``correction_reason`` (motivo obrigatório do reenvio). A
+    validação de conteúdo segue nas fontes únicas do serviço
+    (``apps.intake.services.create_corrected_resubmission``) — aqui apenas o
+    valor é coletado, no mesmo espírito do ``IntakeUploadForm``.
+    """
+
+    correction_reason = forms.CharField(
+        label="Motivo do reenvio corrigido",
+        required=False,
+        help_text=("Explique o que motivou o reenvio corrigido (campo obrigatório)."),
+        widget=forms.Textarea(
+            attrs={"class": "form-control", "rows": 3},
+        ),
+    )

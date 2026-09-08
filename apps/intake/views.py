@@ -50,12 +50,13 @@ from apps.cases.locks import CaseLockConflictError
 from apps.cases.models import Case, CaseDocument, CaseStatus, DoctorDisposition, SchedulingUnit
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 
-from .forms import IntakeUploadForm
+from .forms import CorrectedResubmissionForm, IntakeUploadForm
 from .services import (
     PDF_CONTENT_TYPE,
     CaseNotRetainedError,
     IntakeValidationError,
     create_case_with_documents,
+    create_corrected_resubmission,
     release_retained_case,
     resubmit_case_documents,
 )
@@ -312,6 +313,10 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     if case.status in _FINAL_REPLY_STATES:
         final_reply = next((m for m in reversed(communications) if m.author is not None), None)
 
+    # Reenvios corrigidos deste caso (D4/R4): os novos casos que corrigem o
+    # original (reverso ``corrected_by``), ordenados por criação.
+    corrections = list(case.corrected_by.order_by("created_at", "pk"))
+
     context = {
         "case": case,
         "status_label": case.get_status_display(),
@@ -324,6 +329,8 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         "scheduling": _scheduling_context(case),
         "final_reply": final_reply,
         "can_ack": case.status == CaseStatus.FINAL_REPLY_POSTED,
+        "can_resubmit": case.status == CaseStatus.CLEANED,
+        "corrections": corrections,
     }
     return render(request, "intake/case_detail.html", context)
 
@@ -360,6 +367,77 @@ def case_ack(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         "dados sensíveis foram removidos.",
     )
     return redirect(detail_url)
+
+
+@role_required("nir")
+def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    """Form de reenvio corrigido de um caso encerrado do próprio NIR (R4/D4).
+
+    GET/POST escopados ao caso ``CLEANED`` do próprio criador: caso alheio ou
+    inexistente → 404 (``created_by`` no queryset, sem vazar informação); caso
+    do criador fora de ``CLEANED`` → mensagem + redirect ao detalhe, nunca
+    500. O form reúne arquivos + tipos declarados do catálogo + motivo; o POST
+    delega ao serviço transacional ``create_corrected_resubmission`` — sucesso
+    → redirect ao detalhe do NOVO caso com flash; erro de validação (motivo,
+    arquivo ou tipo) re-renderiza o form com o resumo nomeando o problema.
+    """
+    user = _require_user(request)
+    active_role = request.session.get("active_role", "")
+    case = get_object_or_404(
+        Case.objects.only(
+            "pk",
+            "case_id",
+            "created_by",
+            "status",
+            "agency_record_number",
+        ),
+        case_id=case_id,
+        created_by=user,
+    )
+    detail_url = reverse("intake:case_detail", args=[case.case_id])
+    if case.status != CaseStatus.CLEANED:
+        messages.error(
+            request,
+            "Reenvio corrigido disponível apenas para casos encerrados (CLEANED).",
+        )
+        return redirect(detail_url)
+
+    form = CorrectedResubmissionForm()
+    if request.method == "POST":
+        form = CorrectedResubmissionForm(request.POST, request.FILES)
+        if form.is_valid():
+            documents = form.cleaned_data["documents"]
+            procedure_types = form.cleaned_data["procedure_types"]
+            correction_reason = form.cleaned_data["correction_reason"]
+            try:
+                new_case = create_corrected_resubmission(
+                    original_case=case,
+                    user=user,
+                    role=active_role,
+                    files=documents,
+                    procedure_types=procedure_types,
+                    correction_reason=correction_reason,
+                )
+            except ValueError as exc:
+                logger.warning(
+                    "case_resubmit_rejected user=%s case=%s motivo=%s",
+                    user.pk,
+                    case.case_id,
+                    exc,
+                )
+                form.add_error(None, str(exc))
+            else:
+                messages.success(
+                    request,
+                    f"Reenvio corrigido criado — acompanhe o novo caso {new_case.case_id}.",
+                )
+                return redirect(reverse("intake:case_detail", args=[new_case.case_id]))
+
+    return render(
+        request,
+        "intake/corrected_resubmission.html",
+        {"form": form, "case": case},
+    )
 
 
 @role_required("nir")

@@ -93,6 +93,20 @@ class CaseEventType(models.TextChoices):
     CASE_POLICY_EVALUATED = "CASE_POLICY_EVALUATED", "Policy pré-operatória avaliada"
     PRIOR_CASE_LOOKUP = "PRIOR_CASE_LOOKUP", "Consulta a casos anteriores registrada"
 
+    # Reenvio corrigido de caso encerrado (change nir-result-closure, slice
+    # 004, design D4): eventos aditivos gravados pelo serviço
+    # ``apps/intake/services.py::create_corrected_resubmission`` — a
+    # supersedição no ORIGINAL (payload com o id do novo caso) e a correção no
+    # NOVO caso (payload com id do original + motivo).
+    CASE_MARKED_SUPERSEDED = (
+        "CASE_MARKED_SUPERSEDED",
+        "Caso substituído por reenvio corrigido",
+    )
+    CASE_CORRECTION_CREATED = (
+        "CASE_CORRECTION_CREATED",
+        "Reenvio corrigido criado",
+    )
+
 
 def case_status_event_type(state: str) -> str:
     """Resolve o tipo canônico do evento de transição para o estado-alvo.

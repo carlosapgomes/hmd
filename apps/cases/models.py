@@ -196,6 +196,29 @@ class Case(FSMModelMixin, models.Model):
     scheduling_denial_reason = models.TextField(blank=True)
     scheduling_reopen_reason = models.TextField(blank=True)
 
+    # Reenvio corrigido (change nir-result-closure, design D4): um caso
+    # encerrado (``CLEANED``) reenviado com correção gera um NOVO caso
+    # (pipeline completo desde NEW) vinculado ao original por
+    # ``corrects_case``, com o motivo obrigatório e o autor do reenvio.
+    # Escrita exclusiva do serviço ``apps/intake/services.py``
+    # (``create_corrected_resubmission``); o original não muda de status nem
+    # de dados — o reverso ``corrected_by`` lista as correções.
+    corrects_case = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="corrected_by",
+    )
+    correction_reason = models.TextField(blank=True)
+    correction_created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="cases_corrections_created",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

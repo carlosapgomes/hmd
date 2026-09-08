@@ -45,4 +45,11 @@ urlpatterns: list[URLPattern] = [
         views.case_ack,
         name="case_ack",
     ),
+    # Reenvio corrigido de caso encerrado (nir-result-closure, 004, D4): GET
+    # form / POST serviço, escopado ao criador no estado CLEANED → NOVO caso.
+    path(
+        "cases/<uuid:case_id>/resubmit/",
+        views.case_resubmit,
+        name="case_resubmit",
+    ),
 ]

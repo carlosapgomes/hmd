@@ -1,6 +1,7 @@
 """Modelos de conta e acesso do HMD (slice 003).
 
-``Role`` (papéis fixos do sistema) e ``User(AbstractUser)`` customizado com
+``Role`` (papéis fixos do sistema), ``DoctorSpecialty`` (subtipos de médico,
+change doctor-queue-decision) e ``User(AbstractUser)`` customizado com
 multi-role, status de conta e registro profissional opcional par-ou-nada.
 ``AUTH_USER_MODEL`` aponta para ``accounts.User`` (D8).
 """
@@ -39,6 +40,25 @@ class Role(models.Model):
         return self.name
 
 
+class DoctorSpecialty(models.Model):
+    """Subtipo de médico do catálogo (angio/neuro/cardio/radio).
+
+    Conjunto vazio no usuário = generalista (vê qualquer subtipo). O seed
+    vive na data migration ``0003`` com os nomes congelados; a coerência com
+    ``apps.cases.procedure_catalog.VALID_DOCTOR_SUBTYPES`` é garantida por
+    teste de invariante (nunca por import de código vivo na migration).
+    """
+
+    name = models.CharField(max_length=20, unique=True)
+
+    class Meta:
+        verbose_name = "Subtipo de médico"
+        verbose_name_plural = "Subtipos de médico"
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class User(AbstractUser):
     """Usuário customizado com multi-role e status de conta.
 
@@ -48,6 +68,9 @@ class User(AbstractUser):
     """
 
     roles = models.ManyToManyField(Role, related_name="users", blank=True)
+    # Subtipos de médico do usuário (doctor-queue-decision D1): conjunto vazio
+    # = generalista. Atribuição manual no Django admin (sem UI self-service).
+    specialties = models.ManyToManyField(DoctorSpecialty, related_name="users", blank=True)
     account_status = models.CharField(
         max_length=10,
         choices=[

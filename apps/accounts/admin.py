@@ -32,12 +32,12 @@ class UserAdmin(BaseUserAdmin):  # type: ignore[type-arg]
     list_display = ("username", "ad_upn", "account_status", "is_staff")
     list_filter = ("account_status",)
     search_fields = ("username", "ad_upn")
-    filter_horizontal = ("groups", "user_permissions", "roles")
+    filter_horizontal = ("groups", "user_permissions", "roles", "specialties")
     fieldsets = (
         *(BaseUserAdmin.fieldsets or ()),
         (
             "Acesso institucional",
-            {"fields": ("ad_upn", "account_status", "roles")},
+            {"fields": ("ad_upn", "account_status", "roles", "specialties")},
         ),
     )
     add_fieldsets = (
@@ -54,7 +54,10 @@ class UserAdmin(BaseUserAdmin):  # type: ignore[type-arg]
                 ),
             },
         ),
-        ("Acesso institucional", {"fields": ("account_status", "roles")}),
+        (
+            "Acesso institucional",
+            {"fields": ("account_status", "roles", "specialties")},
+        ),
     )
 
     def save_model(

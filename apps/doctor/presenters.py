@@ -1,4 +1,4 @@
-"""Presenter do detalhe do caso médico (doctor-queue-decision, slice 003, R2).
+"""Presenter do detalhe do caso médico (doctor-queue-decision, slices 003/004).
 
 Serviço puro ``build_case_detail_context(case)`` (sem request) que monta o
 dict de contexto a partir dos artefatos persistidos — o template apenas
@@ -15,12 +15,19 @@ ANONIMIZADO (para o LLM2) e o card do médico re-busca o motivo REAL na row
 ``CaseProcedure`` do caso prévio via ``prior_case_id`` (D3 — médico vê dados
 reais).
 
+Slice 004 (R5): o contexto ganha a seção de decisões pós-decisão — cada row
+declarada leva ``reason``/``decided_at``, o ator/data do evento
+``CASE_DOCTOR_DECISIONS_RECORDED`` (``decision_event``) e a trilha de eventos
+do caso (``events``, payloads enxutos — nenhum dado clínico real nos
+payloads da trilha por design D5).
+
 Estruturas do contrato (todas re-identificadas): ``sections`` (por chave do
 schema base — nunca o JSON bruto), ``advisories`` (policy por procedimento com
 ``criterion``/``status``/``severity``/``reason`` + sugestão/agregado do LLM2
 com ``motivos``), ``requirements`` (requisitos gerais acionáveis derivados dos
-alertas informativos), ``prior_cases`` (motivo real) e a flag ``can_decide``
-(estado == AWAITING_DOCTOR).
+alertas informativos), ``prior_cases`` (motivo real), ``declared``
+(disposição atual + motivo/data da decisão) e a flag ``can_decide`` (estado ==
+AWAITING_DOCTOR).
 """
 
 from __future__ import annotations
@@ -28,8 +35,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from django.utils.timezone import localtime
+
 from apps.anonymization.reidentify import reidentify_structure, reidentify_text
-from apps.cases.models import Case, CaseProcedure, CaseStatus, DoctorDisposition
+from apps.cases.events import CaseEventType
+from apps.cases.models import Case, CaseEvent, CaseProcedure, CaseStatus, DoctorDisposition
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.procedures import get_declared_procedure_types
 from apps.pipeline.prior_case import lookup_prior_case_context
@@ -442,16 +452,70 @@ def _build_prior_cases(
     return prior_cases
 
 
+# Rótulo legível por tipo canônico de evento da trilha (R5); o tipo é a
+# chave de fallback quando o evento ainda não tem entrada canônica.
+_EVENT_LABELS: dict[str, str] = {event_type: label for event_type, label in CaseEventType.choices}
+
+# Tamanho máximo do resumo de um valor de payload na trilha (R5).
+_PAYLOAD_VALUE_LIMIT = 160
+
+# Formato de exibição de data/hora do contexto (R5) — o contexto é
+# JSON-serializável: timestamps viram strings formatadas como no prior-case.
+_DATETIME_DISPLAY_FORMAT = "%d/%m/%Y %H:%M"
+
+
+# ── Trilha de eventos (slice 004, R5) ──────────────────────────────────────
+
+
+def _format_datetime(value: datetime | None) -> str:
+    """Data/hora exibível (fuso local da aplicação) ou vazio quando nulo."""
+    if value is None:
+        return ""
+    return localtime(value).strftime(_DATETIME_DISPLAY_FORMAT)
+
+
+def _summarize_payload(payload: object) -> list[tuple[str, str]]:
+    """Resumo exibível do payload do evento: pares chave → valor enxuto.
+
+    Valores aninhados viram sua representação textual truncada — a trilha do
+    detalhe nunca precisa do payload bruto completo (mesmo critério do detalhe
+    do intake).
+    """
+    if not isinstance(payload, dict):
+        return []
+    summaries: list[tuple[str, str]] = []
+    for key, value in payload.items():
+        text = str(value)
+        if len(text) > _PAYLOAD_VALUE_LIMIT:
+            text = f"{text[: _PAYLOAD_VALUE_LIMIT - 3]}..."
+        summaries.append((str(key), text))
+    return summaries
+
+
+def _event_summary(event: CaseEvent) -> dict[str, object]:
+    """Item exibível da trilha: tipo/label, ator (usuário ou sistema) e resumo."""
+    return {
+        "event_type": event.event_type,
+        "label": _EVENT_LABELS.get(event.event_type, event.event_type),
+        "actor_display": event.actor.display_name if event.actor else "Sistema",
+        "actor_role": event.actor_role,
+        "timestamp": _format_datetime(event.timestamp),
+        "payload_summary": _summarize_payload(event.payload),
+    }
+
+
 # ── API pública ────────────────────────────────────────────────────────────
 
 
 def build_case_detail_context(case: Case) -> dict[str, object]:
-    """Contexto re-identificado do detalhe do caso para o médico (puro, R2).
+    """Contexto re-identificado do detalhe do caso para o médico (puro, R2/R5).
 
-    Monta identificação real, tipos declarados com subtipo e disposição atual,
-    sumário e estrutura re-identificados por seção, alertas consultivos da
-    policy por procedimento com a sugestão do LLM2, requisitos gerais
-    acionáveis, prior-case com motivo real, e a flag ``can_decide``. A
+    Monta identificação real, tipos declarados com subtipo e disposição atual
+    (+ motivo/data da decisão nas rows já decididas), sumário e estrutura
+    re-identificados por seção, alertas consultivos da policy por procedimento
+    com a sugestão do LLM2, requisitos gerais acionáveis, prior-case com motivo
+    real, a flag ``can_decide`` (= estado ``AWAITING_DOCTOR``), o evento de
+    decisão (``decision_event``) e a trilha de eventos do caso (``events``). A
     re-identificação usa exclusivamente o mapa do caso (tokens de espaços
     alheios podem sobrar como tokens — sem vazamento). Caso sem artefatos →
     seções vazias.
@@ -483,6 +547,10 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
                 "subtype": profile.doctor_subtipo if profile is not None else "",
                 "disposition": disposition,
                 "disposition_label": _DISPOSITION_LABELS.get(disposition, disposition),
+                # Decisão por row (R5): motivo e data/hora exibível quando a row
+                # já foi decidida; vazios antes da decisão.
+                "reason": row.doctor_reason.strip() if row is not None else "",
+                "decided_at": _format_datetime(row.doctor_decided_at) if row is not None else "",
             }
         )
 
@@ -510,6 +578,15 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
 
     sections = _build_structure_sections(structured)
 
+    # Trilha de eventos do caso (R5): labels canônicos, ator e payload enxuto.
+    events = [_event_summary(event) for event in case.events.select_related("actor")]
+    # Ator/data da decisão: o evento CASE_DOCTOR_DECISIONS_RECORDED mais recente.
+    decision_event: dict[str, object] | None = None
+    for event in reversed(events):
+        if event["event_type"] == CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED:
+            decision_event = event
+            break
+
     return {
         "case_id": str(case.case_id),
         "status_label": case.get_status_display(),
@@ -523,5 +600,7 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
         "requirements": _build_requirements(declared_types, policy_result),
         "aggregate": _build_aggregate(suggestions.get("aggregate")),
         "prior_cases": _build_prior_cases(case, declared_types),
+        "decision_event": decision_event,
+        "events": events,
         "has_structure": any(section["lines"] for section in sections),
     }

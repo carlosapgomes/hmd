@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_display_name }} — Caso {{ case_id }}: decisão médica{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+  <div class="col-12 col-lg-8">
+    <nav aria-label="breadcrumb" class="mb-3">
+      <ol class="breadcrumb mb-0">
+        <li class="breadcrumb-item"><a href="{% url 'doctor:queue' %}">Fila médica</a></li>
+        <li class="breadcrumb-item">
+          <a href="{% url 'doctor:case_detail' case_id %}">Caso {{ case_id }}</a>
+        </li>
+        <li class="breadcrumb-item active" aria-current="page">Decidir</li>
+      </ol>
+    </nav>
+
+    <!-- Identificação do paciente -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
+        <h1 class="h5 mb-0">Decisão médica por procedimento</h1>
+        <span class="badge rounded-pill text-bg-secondary ms-auto">{{ status_label }}</span>
+      </div>
+      <div class="card-body">
+        <dl class="row mb-2">
+          <dt class="col-sm-3">Paciente</dt>
+          <dd class="col-sm-9">{{ identification.patient_name|default:"—" }}</dd>
+          <dt class="col-sm-3">Nº de ocorrência</dt>
+          <dd class="col-sm-9">{{ identification.agency_record_number|default:"—" }}</dd>
+        </dl>
+        <p class="small text-muted mb-0">
+          Informe a decisão por procedimento declarado. A <strong>negativa exige
+          motivo</strong>; a aprovação pode ser registrada sem observações. O
+          registro é único e atômico — a decisão vale para todo o caso.
+        </p>
+      </div>
+    </div>
+
+    <form method="post" action="{% url 'doctor:case_decide' case_id %}">
+      {% csrf_token %}
+
+      {% if form.non_field_errors %}
+      <div class="alert alert-danger" role="alert">
+        <ul class="mb-0">
+          {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+      {% for item in decision_fields %}
+      <div class="card shadow-sm mb-3">
+        <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
+          <h2 class="h6 mb-0">{{ item.label }}</h2>
+          <span class="badge rounded-pill text-bg-light border text-muted">{{ item.subtype }}</span>
+        </div>
+        <div class="card-body">
+          <div class="mb-3">
+            <label for="{{ item.disposition_field.id_for_label }}" class="form-label">Decisão</label>
+            {{ item.disposition_field }}
+            {% if item.disposition_field.errors %}
+            <div class="invalid-feedback d-block">
+              {% for error in item.disposition_field.errors %}{{ error }} {% endfor %}
+            </div>
+            {% endif %}
+          </div>
+          <div class="mb-0">
+            <label for="{{ item.reason_field.id_for_label }}" class="form-label">
+              Motivo <span class="text-muted fw-normal">(obrigatório quando negar)</span>
+            </label>
+            {{ item.reason_field }}
+            {% if item.reason_field.errors %}
+            <div class="invalid-feedback d-block">
+              {% for error in item.reason_field.errors %}{{ error }} {% endfor %}
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% empty %}
+      <div class="alert alert-warning" role="alert">
+        Nenhum procedimento declarado para decidir neste caso.
+      </div>
+      {% endfor %}
+
+      <div class="d-flex flex-wrap gap-2">
+        <button type="submit" class="btn btn-primary">Registrar decisão</button>
+        <a href="{% url 'doctor:case_detail' case_id %}" class="btn btn-outline-secondary">
+          Voltar ao detalhe
+        </a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -34,9 +34,12 @@
           </dd>
         </dl>
         {% if can_decide %}
-        <p class="small text-muted mb-0">
+        <p class="small text-muted mb-2">
           Caso aguardando decisão médica — detalhe consultivo dos artefatos do pipeline.
         </p>
+        <a href="{% url 'doctor:case_decide' case_id %}" class="btn btn-primary btn-sm">
+          Registrar decisão
+        </a>
         {% else %}
         <p class="small text-muted mb-0">
           Caso já decidido — exibição read-only do contexto avaliado.
@@ -66,6 +69,47 @@
         {% endif %}
       </div>
     </div>
+
+    {% if decision_event %}
+    <!-- Decisões registradas (pós-decisão, read-only — R5) -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Decisões registradas</h2>
+      </div>
+      <div class="card-body">
+        <p class="small text-muted">
+          Decisão registrada em
+          <strong>{{ decision_event.timestamp }}</strong>
+          por <strong>{{ decision_event.actor_display }}</strong>
+          {% if decision_event.actor_role %}
+          · papel {{ decision_event.actor_role }}
+          {% endif %}.
+        </p>
+        <ul class="list-group list-group-flush">
+          {% for procedure in declared %}
+          {% if procedure.decided_at %}
+          <li class="list-group-item px-0">
+            <div class="d-flex flex-wrap align-items-center gap-2">
+              <span class="fw-semibold">{{ procedure.label }}</span>
+              {% if procedure.disposition == 'approved' %}
+              <span class="badge rounded-pill text-bg-success">Aprovado</span>
+              {% else %}
+              <span class="badge rounded-pill text-bg-danger">Negado</span>
+              {% endif %}
+              <span class="small text-muted ms-auto">
+                Decidido em {{ procedure.decided_at }}
+              </span>
+            </div>
+            {% if procedure.reason %}
+            <p class="small text-muted mb-0 mt-1">{{ procedure.reason }}</p>
+            {% endif %}
+          </li>
+          {% endif %}
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% endif %}
 
     <!-- Alertas consultivos por procedimento -->
     <div class="card shadow-sm mb-4">
@@ -255,6 +299,39 @@
         <p class="text-muted mb-0">Nenhuma estrutura extraída.</p>
         {% endif %}
       </div>
+    </div>
+
+    <!-- Trilha de eventos do caso -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Trilha de eventos</h2>
+      </div>
+      <ul class="list-group list-group-flush">
+        {% for event in events %}
+        <li class="list-group-item">
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+              <strong>{{ event.label }}</strong>
+              <div class="small text-muted">
+                {{ event.actor_display }}
+                {% if event.actor_role %}· papel {{ event.actor_role }}{% endif %}
+              </div>
+            </div>
+            <span class="small text-muted text-nowrap">{{ event.timestamp }}</span>
+          </div>
+          {% if event.payload_summary %}
+          <dl class="small text-muted row mb-0 mt-1">
+            {% for key, value in event.payload_summary %}
+            <dt class="col-4 col-md-3 text-truncate">{{ key }}</dt>
+            <dd class="col-8 col-md-9 mb-0">{{ value }}</dd>
+            {% endfor %}
+          </dl>
+          {% endif %}
+        </li>
+        {% empty %}
+        <li class="list-group-item text-muted">Sem eventos registrados.</li>
+        {% endfor %}
+      </ul>
     </div>
 
     <!-- Documentos -->

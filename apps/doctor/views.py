@@ -1,4 +1,4 @@
-"""Views da fila e do detalhe do caso médico (doctor-queue-decision, slices 002/003).
+"""Views da fila, do detalhe e da decisão do caso médico (doctor-queue-decision).
 
 Slice 002 (R2–R5, D2/D5): fila única em ``/doctor/`` para papel ativo
 doctor/admin — abas por estado (``aguardando`` default = ``AWAITING_DOCTOR``;
@@ -15,27 +15,47 @@ presenter puro re-identificado (read-only — o formulário/POST de decisão é 
 slice 004) e ``doctor:case_pdf`` serve o PDF original por ``position`` via
 ``FileResponse`` (404 sem documento). Ambas reutilizam o MESMO guard do slice
 002 (papel ativo + ``can_access_case``), sem duplicar o predicado.
+
+Slice 004 (R1–R5, D4/D6): ``doctor:case_decide`` — GET renderiza o form
+dinâmico por procedimento apenas em ``AWAITING_DOCTOR`` (já decidido →
+redirect ao detalhe com mensagem); POST reforça o guard ANTES de qualquer
+escrita, valida e delega ao serviço atômico do change 03
+(``record_doctor_procedure_decisions``) → redirect ao detalhe com flash. A
+submissão concorrente/estado inválido (``TransitionNotAllowed`` do serviço ou
+estado fora de ``AWAITING_DOCTOR``) é traduzida em mensagem "já decidido por
+outro médico" + redirect ao detalhe — nunca 500 (D4: sem lock de posse; o
+segundo POST perde a corrida no atomic do serviço e é desfeito por inteiro).
+O detalhe pós-decisão (R5) continua read-only — decisões por procedimento,
+ator/data do evento e trilha vêm do presenter estendido.
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import cast
 from urllib.parse import urlencode
 
+from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db.models import QuerySet
 from django.http import FileResponse, HttpRequest, HttpResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django_fsm import TransitionNotAllowed
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
 from apps.cases.models import Case, CaseDocument, CaseStatus
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES, VALID_DOCTOR_SUBTYPES
+from apps.cases.procedures import get_declared_procedure_types, record_doctor_procedure_decisions
 
 from .access import DoctorAccess, can_access_case
+from .forms import DoctorDecisionForm
 from .presenters import build_case_detail_context
+
+logger = logging.getLogger(__name__)
 
 # Content-type dos documentos do relatório (D7 — mesmo padrão do intake).
 PDF_CONTENT_TYPE = "application/pdf"
@@ -56,6 +76,14 @@ TAB_STATUSES: dict[str, tuple[CaseStatus, ...]] = {
         CaseStatus.SCHEDULER_REQUESTED,
     ),
 }
+
+# Mensagens de estado da decisão (R2–R4, D4/D6) — texto verificado nos testes.
+DECISION_RECORDED_MESSAGE = "Decisão registrada."
+ALREADY_DECIDED_DETAIL_MESSAGE = (
+    "Este caso já foi decidido — exibindo o detalhe em modo de leitura."
+)
+ALREADY_DECIDED_RACE_MESSAGE = "Caso já decidido por outro médico — sua decisão não foi registrada."
+NO_DECLARED_PROCEDURES_MESSAGE = "Não há procedimentos declarados para este caso — nada a decidir."
 
 # Perfil do catálogo por tipo (ordem/rotulo/subtipo dos cards da fila).
 _PROFILE_BY_TYPE = {profile.procedure_type: profile for profile in PROCEDURE_PROFILES}
@@ -271,3 +299,86 @@ def case_pdf(
             filename=document.original_filename or "documento.pdf",
         ),
     )
+
+
+@role_required("doctor", "admin")
+def case_decide(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    """Decide o caso por procedimento declarado (R1–R4, D4/D6).
+
+    GET: presenter (slice 003) + ``DoctorDecisionForm`` dinâmico — apenas em
+    ``AWAITING_DOCTOR``; caso já decidido → redirect ao detalhe com mensagem.
+    POST: guard completo ANTES de qualquer escrita; form válido → serviço
+    atômico do change 03 (rows + evento + transição FSM no mesmo atomic) →
+    redirect ao detalhe com flash "decisão registrada". Caso fora de
+    ``AWAITING_DOCTOR`` ou perda da corrida concorrente
+    (``TransitionNotAllowed`` do serviço) → mensagem "já decidido por outro
+    médico" + redirect ao detalhe — HTTP redirect, nunca 500.
+    """
+    user = _require_user(request)
+    active_role = request.session.get("active_role", "")
+    case = get_object_or_404(Case, case_id=case_id)
+    # Predicado único de acesso (papel ativo + matriz D2 por subtipo),
+    # reforçado no POST — nunca só no template (R3).
+    if not can_access_case(user, case, active_role=active_role):
+        raise PermissionDenied
+
+    detail_url = reverse("doctor:case_detail", args=[case.case_id])
+
+    if request.method == "POST":
+        if not get_declared_procedure_types(case):
+            # Defensivo (produção não deve chegar aqui: o intake declara >=1
+            # tipo na criação): sem procedimentos declarados não há decisão a
+            # registrar — redirect com mensagem, nunca 500 (R4).
+            logger.warning(
+                "doctor_decide_no_declared_procedures user=%s case=%s",
+                user.pk,
+                case.case_id,
+            )
+            messages.error(request, NO_DECLARED_PROCEDURES_MESSAGE)
+            return redirect(detail_url)
+        if case.status != CaseStatus.AWAITING_DOCTOR:
+            # R4: estado inválido já no início do POST — mensagem + redirect,
+            # sem construir form nem tocar o serviço (sem qualquer escrita).
+            logger.warning(
+                "doctor_decide_wrong_state user=%s case=%s status=%s",
+                user.pk,
+                case.case_id,
+                case.status,
+            )
+            messages.error(request, ALREADY_DECIDED_RACE_MESSAGE)
+            return redirect(detail_url)
+        form = DoctorDecisionForm(request.POST, case=case)
+        if form.is_valid():
+            try:
+                record_doctor_procedure_decisions(
+                    case,
+                    form.decisions(),
+                    user=user,
+                    role=active_role,
+                )
+            except TransitionNotAllowed:
+                # D4: submit concorrente perdeu a corrida no atomic do serviço
+                # (caso saiu de AWAITING_DOCTOR entre a validação e o lock) —
+                # nada foi escrito parcialmente; traduz para mensagem+redirect.
+                logger.warning(
+                    "doctor_decide_race user=%s case=%s status=%s",
+                    user.pk,
+                    case.case_id,
+                    case.status,
+                )
+                messages.error(request, ALREADY_DECIDED_RACE_MESSAGE)
+                return redirect(detail_url)
+            messages.success(request, DECISION_RECORDED_MESSAGE)
+            return redirect(detail_url)
+    else:
+        if case.status != CaseStatus.AWAITING_DOCTOR:
+            # R2: GET de caso já decidido → detalhe read-only com mensagem.
+            messages.info(request, ALREADY_DECIDED_DETAIL_MESSAGE)
+            return redirect(detail_url)
+        form = DoctorDecisionForm(case=case)
+
+    # GET válido ou POST inválido: presenter + form com erros inline.
+    context = build_case_detail_context(case)
+    context["form"] = form
+    context["decision_fields"] = form.procedure_fields()
+    return render(request, "doctor/decide.html", context)

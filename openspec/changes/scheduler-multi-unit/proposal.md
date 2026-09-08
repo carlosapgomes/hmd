@@ -36,12 +36,15 @@ Entregar o **estágio do agendamento** completo (plano §4/§10 roadmap 08):
 `apps/cases` (ou `apps/scheduler/services.py` — ver design); app
 `apps/scheduler` (fila/detalhe/forms/nav); comunicação de resposta ao NIR
 (user message na thread existente — visível ao NIR pelo intake do change 04);
-spec nova `scheduling`.
+**diagnóstico resumido ao agendador (primeira linha do `summary_text`
+re-identificada só na renderização) e PDF do relatório pós-decisão apenas de
+casos processados pelo próprio agendador** (alinhamento ao ats-web — decisão
+do dono 2026-09-08); spec nova `scheduling`.
 
 **Não inclui**: `nir_acknowledge` em diante (ack/cleanup = change 09);
 resposta final de caso **negado pelo médico** (`DOCTOR_DENIED →
-post_final_reply` — change 09); re-identificação de artefatos clínicos para o
-scheduler (ver decisão D3); dashboard/notificações (11); PWA.
+post_final_reply` — change 09); re-identificação dos **demais** artefatos
+clínicos ao agendador (estrutura extraída, policy, sugestão — ver D3); dashboard/notificações (11); PWA.
 
 ## Sucesso
 

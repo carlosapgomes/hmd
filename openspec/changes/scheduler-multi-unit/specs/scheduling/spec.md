@@ -84,10 +84,28 @@ O sistema SHALL permitir desmarcar, por intercorrência, um caso confirmado na u
 
 ### Requirement: Visão do agendador limitada ao necessário
 
-O detalhe do caso para o agendador SHALL exibir apenas a identificação do paciente (nome, data de nascimento, número de ocorrência), os procedimentos com as decisões médicas (incluindo motivos das negativas), os dados de agendamento e a thread de comunicações — sem os artefatos clínicos do pipeline (sumário, estrutura extraída, alertas da policy) nem o PDF do relatório.
+O detalhe do caso para o agendador SHALL exibir apenas a identificação do paciente (nome, data de nascimento, número de ocorrência), o diagnóstico resumido (primeira linha do sumário, re-identificada apenas na renderização), os procedimentos com as decisões médicas (incluindo motivos das negativas), os dados de agendamento e a thread de comunicações — sem os demais artefatos do pipeline (linhas seguintes do sumário, estrutura extraída, alertas da policy, sugestão). O PDF do relatório original SHALL ficar disponível ao agendador somente após a decisão de agendamento, para casos processados por ele mesmo.
 
-#### Scenario: Agendador não vê artefatos clínicos
+#### Scenario: Agendador vê o diagnóstico resumido re-identificado
 
-- **GIVEN** um caso com sumário e alertas da policy persistidos
+- **GIVEN** um caso com `summary_text` de múltiplas linhas contendo pseudônimos e o mapa de pseudônimos do caso
 - **WHEN** o agendador abre o detalhe do agendamento
-- **THEN** identificação e decisões médicas são exibidas e nenhum conteúdo de sumário/estrutura/alerta aparece na página
+- **THEN** apenas a primeira linha do sumário é exibida, já re-identificada (sem tokens), e nenhuma outra linha do sumário aparece na página
+
+#### Scenario: Agendador não vê artefatos clínicos além do permitido
+
+- **GIVEN** um caso com sumário completo, estrutura extraída e alertas da policy persistidos
+- **WHEN** o agendador abre o detalhe do agendamento
+- **THEN** identificação, diagnóstico resumido e decisões médicas são exibidas e nenhum conteúdo de estrutura extraída, alerta da policy ou sugestão aparece na página
+
+#### Scenario: PDF disponível apenas de caso processado pelo próprio agendador
+
+- **GIVEN** um caso confirmado pelo agendador autenticado
+- **WHEN** ele solicita o PDF do caso
+- **THEN** o documento original é servido como PDF
+
+#### Scenario: PDF negado a outro agendador ou a caso reaberto
+
+- **GIVEN** um caso confirmado por outro agendador e um caso reaberto por intercorrência (sem agendador vinculado)
+- **WHEN** o agendador autenticado solicita o PDF de qualquer um deles
+- **THEN** recebe HTTP 404 e nenhum conteúdo do documento é exposto

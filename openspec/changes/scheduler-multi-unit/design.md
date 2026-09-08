@@ -64,17 +64,34 @@ decisão espelha o change 07, onde a UI vive no app do papel):
 
 Respostas de texto são constantes do módulo (dados, não strings espalhadas).
 
-## D3 — O que o scheduler vê (identificação real, artefatos clínicos não)
+## D3 — O que o scheduler vê: alinhado ao ats-web (decisão do dono 2026-09-08)
 
-Plano §6 lista re-identificação para doctor/manager/admin — artefatos
-clínicos. O agendador **precisa** de nome/nascimento/nº de ocorrência para
-agendar o paciente na unidade (mínimo necessário), mas **não** vê sumário
-clínico/estrutura/policy (domínio do médico). Implementação: o detalhe do
-scheduler renderiza apenas identificação + procedimentos aprovados (com
-motivos das negativas, se houver — o agendador liga com a unidade) + dados de
-agendamento; **sem** consumir o presenter médico. **Decisão pendente de
-validação do dono** (registro aqui; o plano não cita scheduler na
-re-identificação — leitura por papel mínimo necessário).
+Recon do ats-web (somente-leitura) confirmou que o scheduler original vê o
+**mínimo necessário** — identificação real + one-liner de "diagnóstico" +
+projeção aprovada — e o dono decidiu **alinhar o HMD a isso**. O detalhe do
+agendador renderiza, portanto:
+
+1. **Identificação real**: `patient_name`, `patient_birth_date`,
+   `agency_record_number`, unidade de origem.
+2. **Diagnóstico resumido**: a **primeira linha não-vazia** de
+   `case.summary_text`, re-identificada **na renderização** com
+   `reidentify_text(case, ...)` (`apps/anonymization/reidentify.py` — a
+   mesma função do presenter médico; equivalente ao one-liner do card do
+   ats-web). Nunca persistida re-identificada; demais linhas do resumo,
+   `structured_data`, `policy_result` e `suggested_action` seguem
+   invisíveis (assert de ausência).
+3. **Decisões médicas por procedimento** (aprovadas **e** negadas, com
+   motivos) + dados de agendamento atuais + thread de comunicações.
+
+**PDF pós-decisão, caso próprio**: `case.pdf_file` (documento original)
+servido por view própria (`FileResponse` + `Cache-Control: no-store` —
+padrão do PDF médico do change 07) SOMENTE quando `scheduled_by ==
+request.user` E status ∈ {`SCHEDULING_CONFIRMED`, `SCHEDULING_DENIED`,
+`FINAL_REPLY_POSTED`, `AWAITING_NIR_ACK`} (semântica do
+`_get_scheduler_processed_case_or_404` do ats-web). Sem link na
+fila/pré-decisão; caso reaberto por intercorrência (`scheduled_by` limpo) →
+404 fail-closed. O PDF é domínio humano (como para o médico): nunca é
+enviado à LLM nem ao pipeline anonimizado.
 
 ## D4 — Fila do agendador
 

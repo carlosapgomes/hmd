@@ -31,6 +31,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.attachments.models import AttachmentStatus, CaseAttachment, ExtractionMethod, PatientMatch
 from apps.cases.models import Case, CaseDocument, CaseProcedure, CaseStatus, DoctorDisposition
 from apps.doctor.presenters import build_case_detail_context
 
@@ -208,6 +209,57 @@ def _make_awaiting_case_with_artifacts(created_by: User) -> Case:
     case.save()
     case.refresh_from_db()
     return case
+
+
+# ── Anexos (slice 004, attachment-processing-ocr): fixtures de cards ───────
+
+# Mapa do ANEXO (namespace estendido do caso, D4): reusa os tokens do caso
+# (``<PESSOA_1>``/``<DATA_1>``) e carrega entidades novas só do anexo
+# (``<PESSOA_2>``/``<CPF_2>``) — o mapa do anexo é auto-suficiente para
+# re-identificar o próprio resumo/evidência.
+_ATTACHMENT_PSEUDONYMS: dict[str, dict[str, str]] = {
+    "<PESSOA_1>": {"value": "MARIA DA SILVA", "entity_type": "PERSON"},
+    "<DATA_1>": {"value": "05/03/1972", "entity_type": "DATE_TIME"},
+    "<PESSOA_2>": {"value": "JOSE DOS SANTOS", "entity_type": "PERSON"},
+    "<CPF_2>": {"value": "999.888.777-66", "entity_type": "CPF"},
+}
+
+_MATCH_SUMMARY = (
+    "Laudo assinado por <PESSOA_2>, paciente <PESSOA_1> nascida em <DATA_1> "
+    "com documento <CPF_2> citado na linha 4."
+)
+_MATCH_EVIDENCE = "Trecho: 'paciente <PESSOA_1>' associado ao <CPF_2> no laudo."
+
+
+def _add_attachment(
+    case: Case,
+    uploaded_by: User,
+    *,
+    filename: str = "laudo-anexo.pdf",
+    status: str = AttachmentStatus.PROCESSED,
+    extraction_method: str = ExtractionMethod.LOCAL_PDF,
+    patient_match: str | None = PatientMatch.MATCH,
+    summary: str = "",
+    evidence: str = "",
+    pseudonym_map: dict[str, dict[str, str]] | None = _ATTACHMENT_PSEUDONYMS,
+) -> CaseAttachment:
+    """Anexo processado/verificado (evidência suplementar do caso)."""
+    attachment = CaseAttachment.objects.create(
+        case=case,
+        content_type="application/pdf",
+        original_filename=filename,
+        size_bytes=1024,
+        uploaded_by=uploaded_by,
+        status=status,
+        extraction_method=extraction_method,
+        patient_match=patient_match,
+        verification_summary=summary,
+        verification_evidence=evidence,
+    )
+    if pseudonym_map is not None:
+        attachment.pseudonym_map = dict(pseudonym_map)
+        attachment.save(update_fields=["pseudonym_map"])
+    return attachment
 
 
 def _collect_strings(value: Any) -> list[str]:
@@ -685,3 +737,242 @@ def test_pdf_forbidden_for_non_doctor_role(
     response = client.get(reverse("doctor:case_pdf", args=[case.case_id, document.position]))
 
     assert response.status_code == 403
+
+
+# ── Anexos na decisão (slice 004, attachment-processing-ocr): R1/R2/R3/R5 ──
+
+
+@pytest.mark.django_db
+class TestAttachmentCards:
+    """slice 004: cards de anexo re-identificados no detalhe médico (D5).
+
+    R1/R5: o presenter expõe a seção ``attachments`` — por anexo, nome,
+    método legível, status, badge e resumo/evidência RE-IDENTIFICADOS com o
+    mapa DO ANEXO (núcleo puro ``reidentify``, sem helper novo); casos sem
+    anexo → chave ausente. R2: mismatch é alerta consultivo — sem nenhuma
+    ação automática (nada de descarte/bloqueio). R3: tokens jamais
+    renderizados.
+    """
+
+    def test_presenter_attachments_reidentified(
+        self,
+        user_factory: Callable[..., User],
+    ) -> None:
+        """R1/R5: card match re-identificado com o mapa do anexo (sem tokens)."""
+        owner = user_factory("dono-card-match", ("nir",))
+        case = _make_awaiting_case_with_artifacts(owner)
+        _add_attachment(
+            case,
+            owner,
+            filename="laudo-card.pdf",
+            summary=_MATCH_SUMMARY,
+            evidence=_MATCH_EVIDENCE,
+        )
+
+        context = cast(dict[str, Any], build_case_detail_context(case))
+
+        assert "attachments" in context
+        cards = context["attachments"]
+        assert len(cards) == 1
+        card = cast(dict[str, Any], cards[0])
+        assert card["original_filename"] == "laudo-card.pdf"
+        assert card["method_label"] == "Local"
+        assert card["status_label"] == "Processado"
+        assert card["badge"] == "match"
+        # Resumo/evidência re-identificados (valores reais, zero tokens).
+        assert card["summary"] == (
+            "Laudo assinado por JOSE DOS SANTOS, paciente MARIA DA SILVA nascida em "
+            "05/03/1972 com documento 999.888.777-66 citado na linha 4."
+        )
+        assert card["evidence"] == (
+            "Trecho: 'paciente MARIA DA SILVA' associado ao 999.888.777-66 no laudo."
+        )
+        # Nenhum token (do caso ou do anexo) sobrevive no contexto.
+        joined = "\n".join(_collect_strings(context))
+        for token in ("<PESSOA_1>", "<PESSOA_2>", "<CPF_2>", "<DATA_1>"):
+            assert token not in joined
+        assert "JOSE DOS SANTOS" in joined
+
+    def test_presenter_no_attachments_absent(
+        self,
+        user_factory: Callable[..., User],
+    ) -> None:
+        """R1: caso sem anexos → chave ``attachments`` ausente no contexto."""
+        owner = user_factory("dono-sem-anexos", ("nir",))
+        case = _make_awaiting_case_with_artifacts(owner)
+
+        context = cast(dict[str, Any], build_case_detail_context(case))
+
+        assert "attachments" not in context
+
+    def test_presenter_attachment_status_without_summary(
+        self,
+        user_factory: Callable[..., User],
+    ) -> None:
+        """R1/R5: anexos pending/failed → card de status, SEM resumo/evidência."""
+        owner = user_factory("dono-status-anexos", ("nir",))
+        case = _make_awaiting_case_with_artifacts(owner)
+        _add_attachment(
+            case,
+            owner,
+            filename="ecg-pendente.jpg",
+            status=AttachmentStatus.PENDING,
+            extraction_method="",
+            patient_match=None,
+        )
+        _add_attachment(
+            case,
+            owner,
+            filename="exame-falhou.jpg",
+            status=AttachmentStatus.FAILED,
+            extraction_method=ExtractionMethod.VISION,
+            patient_match=None,
+        )
+
+        context = cast(dict[str, Any], build_case_detail_context(case))
+        cards = {card["original_filename"]: card for card in context["attachments"]}
+
+        pending_card = cast(dict[str, Any], cards["ecg-pendente.jpg"])
+        assert pending_card["badge"] == "pendente"
+        assert pending_card["status_label"] == "Pendente"
+        assert pending_card["method_label"] == ""
+        assert pending_card["summary"] == ""
+        assert pending_card["evidence"] == ""
+        failed_card = cast(dict[str, Any], cards["exame-falhou.jpg"])
+        assert failed_card["badge"] == "falhou"
+        assert failed_card["status_label"] == "Falhou"
+        assert failed_card["method_label"] == "OCR externo"
+        assert failed_card["summary"] == ""
+        assert failed_card["evidence"] == ""
+
+    def test_detail_card_mismatch_alert_no_action(
+        self,
+        client: Client,
+        nir_user: User,
+        user_factory: Callable[..., User],
+    ) -> None:
+        """R2/R5: mismatch é alerta consultivo (danger + texto fixo), sem ação."""
+        case = _make_awaiting_case_with_artifacts(nir_user)
+        _add_attachment(
+            case,
+            nir_user,
+            filename="laudo-divergente.pdf",
+            patient_match=PatientMatch.MISMATCH,
+            summary=_MATCH_SUMMARY,
+        )
+        doctor = user_factory("medico-mismatch", (DOCTOR_ROLE,))
+        _login(client, doctor, DOCTOR_ROLE)
+
+        response = client.get(reverse("doctor:case_detail", args=[case.case_id]))
+
+        assert response.status_code == 200
+        body = response.content.decode()
+        assert "Anexos" in body
+        assert "laudo-divergente.pdf" in body
+        # Alerta fixo do mismatch e conteúdo re-identificado.
+        assert "Divergência de identificação — avalie o documento" in body
+        assert "JOSE DOS SANTOS" in body
+        # Consultivo: nenhum botão/ação automática de descarte/bloqueio.
+        assert "Descartar" not in body
+        assert "Bloquear" not in body
+        assert 'name="attachment' not in body
+
+    def test_detail_no_tokens_rendered(
+        self,
+        client: Client,
+        nir_user: User,
+        user_factory: Callable[..., User],
+    ) -> None:
+        """R3: página final sem tokens do anexo — valores reais no corpo."""
+        case = _make_awaiting_case_with_artifacts(nir_user)
+        _add_attachment(
+            case,
+            nir_user,
+            filename="laudo-tokens.pdf",
+            summary=_MATCH_SUMMARY,
+            evidence=_MATCH_EVIDENCE,
+        )
+        doctor = user_factory("medico-tokens", (DOCTOR_ROLE,))
+        _login(client, doctor, DOCTOR_ROLE)
+
+        response = client.get(reverse("doctor:case_detail", args=[case.case_id]))
+
+        assert response.status_code == 200
+        body = response.content.decode()
+        # Tokens (do caso e do anexo) jamais renderizados — nem escapados.
+        for token in ("<PESSOA_1>", "<PESSOA_2>", "<CPF_2>", "<DATA_1>"):
+            escaped = token.replace("<", "&lt;").replace(">", "&gt;")
+            assert token not in body
+            assert escaped not in body
+        # Valores reais presentes na página (anexo + artefatos do caso).
+        assert "MARIA DA SILVA" in body
+        assert "JOSE DOS SANTOS" in body
+        assert "999.888.777-66" in body
+        assert "05/03/1972" in body
+
+    def test_detail_without_attachments_no_section(
+        self,
+        client: Client,
+        nir_user: User,
+        user_factory: Callable[..., User],
+    ) -> None:
+        """R5: caso sem anexos → página sem a seção (visualmente idêntica)."""
+        case = _make_awaiting_case_with_artifacts(nir_user)
+        doctor = user_factory("medico-sem-anexos", (DOCTOR_ROLE,))
+        _login(client, doctor, DOCTOR_ROLE)
+
+        response = client.get(reverse("doctor:case_detail", args=[case.case_id]))
+
+        assert response.status_code == 200
+        body = response.content.decode()
+        assert "Anexos" not in body
+
+
+@pytest.mark.django_db
+def test_detail_page_renders_status_and_nonprocessed_badges(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2 (P2 review F2): o card processado exibe o status_label ("Processado")
+    no header; os estados pendente/falhou aparecem na página com suas badges,
+    sem resumo de verificação."""
+    case = _make_awaiting_case_with_artifacts(nir_user)
+    _add_attachment(
+        case,
+        nir_user,
+        filename="laudo-ok.pdf",
+        summary=_MATCH_SUMMARY,
+        evidence=_MATCH_EVIDENCE,
+    )
+    _add_attachment(
+        case,
+        nir_user,
+        filename="ecg-pendente.jpg",
+        status=AttachmentStatus.PENDING,
+        extraction_method="",
+        patient_match=None,
+    )
+    _add_attachment(
+        case,
+        nir_user,
+        filename="exame-falhou.jpg",
+        status=AttachmentStatus.FAILED,
+        extraction_method=ExtractionMethod.VISION,
+        patient_match=None,
+    )
+    doctor = user_factory("medico-status-badges", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    # Status discreto no header de TODOS os cards (inclusive o processado).
+    assert body.count("Processado") == 1
+    assert "Pendente" in body
+    assert "Falhou" in body
+    # Badges de resultado na página.
+    assert "Coincidente" in body
+    # Pendente/falhou sem resumo de verificação (só o processado tem).
+    assert body.count("Laudo assinado por") == 1

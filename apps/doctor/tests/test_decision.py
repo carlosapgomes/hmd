@@ -38,6 +38,7 @@ from django.test import Client
 from django.urls import reverse
 
 from apps.accounts.models import User
+from apps.attachments.models import AttachmentStatus, CaseAttachment, ExtractionMethod, PatientMatch
 from apps.cases.events import CaseEventType
 from apps.cases.models import Case, CaseProcedure, CaseStatus, DoctorDisposition, MessageType
 from apps.cases.procedures import record_doctor_procedure_decisions
@@ -105,6 +106,22 @@ def _form_payload(decisions: Mapping[str, tuple[str, str]]) -> dict[str, str]:
 
 def _rows_by_type(case: Case) -> dict[str, CaseProcedure]:
     return {row.procedure_type: row for row in case.procedures.all()}
+
+
+def _add_mismatch_attachment(case: Case, uploaded_by: User) -> CaseAttachment:
+    """Anexo processado com ``patient_match=mismatch`` (slice 004, R4)."""
+    attachment = CaseAttachment.objects.create(
+        case=case,
+        content_type="application/pdf",
+        original_filename="laudo-divergente.pdf",
+        size_bytes=1024,
+        uploaded_by=uploaded_by,
+        status=AttachmentStatus.PROCESSED,
+        extraction_method=ExtractionMethod.LOCAL_PDF,
+        patient_match=PatientMatch.MISMATCH,
+        verification_summary=("Laudo assinado por outro paciente — divergência de identificação."),
+    )
+    return attachment
 
 
 # ── R1: DoctorDecisionForm ────────────────────────────────────────────────
@@ -700,3 +717,42 @@ def test_submit_without_declared_procedures_redirects_no_500(
     assert response["Location"] == reverse("doctor:case_detail", args=[case.case_id])
     case.refresh_from_db()
     assert case.status == CaseStatus.AWAITING_DOCTOR
+
+
+# ── Slice 004 (attachment-processing-ocr): R4 — mismatch não bloqueia ──────
+
+
+@pytest.mark.django_db
+def test_decide_with_mismatch_attachment_ok(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R4: decisão (POST) em caso com anexo mismatch segue o fluxo normal.
+
+    O alerta consultivo do mismatch nunca bloqueia nem descarta: o fluxo do
+    change 07 (form/serviço/encadeamento) permanece intocado e o anexo segue
+    preservado após a decisão.
+    """
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    attachment = _add_mismatch_attachment(case, nir_user)
+    doctor = user_factory("medico-mismatch-decide", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.post(
+        reverse("doctor:case_decide", args=[case.case_id]),
+        _form_payload({ANGIO_TYPE: ("approved", "")}),
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == reverse("doctor:case_detail", args=[case.case_id])
+    case.refresh_from_db()
+    # Decisão registrada normalmente (≥1 aprovado → SCHEDULER_REQUESTED).
+    assert case.status == CaseStatus.SCHEDULER_REQUESTED
+    row = case.procedures.get(procedure_type=ANGIO_TYPE)
+    assert row.doctor_disposition == DoctorDisposition.APPROVED
+    assert row.doctor_reason == ""
+    # Anexo preservado e intocado (alerta consultivo, sem descarte/bloqueio).
+    attachment.refresh_from_db()
+    assert attachment.status == AttachmentStatus.PROCESSED
+    assert attachment.patient_match == PatientMatch.MISMATCH

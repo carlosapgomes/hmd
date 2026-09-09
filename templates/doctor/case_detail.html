@@ -369,6 +369,58 @@
         </table>
       </div>
     </div>
+
+    {% if attachments %}
+    <!-- Anexos (attachment-processing-ocr, slice 004/D5): cards consultivos —
+         re-identificação na renderização, mismatch é alerta (danger) com texto
+         fixo e NENHUMA ação automática (sem descarte/bloqueio). -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Anexos</h2>
+      </div>
+      <div class="card-body">
+        {% for attachment in attachments %}
+        <div class="card mb-3{% if attachment.badge == 'mismatch' %} border-danger{% endif %}">
+          <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
+            <span class="fw-semibold font-monospace small">{{ attachment.original_filename }}</span>
+            {% if attachment.method_label %}
+            <span class="badge rounded-pill text-bg-light border text-muted">{{ attachment.method_label }}</span>
+            {% endif %}
+            <span class="badge rounded-pill text-bg-light border text-muted">{{ attachment.status_label }}</span>
+            {% if attachment.badge == 'match' %}
+            <span class="badge rounded-pill text-bg-success ms-auto">Coincidente</span>
+            {% elif attachment.badge == 'mismatch' %}
+            <span class="badge rounded-pill text-bg-danger ms-auto">Divergente</span>
+            {% elif attachment.badge == 'unknown' %}
+            <span class="badge rounded-pill text-bg-secondary ms-auto">Desconhecido</span>
+            {% elif attachment.badge == 'processando' %}
+            <span class="badge rounded-pill text-bg-info ms-auto">Processando</span>
+            {% elif attachment.badge == 'falhou' %}
+            <span class="badge rounded-pill text-bg-warning ms-auto">Falhou</span>
+            {% else %}
+            <span class="badge rounded-pill text-bg-secondary ms-auto">Pendente</span>
+            {% endif %}
+          </div>
+          <div class="card-body">
+            {% if attachment.badge == 'mismatch' %}
+            <div class="alert alert-danger py-2 mb-3">
+              Divergência de identificação — avalie o documento
+            </div>
+            {% endif %}
+            {% if attachment.summary %}
+            <p class="mb-1"><strong>Resumo da verificação</strong></p>
+            <p class="mb-2">{{ attachment.summary }}</p>
+            {% endif %}
+            {% if attachment.evidence %}
+            <p class="mb-1"><strong>Evidência</strong></p>
+            <p class="small text-muted mb-0">{{ attachment.evidence }}</p>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

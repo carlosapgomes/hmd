@@ -21,6 +21,14 @@ declarada leva ``reason``/``decided_at``, o ator/data do evento
 do caso (``events``, payloads enxutos — nenhum dado clínico real nos
 payloads da trilha por design D5).
 
+Anexos (attachment-processing-ocr, slice 004/D5): seção aditiva
+``attachments`` — card por anexo com nome/método/status/badge e
+resumo/evidência re-identificados com o mapa DO ANEXO via o núcleo puro
+``reidentify`` (sem helper novo; mapa do anexo auto-suficiente, fallback ao
+mapa do caso apenas defensivo). ``mismatch`` é alerta consultivo (danger +
+texto fixo) — nunca descarta nem bloqueia. Casos sem anexos não ganham a
+chave (template não renderiza a seção).
+
 Estruturas do contrato (todas re-identificadas): ``sections`` (por chave do
 schema base — nunca o JSON bruto), ``advisories`` (policy por procedimento com
 ``criterion``/``status``/``severity``/``reason`` + sugestão/agregado do LLM2
@@ -37,7 +45,8 @@ from typing import Any
 
 from django.utils.timezone import localtime
 
-from apps.anonymization.reidentify import reidentify_structure, reidentify_text
+from apps.anonymization.reidentify import reidentify, reidentify_structure, reidentify_text
+from apps.attachments.models import AttachmentStatus, CaseAttachment, ExtractionMethod, PatientMatch
 from apps.cases.events import CaseEventType
 from apps.cases.models import Case, CaseEvent, CaseProcedure, CaseStatus, DoctorDisposition
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
@@ -504,6 +513,80 @@ def _event_summary(event: CaseEvent) -> dict[str, object]:
     }
 
 
+# ── Anexos (slice 004, attachment-processing-ocr; design D5) ──────────────
+
+# Rótulo legível do método de extração do anexo (R1) — códigos crus jamais
+# exibidos; vazio quando o anexo ainda não definiu método (pendente).
+_ATTACHMENT_METHOD_LABELS: dict[str, str] = {
+    ExtractionMethod.LOCAL_PDF: "Local",
+    ExtractionMethod.VISION: "OCR externo",
+}
+_ATTACHMENT_STATUS_LABELS: dict[str, str] = dict(AttachmentStatus.choices)
+
+
+def _attachment_badge(status: str, patient_match: str | None) -> str:
+    """Badge do card do anexo (R1): match/mismatch/unknown quando processado,
+    senão o estado do processamento (pendente/processando/falhou)."""
+    if status == AttachmentStatus.PROCESSED:
+        # Processado sem resultado válido é inalcançável no fluxo (o slice 003
+        # persiste match/unknown no mesmo atomic) — fallback defensivo "unknown"
+        # em vez do rótulo "pendente" (P2 F1 da review).
+        return patient_match if patient_match in PatientMatch.values else "unknown"
+    if status == AttachmentStatus.PROCESSING:
+        return "processando"
+    if status == AttachmentStatus.FAILED:
+        return "falhou"
+    return "pendente"
+
+
+def _attachment_reidentified_text(
+    text: str,
+    pseudonym_map: object,
+    case: Case,
+) -> str:
+    """Resumo/evidência do anexo re-identificados (R1/D5).
+
+    Usa o núcleo puro ``reidentify(text, pseudonym_map)`` com o mapa DO ANEXO
+    (auto-suficiente — namespace estendido do caso, D4; sem helper novo nem
+    merge de mapas); fallback ao mapa do caso apenas defensivo quando o anexo
+    ainda não carrega o próprio namespace (pré-slices). Texto vazio → vazio.
+    """
+    if not text.strip():
+        return ""
+    attachment_map = pseudonym_map if isinstance(pseudonym_map, dict) else {}
+    if not attachment_map:
+        attachment_map = case.pseudonym_map if isinstance(case.pseudonym_map, dict) else {}
+    return reidentify(text, attachment_map)
+
+
+def _build_attachment_card(attachment: CaseAttachment, case: Case) -> dict[str, object]:
+    """Card exibível de um anexo (R1/D5): nome, método, status, badge e
+    resumo/evidência re-identificados — SOMENTE quando processado (anexos
+    pendentes/processando/falhou não têm resumo, apenas o status)."""
+    status = attachment.status
+    processed = status == AttachmentStatus.PROCESSED
+    return {
+        "original_filename": attachment.original_filename,
+        "method_label": _ATTACHMENT_METHOD_LABELS.get(attachment.extraction_method, ""),
+        "status_label": _ATTACHMENT_STATUS_LABELS.get(status, status),
+        "badge": _attachment_badge(status, attachment.patient_match),
+        "summary": (
+            _attachment_reidentified_text(
+                attachment.verification_summary, attachment.pseudonym_map, case
+            )
+            if processed
+            else ""
+        ),
+        "evidence": (
+            _attachment_reidentified_text(
+                attachment.verification_evidence, attachment.pseudonym_map, case
+            )
+            if processed
+            else ""
+        ),
+    }
+
+
 # ── API pública ────────────────────────────────────────────────────────────
 
 
@@ -587,7 +670,13 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
             decision_event = event
             break
 
-    return {
+    # Cards de anexo (slice 004, D5): seção aditiva — casos sem anexos
+    # permanecem com o contexto do change 07 intacto (chave ausente).
+    attachment_cards = [
+        _build_attachment_card(attachment, case) for attachment in case.attachments.all()
+    ]
+
+    context: dict[str, object] = {
         "case_id": str(case.case_id),
         "status_label": case.get_status_display(),
         "can_decide": case.status == CaseStatus.AWAITING_DOCTOR,
@@ -604,3 +693,6 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
         "events": events,
         "has_structure": any(section["lines"] for section in sections),
     }
+    if attachment_cards:
+        context["attachments"] = attachment_cards
+    return context

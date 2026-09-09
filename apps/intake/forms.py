@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from django import forms
+from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
@@ -66,6 +67,26 @@ class IntakeUploadForm(forms.Form):
             attrs={
                 "multiple": True,
                 "accept": ".pdf,application/pdf",
+                "class": "form-control",
+            }
+        ),
+    )
+    # Anexos de evidência (change attachment-processing-ocr, slice 001, R4):
+    # campo múltiplo em adição aos PDFs do relatório — quem valida é sempre o
+    # serviço (apps/attachments/services.py, fonte única), no mesmo espírito
+    # dos documentos acima.
+    attachments = MultiDocumentField(
+        label="Anexos (opcional)",
+        required=False,
+        help_text=(
+            f"Anexos de evidência (exames/fotos) em jpg, png ou pdf — até "
+            f"{settings.ATTACHMENTS_MAX_COUNT} arquivos de no máximo "
+            f"{settings.ATTACHMENTS_MAX_SIZE_MB} MB cada."
+        ),
+        widget=MultiPdfInput(
+            attrs={
+                "multiple": True,
+                "accept": ".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf",
                 "class": "form-control",
             }
         ),

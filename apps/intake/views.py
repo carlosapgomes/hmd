@@ -203,6 +203,7 @@ def intake_home(request: HttpRequest) -> HttpResponse:
         form = IntakeUploadForm(request.POST, request.FILES)
         if form.is_valid():
             documents = form.cleaned_data["documents"]
+            attachments = form.cleaned_data["attachments"]
             procedure_types = form.cleaned_data["procedure_types"]
             try:
                 case = create_case_with_documents(
@@ -210,6 +211,7 @@ def intake_home(request: HttpRequest) -> HttpResponse:
                     role=active_role,
                     files=documents,
                     procedure_types=procedure_types,
+                    attachments=attachments,
                 )
             except ValueError as exc:
                 logger.warning("intake_upload_rejected user=%s motivo=%s", user.pk, exc)
@@ -289,6 +291,7 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         created_by=user,
     )
     documents = list(case.documents.all())
+    attachments = list(case.attachments.all())
     events = list(case.events.select_related("actor"))
     communications = list(case.communication_messages.select_related("author"))
 
@@ -321,6 +324,7 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         "case": case,
         "status_label": case.get_status_display(),
         "documents": documents,
+        "attachments": attachments,
         "procedure_labels": _procedure_labels(_declared_types_from_rows(case)),
         "events": enriched_events,
         "communications": communications,
@@ -407,6 +411,7 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         form = CorrectedResubmissionForm(request.POST, request.FILES)
         if form.is_valid():
             documents = form.cleaned_data["documents"]
+            attachments = form.cleaned_data["attachments"]
             procedure_types = form.cleaned_data["procedure_types"]
             correction_reason = form.cleaned_data["correction_reason"]
             try:
@@ -417,6 +422,7 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
                     files=documents,
                     procedure_types=procedure_types,
                     correction_reason=correction_reason,
+                    attachments=attachments,
                 )
             except ValueError as exc:
                 logger.warning(

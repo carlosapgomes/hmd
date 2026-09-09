@@ -256,6 +256,39 @@
       </div>
     </div>
 
+    {% if attachments %}
+    <!-- Anexos (attachment-processing-ocr, slice 001, R4): evidências
+         enviadas junto com o relatório — bloco ausente quando não há anexos.
+         Sem conteúdo de verificação (o resultado clínico é do médico). -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Anexos</h2>
+      </div>
+      <div class="table-responsive">
+        <table class="table align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th scope="col">Arquivo</th>
+              <th scope="col">Tamanho</th>
+              <th scope="col">Tipo</th>
+              <th scope="col">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for attachment in attachments %}
+            <tr>
+              <td>{{ attachment.original_filename }}</td>
+              <td>{{ attachment.size_bytes|filesizeformat }}</td>
+              <td class="text-muted">{{ attachment.content_type }}</td>
+              <td>{{ attachment.get_status_display }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
     <div class="row g-4">
       <div class="col-12 col-lg-7">
         <div class="card shadow-sm mb-4">

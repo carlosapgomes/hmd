@@ -54,6 +54,10 @@ INSTALLED_APPS = [
     # transacionais de confirmar/negar o agendamento sobre os campos de D1;
     # a fila/detalhe/UI do papel scheduler chegam no slice 003.
     "apps.scheduler",
+    # Anexos clínicos (change attachment-processing-ocr, slice 001): model
+    # CaseAttachment + validação própria (apps/attachments/services.py); o
+    # worker/extração/verificação chegam nos slices 002/003.
+    "apps.attachments",
 ]
 
 # Modelo de usuário customizado (D8) — estendido uma única vez.
@@ -200,6 +204,22 @@ INTAKE_REGULATION_MIN_TEXT_CHARS = int(os.environ.get("INTAKE_REGULATION_MIN_TEX
 INTAKE_REGULATION_MIN_OPERATIONAL_SECTIONS = int(
     os.environ.get("INTAKE_REGULATION_MIN_OPERATIONAL_SECTIONS", "3")
 )
+
+# Anexos do intake (change attachment-processing-ocr, slice 001, design D2/D7):
+# limites por caso — quantidade máxima de anexos e tamanho máximo por arquivo
+# em MB, além dos content-types aceitos (jpg/png/pdf; defaults 5/10).
+# Consumidos pela fonte única de validação (apps/attachments/services.py)
+# ANTES de qualquer gravação na criação do caso.
+ATTACHMENTS_MAX_COUNT = int(os.environ.get("ATTACHMENTS_MAX_COUNT", "5"))
+ATTACHMENTS_MAX_SIZE_MB = int(os.environ.get("ATTACHMENTS_MAX_SIZE_MB", "10"))
+ATTACHMENTS_ACCEPTED_MIME_TYPES = [
+    mime.strip()
+    for mime in os.environ.get(
+        "ATTACHMENTS_ACCEPTED_MIME_TYPES",
+        "image/jpeg,image/png,application/pdf",
+    ).split(",")
+    if mime.strip()
+]
 
 # Modo de execução do processamento pós-criação do intake (change
 # intake-nir-upload, slice 003, design D2/R4): ``True`` (default em dev/teste)

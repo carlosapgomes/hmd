@@ -20,7 +20,7 @@ arquivos dispara limpeza compensatória best-effort (unlink) — design D7.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
@@ -30,6 +30,8 @@ from django.db import transaction
 from django.http import Http404
 from django.utils import timezone
 
+from apps.attachments.models import CaseAttachment
+from apps.attachments.services import validate_attachments
 from apps.cases.events import CaseEventType
 from apps.cases.locks import CaseLockConflictError
 from apps.cases.models import (
@@ -129,6 +131,7 @@ def create_case_with_documents(
     role: str | None,
     files: Iterable[UploadedFile[Any]],
     procedure_types: Iterable[str],
+    attachments: Sequence[UploadedFile[Any]] = (),
     corrects_case: Case | None = None,
     correction_reason: str = "",
     correction_created_by: User | None = None,
@@ -136,23 +139,32 @@ def create_case_with_documents(
     """Cria atomicamente um caso em NEW com N documentos e tipos declarados (R3).
 
     Valida tudo antes de persistir (contagem, PDF-only por arquivo, tipos do
-    catálogo). No sucesso, numa transação única: ``Case(NEW, created_by=user)``,
-    as rows ``CaseDocument`` (position 1..N, arquivos gravados no storage) e a
-    declaração via ``set_declared_procedures`` (com evento na trilha). Fora da
-    transação, o processamento é disparado via ``enqueue_case_processing``
-    (inline em dev/teste ou enqueue no cluster pdf — D7, slice 003). Em exceção
-    após gravações físicas, remove best-effort os arquivos já escritos (o
-    rollback do banco não reverte o filesystem).
+    catálogo e — quando houver — os anexos via ``validate_attachments``, fonte
+    única nova de apps/attachments). No sucesso, numa transação única:
+    ``Case(NEW, created_by=user)``, as rows ``CaseDocument`` (position 1..N,
+    arquivos gravados no storage), as rows ``CaseAttachment`` dos anexos
+    (arquivos gravados antes do INSERT no path seguro por UUID, com
+    ``uploaded_by=user`` e ``status=pending``) e a declaração via
+    ``set_declared_procedures`` (com evento na trilha). Fora da transação, o
+    processamento é disparado via ``enqueue_case_processing`` (inline em
+    dev/teste ou enqueue no cluster pdf — D7, slice 003). Em exceção após
+    gravações físicas, remove best-effort os arquivos já escritos (o rollback
+    do banco não reverte o filesystem).
 
-    Os kwargs aditivos ``corrects_case``/``correction_reason``/
-    ``correction_created_by`` (design D4) materializam o vínculo de reenvio
-    corrigido — os defaults ``None``/``""`` preservam o comportamento do
-    change 04 (criação pura, sem correção — regressão coberta por teste).
+    Os kwargs aditivos ``attachments`` (design D2) e ``corrects_case``/
+    ``correction_reason``/``correction_created_by`` (design D4) materializam,
+    respectivamente, os anexos de evidência do caso e o vínculo de reenvio
+    corrigido — os defaults ``()``/``None``/``""`` preservam o comportamento
+    do change 04 (criação pura — regressão coberta por teste).
     """
     uploaded_files = list(files)
     declared_types = tuple(procedure_types)
+    attachment_files = list(attachments)
     _validate_batch(uploaded_files)
     _validate_declared_types(declared_types)
+    # Anexo inválido rejeita TUDO antes de qualquer gravação (nem caso, nem
+    # documentos) — validação pura, sem efeito (R2/D2).
+    validate_attachments(attachment_files)
 
     saved_file_names: list[str] = []
     try:
@@ -179,6 +191,24 @@ def create_case_with_documents(
                 if stored_name:
                     saved_file_names.append(stored_name)
                 document.save()
+            for uploaded_attachment in attachment_files:
+                attachment = CaseAttachment(
+                    case=case,
+                    original_filename=uploaded_attachment.name or "",
+                    content_type=(uploaded_attachment.content_type or "").lower(),
+                    size_bytes=uploaded_attachment.size or 0,
+                    uploaded_by=user,
+                )
+                # Arquivo gravado antes do INSERT (mesmo padrão dos docs): o
+                # upload_to gera o UUID no callable e a limpeza compensatória
+                # abaixo cobre os arquivos já escritos se algo falhar depois.
+                attachment.file.save(
+                    uploaded_attachment.name or "", uploaded_attachment, save=False
+                )
+                stored_name = attachment.file.name
+                if stored_name:
+                    saved_file_names.append(stored_name)
+                attachment.save()
             set_declared_procedures(case, declared_types, user=user, role=role)
     except BaseException:
         _delete_saved_files_best_effort(saved_file_names)
@@ -426,6 +456,7 @@ def create_corrected_resubmission(
     files: Iterable[UploadedFile[Any]],
     procedure_types: Iterable[str],
     correction_reason: str,
+    attachments: Sequence[UploadedFile[Any]] = (),
 ) -> Case:
     """Cria um NOVO caso vinculado a um caso encerrado do criador (R2/D4).
 
@@ -441,14 +472,18 @@ def create_corrected_resubmission(
     Validações ANTES de qualquer criação, na ordem do escopo por criador:
     motivo não-vazio (strip), criador (``_assert_owned_by`` → ``Http404`` sem
     vazar informação), estado ``CLEANED``, lote e tipos (fontes únicas
-    existentes — ``_validate_batch``/``_validate_declared_types``). O enqueue
-    do worker pdf do novo caso já acontece dentro do ``create_case_with_documents``
-    (D7); o enqueue em cascata no atomic externo é inofensivo em prod (async
+    existentes — ``_validate_batch``/``_validate_declared_types``). Anexos
+    são um kwarg ADITIVO (design D2) repassado a ``create_case_with_documents``,
+    que os valida (fonte única) antes de criar qualquer coisa — anexo
+    inválido rejeita o reenvio inteiro sem efeito. O enqueue do worker pdf do
+    novo caso já acontece dentro do ``create_case_with_documents`` (D7); o
+    enqueue em cascata no atomic externo é inofensivo em prod (async
     pós-commit pelo broker) e, em teste com ``INTAKE_RUN_TASKS_INLINE=False``,
     é assertado — o comportamento inline é desvio conhecido (design D4).
 
     Raises:
         IntakeValidationError: motivo/estado/lote/tipos inválidos (nada muda).
+        AttachmentValidationError: anexo inválido (nada muda).
         Http404: caso não é do criador (escopo por criador, sem vazar informação).
     """
     reason = (correction_reason or "").strip()
@@ -471,6 +506,7 @@ def create_corrected_resubmission(
             role=role,
             files=uploaded_files,
             procedure_types=declared_types,
+            attachments=attachments,
             corrects_case=original_case,
             correction_reason=reason,
             correction_created_by=user,

@@ -20,6 +20,7 @@ enxuto do ats-web, sem supressão/fase):
   (`case_attachments/<case_id>/<uuid4-hex>.<ext>` — UUID gerado no path
   callable, padrão `case_document_upload_path`: nome original NUNCA no path,
   arquivo gravado **antes do INSERT** com compensação best-effort do 04);
+  `original_filename`, `content_type`, `size_bytes`; `uploaded_by` FK User `PROTECT`; `created_at`;
   `content_type`, `size_bytes`; `uploaded_by` FK User `PROTECT`; `created_at`;
 - processamento: `status` (`pending|processing|processed|failed`, default
   `pending`), `extraction_method` (`local_pdf|vision`), `extracted_text`

@@ -51,6 +51,19 @@
             <div class="form-text">{{ form.documents.help_text }}</div>
           </div>
 
+          <div class="mb-4">
+            <label for="{{ form.attachments.id_for_label }}" class="form-label">
+              {{ form.attachments.label }}
+            </label>
+            {{ form.attachments }}
+            {% if form.attachments.errors %}
+            <div class="invalid-feedback d-block">
+              {% for error in form.attachments.errors %}{{ error }} {% endfor %}
+            </div>
+            {% endif %}
+            <div class="form-text">{{ form.attachments.help_text }}</div>
+          </div>
+
           <fieldset class="mb-4">
             <legend class="form-label mb-2">{{ form.procedure_types.label }}</legend>
             <div class="row">

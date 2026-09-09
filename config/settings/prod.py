@@ -72,6 +72,18 @@ LLM_RUN_TASKS_INLINE = os.environ.get("LLM_RUN_TASKS_INLINE", "false").lower() i
     "yes",
 )
 
+# Anexos (change attachment-processing-ocr, slice 002, P1 review): em
+# produção o default é enfileirar no cluster attachments — nunca rodar
+# inline sem intenção explícita (o envio de imagem a OCR externo acontece
+# apenas no worker-attachments; o processo que conclui a anonimização não
+# transcreve nada inline). Só roda inline se a variável estiver explicitamente
+# ligada — mesma convenção fail-closed dos três flags acima.
+ATTACHMENTS_RUN_TASKS_INLINE = os.environ.get("ATTACHMENTS_RUN_TASKS_INLINE", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # Segurança
 CSRF_COOKIE_SECURE = True
 SESSION_COOKIE_SECURE = True

@@ -67,3 +67,9 @@ ANONYMIZATION_RUN_TASKS_INLINE = True
 # cadeia (anonymization transaction=True) que não exercem o pipeline sobrescrevem
 # para False (o enqueue vira no-op async).
 LLM_RUN_TASKS_INLINE = True
+
+# Worker de anexos roda inline na suíte (change attachment-processing-ocr,
+# slice 002, design D3): o signal do CASE_ANONYMIZATION_COMPLETED executa a
+# task sincronamente — determinístico independente de um .env local com
+# ATTACHMENTS_RUN_TASKS_INLINE=false (mesmo padrão dos três flags acima).
+ATTACHMENTS_RUN_TASKS_INLINE = True

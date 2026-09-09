@@ -107,6 +107,25 @@ class CaseEventType(models.TextChoices):
         "Reenvio corrigido criado",
     )
 
+    # Anexos clínicos (change attachment-processing-ocr, design D1/D3): os
+    # três canônicos do anexo nascem AQUI — ``…EXTERNAL_OCR_DISPATCHED``
+    # (auditoria de PII enviada a OCR externo: payload filename+método,
+    # gravado ANTES do envio), ``…FAILED`` (motivo da falha de uma etapa) e
+    # ``…PROCESSED`` (definido neste change; gravado apenas pelo slice 003,
+    # que fecha o anexo como ``processed`` com o resultado da verificação).
+    CASE_ATTACHMENT_EXTERNAL_OCR_DISPATCHED = (
+        "CASE_ATTACHMENT_EXTERNAL_OCR_DISPATCHED",
+        "Anexo enviado a OCR externo",
+    )
+    CASE_ATTACHMENT_PROCESSED = (
+        "CASE_ATTACHMENT_PROCESSED",
+        "Anexo processado e verificado",
+    )
+    CASE_ATTACHMENT_FAILED = (
+        "CASE_ATTACHMENT_FAILED",
+        "Falha no processamento do anexo",
+    )
+
 
 def case_status_event_type(state: str) -> str:
     """Resolve o tipo canônico do evento de transição para o estado-alvo.

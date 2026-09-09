@@ -42,6 +42,7 @@ services:
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
       LLM_RUN_TASKS_INLINE: "false"
+      ATTACHMENTS_RUN_TASKS_INLINE: "false"
     depends_on:
       db:
         condition: service_healthy
@@ -96,6 +97,7 @@ services:
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
       LLM_RUN_TASKS_INLINE: "false"
+      ATTACHMENTS_RUN_TASKS_INLINE: "false"
     depends_on:
       db:
         condition: service_healthy
@@ -123,6 +125,37 @@ services:
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
       LLM_RUN_TASKS_INLINE: "false"
+      ATTACHMENTS_RUN_TASKS_INLINE: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - hmd-net
+
+  # Worker do cluster attachments do django-q2 (change
+  # attachment-processing-ocr, slice 002/D7): OCR híbrido dos anexos —
+  # extração local (PyMuPDF) e transcrição externa (VISION_MODEL) num
+  # processo dedicado usando a imagem pronta. Dispara via signal ao
+  # CASE_ANONYMIZATION_COMPLETED (paralelo ao cluster llm, nunca inline
+  # no worker de anonimização).
+  worker-attachments:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hmd-dev:app
+    command: python manage.py qcluster --settings=config.settings.dev
+    volumes:
+      - media_data:/app/media
+    environment:
+      DATABASE_URL: postgres://hmd:hmd_dev@db:5432/hmd_dev
+      DJANGO_SECRET_KEY: dev-secret-key-not-for-production
+      DJANGO_DEBUG: "true"
+      Q_CLUSTER_NAME: attachments
+      VISION_MODEL: ${VISION_MODEL:-}
+      INTAKE_RUN_TASKS_INLINE: "false"
+      ANONYMIZATION_RUN_TASKS_INLINE: "false"
+      LLM_RUN_TASKS_INLINE: "false"
+      ATTACHMENTS_RUN_TASKS_INLINE: "false"
     depends_on:
       db:
         condition: service_healthy

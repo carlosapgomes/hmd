@@ -33,8 +33,10 @@ from django.conf import settings
 from django.utils.module_loading import import_string
 from openai import OpenAI
 
-# Kinds estáveis de erro do pipeline LLM (R2/D1) — semântica do slice; a
-# mensagem nunca carrega payload/PII.
+# Kinds estáveis de erro do cliente LLM (R2/D1) — semântica do slice; a
+# mensagem nunca carrega payload/PII. ``config`` é aditiva do OCR de anexos
+# (change attachment-processing-ocr, slice 002, D3): configuração ausente do
+# domínio de visão (``VISION_MODEL``) — falha fechado ANTES de qualquer envio.
 LlmErrorKind = Literal[
     "auth",
     "rate_limit",
@@ -42,6 +44,7 @@ LlmErrorKind = Literal[
     "timeout",
     "invalid_response",
     "other",
+    "config",
 ]
 
 

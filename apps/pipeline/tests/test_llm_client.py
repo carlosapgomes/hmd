@@ -2,7 +2,7 @@
 
 Cobre o contrato do slice **sem rede**:
 
-- R2/R3: ``LlmError(kind)`` com os seis kinds; mapeamento de cada kind pelos
+- R2/R3: ``LlmError(kind)`` com os kinds estáveis; mapeamento de cada kind pelos
   erros REAIS da SDK openai 3.8.0 (instâncias reais de ``AuthenticationError``/
   ``PermissionDeniedError``/``RateLimitError``/``APITimeoutError``/
   ``APIConnectionError``/``APIStatusError`` com objetos de transporte stub —

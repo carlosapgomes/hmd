@@ -220,6 +220,20 @@ ATTACHMENTS_ACCEPTED_MIME_TYPES = [
     ).split(",")
     if mime.strip()
 ]
+# Modo de execução do worker de anexos (change attachment-processing-ocr,
+# slice 002, design D3/D7): ``True`` (default em dev/teste) executa a task
+# sincronamente quando o signal de anonimização dispara — testes
+# determinísticos, sem worker; ``False`` enfileira no cluster ``attachments``
+# do django-q2 (produção/compose com o serviço worker-attachments).
+ATTACHMENTS_RUN_TASKS_INLINE = os.environ.get("ATTACHMENTS_RUN_TASKS_INLINE", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+# Teto de páginas rasterizadas por anexo PDF-imagem para o OCR externo
+# (design D7, default 10): excedente → anexo ``failed`` com motivo claro — o
+# envio externo em lote nunca é cego.
+ATTACHMENTS_VISION_MAX_PAGES = int(os.environ.get("ATTACHMENTS_VISION_MAX_PAGES", "10"))
 
 # Modo de execução do processamento pós-criação do intake (change
 # intake-nir-upload, slice 003, design D2/R4): ``True`` (default em dev/teste)
@@ -277,6 +291,12 @@ OPENROUTER_BASE_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.
 LLM1_MODEL = os.environ.get("LLM1_MODEL", "")
 LLM2_MODEL = os.environ.get("LLM2_MODEL", "")
 LLM_TIMEOUT_SECONDS = int(os.environ.get("LLM_TIMEOUT_SECONDS", "120"))
+# Modelo OpenAI-compatível da OpenRouter para OCR de imagem/PDF-imagem dos
+# anexos (change attachment-processing-ocr, slice 002, design D3/D7): env SEM
+# default ("" — fail-closed no uso: sem modelo configurado a transcrição
+# falha com LlmError antes de qualquer envio). Escolha por benchmark
+# operacional, como LLM1_MODEL/LLM2_MODEL.
+VISION_MODEL = os.environ.get("VISION_MODEL", "")
 # Factory injetável do cliente real (D1, padrão KERBEROS_CLIENT_FACTORY do
 # change 02): dotted-path resolvido em tempo de chamada por
 # ``apps.pipeline.llm``. Testes sobrescrevem com fakes via
@@ -311,7 +331,10 @@ LLM_RUN_TASKS_INLINE = os.environ.get("LLM_RUN_TASKS_INLINE", "true").lower() in
 # (slice 004 — engine Presidio/spaCy no worker, 2 workers/timeout 300s/
 # retry 360s, separado do ``pdf`` para o modelo não competir com a extração)
 # por ``Q_CLUSTER_NAME=anonymization``; o cluster ``llm`` (slice 006 — pipeline
-# LLM1/LLM2, 1 worker/timeout 900s/retry 960s) por ``Q_CLUSTER_NAME=llm``.
+# LLM1/LLM2, 1 worker/timeout 900s/retry 960s) por ``Q_CLUSTER_NAME=llm``; o
+# cluster ``attachments`` (slice 002 do change 10 — OCR externo por página com
+# teto de páginas, 2 workers/timeout 900s/retry 960s) por
+# ``Q_CLUSTER_NAME=attachments`` (produção: mesmo worker do worker-llm).
 Q_CLUSTER = {
     "name": "hmd",
     "orm": "default",
@@ -332,6 +355,15 @@ Q_CLUSTER = {
         },
         "llm": {
             "workers": 1,
+            "timeout": 900,
+            "retry": 960,
+        },
+        # Anexos (slice 002 — OCR externo com a SDK da OpenRouter): chamadas
+        # por página com timeout LLM_TIMEOUT_SECONDS e teto de páginas por
+        # anexo; tempo/retry generosos espelhando o cluster llm (produção =
+        # mesmo worker do worker-llm com Q_CLUSTER_NAME=attachments).
+        "attachments": {
+            "workers": 2,
             "timeout": 900,
             "retry": 960,
         },

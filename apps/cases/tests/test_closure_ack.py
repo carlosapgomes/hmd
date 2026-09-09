@@ -16,6 +16,13 @@ a janela mede a DECISÃO da row prévia contra o ``created_at`` do caso novo,
 não a idade da limpeza). Documento de caso limpo → 404 na rota
 ``intake:serve_document`` (R6, cenário da spec).
 
+A ciência também remove os anexos (change attachment-processing-ocr, slice 005):
+rows ``CaseAttachment`` (textos/mapas dos anexos inclusos) e arquivos físicos
+somem no MESMO atomic/``on_commit`` da limpeza dos documentos; anexos de OUTRO
+caso ficam intactos; caso sem anexos segue inalterado; a trilha é append-only —
+os eventos ``CASE_ATTACHMENT_*`` do processamento do passado permanecem e só os
+3 eventos de fechamento se somam.
+
 Storage em memória (``InMemoryStorage``): mesmo padrão do
 ``apps/intake/tests/conftest.py`` — uploads nunca tocam o ``MEDIA_ROOT``.
 """
@@ -34,11 +41,19 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.attachments.models import (
+    AttachmentStatus,
+    CaseAttachment,
+    ExtractionMethod,
+    PatientMatch,
+)
 from apps.cases.closure import acknowledge_case_receipt, post_doctor_denial_reply
-from apps.cases.events import case_status_event_type
+from apps.cases.events import CaseEventType, case_status_event_type
 from apps.cases.models import (
+    ActorType,
     Case,
     CaseDocument,
+    CaseEvent,
     CaseProcedure,
     CaseStatus,
     DoctorDisposition,
@@ -238,6 +253,45 @@ def _confirmed_final_case(
     case.refresh_from_db()
     assert case.status == CaseStatus.FINAL_REPLY_POSTED
     return case
+
+
+def _attach_processed_attachments(
+    case: Case,
+    uploaded_by: User,
+    *filenames: str,
+) -> list[CaseAttachment]:
+    """Anexa 1–N anexos processados ao caso (estado pós slices 002/003).
+
+    Row com arquivo gravado (storage em memória), texto extraído/anonimizado,
+    mapa de pseudônimos e verificação — o conteúdo do anexo é PHI derivada e o
+    alvo da remoção da ciência do NIR.
+    """
+    attachments: list[CaseAttachment] = []
+    for position, filename in enumerate(filenames or ("anexo-ecg.jpg",), start=1):
+        uploaded = SimpleUploadedFile(
+            filename,
+            b"anexo clinico fake (conteudo nao lido neste slice)",
+            content_type="image/jpeg",
+        )
+        attachment = CaseAttachment(
+            case=case,
+            original_filename=filename,
+            content_type="image/jpeg",
+            size_bytes=uploaded.size or 0,
+            uploaded_by=uploaded_by,
+            status=AttachmentStatus.PROCESSED,
+            extraction_method=ExtractionMethod.VISION,
+            extracted_text=f"texto do anexo {position} — conteúdo clínico do exame",
+            anonymized_text=f"texto anonimizado do anexo {position}",
+            pseudonym_map={f"<PACIENTE_{position}>": PATIENT_NAME},
+            patient_match=PatientMatch.MATCH,
+            verification_summary="Conteúdo consistente com o caso.",
+            processed_at=timezone.now(),
+        )
+        attachment.file.save(filename, uploaded, save=False)
+        attachment.save()
+        attachments.append(attachment)
+    return attachments
 
 
 def _silence_pipeline_enqueues(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -544,3 +598,150 @@ def test_serve_document_404_after_cleanup(
 
     assert Case.objects.get(pk=case.case_id).status == CaseStatus.CLEANED
     assert client.get(url).status_code == 404
+
+
+# ── R3 (slice 005): ciência remove anexos; outros casos/trilha intactos ────
+
+
+@pytest.mark.django_db(transaction=True)
+def test_ack_removes_attachments_rows_and_files(
+    monkeypatch: pytest.MonkeyPatch,
+    nir_user: User,
+    doctor_user: User,
+) -> None:
+    """R3: a ciência remove também anexos processados — rows (textos/mapas dos
+    anexos inclusos) e arquivos físicos somem junto com os documentos."""
+    _silence_pipeline_enqueues(monkeypatch)
+    case = _denial_final_case(created_by=nir_user, decided_by=doctor_user)
+    _attach_documents(case, nir_user, "relatorio-sesab.pdf")
+    attachments = _attach_processed_attachments(case, nir_user, "anexo-ecg.jpg", "anexo-laudo.pdf")
+    attachment_names = [a.file.name for a in attachments if a.file.name]
+    document_names = [d.file.name for d in case.documents.all() if d.file.name]
+    assert len(attachment_names) == 2
+    assert all(default_storage.exists(name) for name in attachment_names)
+    assert all(default_storage.exists(name) for name in document_names)
+    assert case.attachments.count() == 2
+    # P2 review F1: pré-ack, as rows carregam conteúdo clínico (texto extraído/
+    # anonimizado/mapa) — provando que o delete de rows remove o conteúdo.
+    for attachment in attachments:
+        assert attachment.extracted_text != ""
+        assert attachment.anonymized_text != ""
+        assert attachment.pseudonym_map != {}
+
+    acknowledge_case_receipt(case, user=nir_user, role=NIR_ROLE)
+
+    fresh = Case.objects.get(pk=case.case_id)
+    assert fresh.status == CaseStatus.CLEANED
+    assert fresh.attachments.count() == 0
+    assert fresh.documents.count() == 0
+    assert not any(default_storage.exists(name) for name in attachment_names)
+    assert not any(default_storage.exists(name) for name in document_names)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_ack_other_case_attachments_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+    nir_user: User,
+    doctor_user: User,
+) -> None:
+    """R3: a limpeza remove apenas os anexos do caso ackado — rows e arquivos
+    dos anexos de outro caso permanecem (status e estado intactos)."""
+    _silence_pipeline_enqueues(monkeypatch)
+    acked_case = _denial_final_case(created_by=nir_user, decided_by=doctor_user)
+    other_case = _denial_final_case(created_by=nir_user, decided_by=doctor_user)
+    acked_attachments = _attach_processed_attachments(acked_case, nir_user, "anexo-ack.jpg")
+    other_attachments = _attach_processed_attachments(other_case, nir_user, "anexo-outro.jpg")
+    acked_names = [a.file.name for a in acked_attachments if a.file.name]
+    other_names = [a.file.name for a in other_attachments if a.file.name]
+    assert all(default_storage.exists(name) for name in other_names)
+
+    acknowledge_case_receipt(acked_case, user=nir_user, role=NIR_ROLE)
+
+    assert not any(default_storage.exists(name) for name in acked_names)
+    assert all(default_storage.exists(name) for name in other_names)
+    other_fresh = Case.objects.get(pk=other_case.case_id)
+    assert other_fresh.status == CaseStatus.FINAL_REPLY_POSTED
+    assert list(other_fresh.attachments.values_list("original_filename", flat=True)) == [
+        "anexo-outro.jpg"
+    ]
+
+
+@pytest.mark.django_db
+def test_ack_without_attachments_unchanged(
+    nir_user: User,
+    doctor_user: User,
+) -> None:
+    """R3 (regressão): caso SEM anexos segue o caminho do change 09 — a soma
+    dos anexos à limpeza é no-op sem rows; docs removidos e 3 eventos na ordem."""
+    case = _denial_final_case(created_by=nir_user, decided_by=doctor_user)
+    _attach_documents(case, nir_user, "relatorio-sesab.pdf")
+    assert case.attachments.count() == 0
+    assert case.documents.count() == 1
+    events_before = case.events.count()
+
+    acknowledge_case_receipt(case, user=nir_user, role=NIR_ROLE)
+
+    fresh = Case.objects.get(pk=case.case_id)
+    assert fresh.status == CaseStatus.CLEANED
+    assert fresh.attachments.count() == 0
+    assert fresh.documents.count() == 0
+    assert fresh.events.count() == events_before + 3
+    assert _event_types(fresh)[-3:] == [
+        case_status_event_type(CaseStatus.AWAITING_NIR_ACK),
+        case_status_event_type(CaseStatus.CLEANING),
+        case_status_event_type(CaseStatus.CLEANED),
+    ]
+
+
+@pytest.mark.django_db
+def test_ack_events_append_only(
+    nir_user: User,
+    doctor_user: User,
+) -> None:
+    """R3: a trilha é append-only — eventos CASE_ATTACHMENT_* do passado (histó-
+    rico do processamento dos anexos) permanecem íntegros; a ciência só soma os
+    3 eventos de fechamento e nunca deleta CaseEvent."""
+    case = _denial_final_case(created_by=nir_user, decided_by=doctor_user)
+    attachments = _attach_processed_attachments(
+        case, nir_user, "anexo-ecg.jpg", "anexo-ultrassom.png"
+    )
+    historical: list[CaseEvent] = []
+    for attachment in attachments:
+        historical.append(
+            CaseEvent.objects.create(
+                case=case,
+                event_type=CaseEventType.CASE_ATTACHMENT_PROCESSED,
+                actor_type=ActorType.SYSTEM,
+                actor=None,
+                actor_role=SYSTEM_ROLE,
+                payload={
+                    "filename": attachment.original_filename,
+                    "patient_match": PatientMatch.MATCH.value,
+                    "method": ExtractionMethod.VISION.value,
+                },
+            )
+        )
+    events_before = case.events.count()
+    ids_before = {event.pk for event in case.events.all()}
+    assert len(historical) == 2
+    assert case.attachments.count() == 2
+
+    acknowledge_case_receipt(case, user=nir_user, role=NIR_ROLE)
+
+    fresh = Case.objects.get(pk=case.case_id)
+    assert fresh.status == CaseStatus.CLEANED
+    assert fresh.attachments.count() == 0
+    # Nada foi deletado da trilha: só os 3 eventos de fechamento se somam.
+    assert fresh.events.count() == events_before + 3
+    ids_after = {event.pk for event in fresh.events.all()}
+    assert ids_before <= ids_after
+    trail = _event_types(fresh)
+    assert trail.count(CaseEventType.CASE_ATTACHMENT_PROCESSED) == len(historical)
+    surviving_processed = CaseEvent.objects.get(pk=historical[0].pk)
+    assert surviving_processed.payload["filename"] == "anexo-ecg.jpg"
+    assert surviving_processed.payload == historical[0].payload
+    assert trail[-3:] == [
+        case_status_event_type(CaseStatus.AWAITING_NIR_ACK),
+        case_status_event_type(CaseStatus.CLEANING),
+        case_status_event_type(CaseStatus.CLEANED),
+    ]

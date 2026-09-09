@@ -84,11 +84,11 @@ def _delete_files_best_effort(file_names: Iterable[str]) -> None:
 
 
 def _clean_acknowledged_clinical_data(case: Case) -> None:
-    """Minimização do D2 no caso sob lock (D2): rows de documento e campos.
+    """Minimização do D2 no caso sob lock (D2): rows de documento/anexo e campos.
 
-    Deleta as rows ``CaseDocument`` (os nomes dos arquivos já foram coletados
-    ANTES pelo chamador) e zera os 7 campos clínicos/LLM (``extracted_text``/
-    ``anonymized_text``/``pseudonym_map``/``structured_data``/
+    Deleta as rows ``CaseDocument`` E ``CaseAttachment`` (os nomes dos arquivos
+    já foram coletados ANTES pelo chamador) e zera os 7 campos clínicos/LLM
+    (``extracted_text``/``anonymized_text``/``pseudonym_map``/``structured_data``/
     ``summary_text``/``suggested_action``/``policy_result``). Preserva
     identificação (``patient_*``/``agency_record_number``),
     ``anonymization_report``, rows ``CaseProcedure``/``CaseEvent``,
@@ -98,6 +98,7 @@ def _clean_acknowledged_clinical_data(case: Case) -> None:
     seguintes salvam o objeto inteiro).
     """
     case.documents.all().delete()
+    case.attachments.all().delete()
     for field_name, empty_value in _CLEANED_EMPTY_VALUES.items():
         setattr(case, field_name, empty_value)
     case.save(update_fields=[*_CLEANED_EMPTY_VALUES])
@@ -109,15 +110,15 @@ def acknowledge_case_receipt(case: Case, *, user: User, role: str) -> None:
     Exige ``FINAL_REPLY_POSTED`` e que ``user`` seja o CRIADOR do caso (escopo
     por criador do design D1) — erros ``ValueError`` nomeados e distintos,
     antes de qualquer escrita. No MESMO ``atomic`` com ``select_for_update``:
-    coleta os nomes dos arquivos das rows ``CaseDocument`` ANTES do delete →
-    encadeia as transições públicas ``nir_acknowledge`` → ``start_cleaning`` →
-    a limpeza (D2: rows de documento + campos clínicos/LLM) →
-    ``complete_cleaning`` — 3 eventos ``CASE_STATUS_*`` (``AWAITING_NIR_ACK``,
-    ``CLEANING`` e ``CLEANED``, transitórios no mesmo atomic). Os arquivos
-    físicos são removidos best-effort apenas APÓS o commit
-    (``transaction.on_commit``; log em falha); arquivos de outros casos nunca
-    são tocados. Quem chama (a view do intake, slice 003) traduz os erros em
-    mensagem + redirect, nunca 500.
+    coleta os nomes dos arquivos das rows ``CaseDocument`` e ``CaseAttachment``
+    ANTES do delete → encadeia as transições públicas ``nir_acknowledge`` →
+    ``start_cleaning`` → a limpeza (D2: rows de documento + anexos + campos
+    clínicos/LLM) → ``complete_cleaning`` — 3 eventos ``CASE_STATUS_*``
+    (``AWAITING_NIR_ACK``, ``CLEANING`` e ``CLEANED``, transitórios no mesmo
+    atomic). Os arquivos físicos (documentos E anexos) são removidos
+    best-effort apenas APÓS o commit (``transaction.on_commit``; log em
+    falha); arquivos de outros casos nunca são tocados. Quem chama (a view do
+    intake, slice 003) traduz os erros em mensagem + redirect, nunca 500.
     """
     with transaction.atomic():
         locked = Case.objects.select_for_update().get(pk=case.pk)
@@ -133,6 +134,11 @@ def acknowledge_case_receipt(case: Case, *, user: User, role: str) -> None:
         file_names = [
             document.file.name for document in locked.documents.only("file") if document.file.name
         ]
+        file_names.extend(
+            attachment.file.name
+            for attachment in locked.attachments.only("file")
+            if attachment.file.name
+        )
         locked.nir_acknowledge(user=user, role=role)
         locked.start_cleaning(user=user, role=role)
         _clean_acknowledged_clinical_data(locked)

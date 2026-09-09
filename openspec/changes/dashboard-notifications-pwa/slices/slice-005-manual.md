@@ -30,7 +30,8 @@ link na navbar em nova aba.
 
 ## Requisitos verificáveis
 
-- **R1** Rota `accounts:manual` (`/manual/`), login required, renderiza
+- **R1** Rota `manual` (nome GLOBAL, sem namespace — P1 review; `/manual/`),
+  login required, renderiza
   `templates/accounts/manual.html`.
 - **R2** Template: visão geral do ciclo (texto/plinha de estados do HMD —
   sem inventar estados; confira `CaseStatus`), seções por papel com as
@@ -72,7 +73,7 @@ out_of_scope:
 ### RED
 
 - Comando: `TEST_DB_PORT=55435 uv run pytest apps/accounts/tests/test_manual.py`
-- Falha esperada: 404 na rota `accounts:manual` (inexistente).
+- Falha esperada: 404 na rota global `manual` (inexistente).
 
 ### GREEN / verificação local
 

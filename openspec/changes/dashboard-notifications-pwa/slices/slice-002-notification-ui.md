@@ -15,7 +15,13 @@ ativo), marca todas como lidas; endpoint JSON de contagem disponível.
   unread_count), `templates/accounts/notifications.html`,
   `templates/base.html` (sino com badge), `apps/accounts/urls.py`
   (rotas), context processor de contagem — ADAPTE os nomes/URLs ao HMD
-  (namespace `accounts:`).
+  `apps/accounts/urls.py`
+  (**NOMES GLOBAIS, SEM NAMESPACE — P1 review**: `apps.accounts.urls` é
+  incluído na raiz sem `app_name` e seus nomes (`home`, `profile`, …) são
+  globais; NÃO introduza namespace — registre `notifications`,
+  `notifications_open`, `notifications_mark_all_read`,
+  `notifications_unread_count` como nomes globais e referencie sem
+  prefixo, ex. `reverse("notifications")`).
 - HMD: papel ativo vem da sessão (`request.session` — veja como views
   existentes leem, ex. `apps/intake/views.py` `active_role`/decorator
   `role_required`; o context processor base expõe `active_role` em
@@ -36,7 +42,8 @@ ativo), marca todas como lidas; endpoint JSON de contagem disponível.
   notification_unread_count(request)` → contagem de não lidas do
   autenticado (0 para anônimo), registrado em `TEMPLATES` context_processors
   do `config/settings/base.py`.
-- **R3** Views (namespace `accounts:`): `notifications` (lista
+- **R3** Views (**nomes de rota GLOBAIS**, sem namespace — P1 review;
+  ver Nota de rotas em design.md D2): `notifications` (lista
   `visible_for_list` do `request.user`, ordering já do model);
   `notifications_open` (**POST**; `get_object_or_404(recipient=request.user)`;
   marca `read_at` se nulo; redirect `resolve_notification_redirect_url`);
@@ -93,7 +100,7 @@ out_of_scope:
 ### RED
 
 - Comando: `TEST_DB_PORT=55435 uv run pytest apps/accounts/tests/test_notification_views.py`
-- Falha esperada: `ImportError`/404 — rotas `accounts:notifications*` inexistentes.
+- Falha esperada: `ImportError`/404 — rota global `notifications` inexistente.
 
 ### GREEN / verificação local
 

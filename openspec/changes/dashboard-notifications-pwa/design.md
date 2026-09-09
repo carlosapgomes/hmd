@@ -26,11 +26,15 @@ de marcos — **a notificação deriva do EVENTO, nunca da mensagem `system`**
 
 - `CASE_STATUS_FINAL_REPLY_POSTED` → destinatário: `case.created_by`
   (NIR). Título fixo "Resposta final disponível"; preview por
-  `payload["source"]` (negativa médica / negativa de agendamento /
-  agendamento confirmado) — **sem PHI** (nenhum nome/nº registro).
+  `payload["source"]` (mapa fixo PT-BR: negativa médica / negativa de
+  agendamento / agendamento confirmado) com **fallback** para source
+  inesperado/ausente ("Resposta final disponível para o caso") — **sem
+  PHI** (nenhum nome/nº registro).
 - `CASE_STATUS_SCHEDULER_REQUESTED` → fan-out para
-  `User.objects.filter(roles__name="scheduler")` (papel fixo do modelo
-  Role, não papel de sessão); título "Caso pronto para agendamento".
+  `User.objects.filter(roles__name="scheduler", is_active=True,
+  account_status="active").distinct()` (papel fixo do modelo Role, não papel
+  de sessão; sem contas inativas — conferir valores de `account_status`
+  no model); título "Caso pronto para agendamento".
 - `CASE_STATUS_AWAITING_SCHEDULING` **com `"reason" in payload`** (é assim
   que a reabertura por intercorrência do 08 se marca — `reopen_scheduling`
   carrega `extra_payload={"reason": ...}`) → `case.created_by`; título
@@ -47,20 +51,32 @@ Eventos de fechamento/limpeza NÃO notificam (conjunto fechado acima).
 - **Badge**: context processor `apps/accounts/context_processors.py::
   notification_unread_count` (adicionar em `TEMPLATES` settings) expõe a
   contagem de não lidas em toda página; `base.html` ganha o sino com
-  contagem (padrão visual do ats-web) linkando `accounts:notifications`.
-  Endpoint JSON `accounts:notifications_unread_count` (mesma contagem) para
+  contagem (padrão visual do ats-web) linkando a lista (`{% url
+  "notifications" %}`).
+  Endpoint JSON `notifications_unread_count` (mesma contagem) para
   uso futuro/PWA — **sem polling por padrão** (atualiza a cada navegação).
-- **Lista** (`accounts:notifications`): `visible_for_list()` — não lidas
-  OU lidas dentro de `NOTIFICATION_READ_RETENTION_HOURS` (default 48, env;
+- **Lista** (`notifications`): `visible_for_list()` — não lidas OU lidas
+  dentro de `NOTIFICATION_READ_RETENTION_HOURS` (default 48, env;
   nada é apagado, leitura antiga só sai da lista). Ordena `-created_at`.
-- **Abrir** (`accounts:notifications_open`, POST): marca `read_at` (só do
-  dono — `get_object_or_404(recipient=request.user)`) e redireciona via
+- **Abrir** (`notifications_open`, **POST**; nomes de rota GLOBAIS — ver
+  nota de rotas abaixo): marca `read_at` (só do dono —
+  `get_object_or_404(recipient=request.user)`) e redireciona via
   `resolve_notification_redirect_url(case, active_role)`: nir→
   `intake:case_detail`, doctor→`doctor:case_detail`, scheduler→
   `scheduler:case_detail` (rotas existentes fazem o guard de acesso real;
-  admin→ home). Sem papel ativo → home.
-- **Marcar todas** (`accounts:notifications_mark_all_read`, POST): `read_at
+  sem papel/admin→ `home`). Sem papel ativo → home.
+- **Marcar todas** (`notifications_mark_all_read`, POST): `read_at
   = now` nas não lidas do usuário.
+
+**Nota de rotas (P1 review)**: `apps.accounts.urls` é incluído na raiz **sem
+`app_name`** e seus nomes (`home`, `login`, `profile`, `switch_role`,
+`logout`) são globais, referenciados sem namespace em dezenas de lugares.
+**Decisão A (minimal)**: as rotas novas (`notifications`,
+`notifications_open`, `notifications_mark_all_read`,
+`notifications_unread_count`, `manual`) entram em `apps/accounts/urls.py`
+**sem namespace** e são referenciadas pelos nomes globais (`reverse(
+"notifications")`, `{% url "notifications" %}` etc.). NÃO introduzir
+namespace de accounts neste change.
 
 ## D3 — Dashboard gerencial (apps/dashboard)
 
@@ -72,22 +88,36 @@ decisão de produto documentada, gate por papel fica trivial depois). Link
 "Painel" na navbar (sempre visível autenticado).
 
 Fontes **imutáveis** (lição do ats-web: nada depende do status FSM
-transitório sozinho): resultado final por caso = evento
-`CASE_STATUS_FINAL_REPLY_POSTED` com `payload["source"]`
-(`SCHEDULING_CONFIRMED`→agendado; `DOCTOR_DENIED`/`SCHEDULING_DENIED`→
-negado) — trilha append-only sobrevive à limpeza do 09; tipo/decisão =
-`CaseProcedure`; unidade = `scheduled_unit` (preservado pós-limpeza).
+transitório sozinho; **emenda P1 review**): a população é sempre **casos
+com `created_at` no período**; o resultado por caso (`outcome`) é o
+`payload["source"]` do **ÚLTIMO** evento `CASE_STATUS_FINAL_REPLY_POSTED`
+do caso, **apenas quando o status atual é pós-final** (`FINAL_REPLY_POSTED`,
+`AWAITING_NIR_ACK`, `CLEANING`, `CLEANED`); caso cujo status voltou ao
+pipeline (reaberto por intercorrência, aguardando nova confirmação) é **em
+andamento** — isso elimina dupla contagem e `em_andamento` negativo quando
+o caso tem 2 eventos finais com sources distintos (reabertura). Tipo/
+decisão = `CaseProcedure` (campo de decisão é **`doctor_disposition`**
+`approved|denied|pending`; `doctor_decided_at` é **por row** de
+procedimento — `Case` NÃO tem `doctor_decided_at`); unidade =
+`scheduled_unit` atual dos casos com outcome agendado (reaberto em voo tem
+`None` e conta como em andamento). A tabela por tipo conta **rows de
+procedimento**, não casos (somatório ≠ total do resumo — esperado;
+notar no template).
 
 Métricas do período (base `created_at` do caso):
-- **Resumo**: total; agendados; negados; em andamento (total−agendados−
-  negados); encerrados (`status=CLEANED`).
+- **Resumo**: total (população); agendados (outcome `SCHEDULING_CONFIRMED`);
+  negados (outcome `DOCTOR_DENIED` ∪ `SCHEDULING_DENIED`); em andamento
+  (total−agendados−negados — por construção ≥ 0 com a regra de outcome);
+  encerrados (`status=CLEANED` dentro da população).
 - **Por tipo**: para cada `procedure_type` do catálogo (ordem canônica):
-  total, aprovados, negados, sem decisão.
-- **Por unidade**: agendados unidade 1 / unidade 2 (e negados de
-  agendamento como linha informativa).
-- **Tempo médio até decisão médica**: média `doctor_decided_at−created_at`
-  dos casos decididos no período, humanizada (ex. "3h 42m"); sem decididos
-  → "—".
+  total de rows, aprovados, negados, sem decisão (`doctor_disposition`).
+- **Por unidade**: agendados unidade 1 / unidade 2 (por `scheduled_unit`
+  dos casos com outcome agendado) e negados de agendamento como linha
+  informativa.
+- **Tempo médio até decisão médica**: casos da população com ≥1 row
+  decidida (`doctor_disposition ≠ pending`) e `doctor_decided_at` no
+  período: média de `max(doctor_decided_at por caso) − case.created_at`,
+  humanizada (ex. "3h 42m"); sem decididos → "—".
 
 Template Bootstrap com cards da tabela de tipos + resumo em destaque; zero
 dados de paciente (nenhum nome/nº registro/idade — só labels de
@@ -114,7 +144,8 @@ tipo/unidade e números).
 
 ## D5 — Manual de usuário
 
-Rota `accounts:manual` + `templates/accounts/manual.html` (link navbar,
+Rota `manual` (nome GLOBAL, sem namespace — mesma decisão A de D2) +
+`templates/accounts/manual.html` (link navbar,
 `target="_blank"`): visão geral do ciclo (NEW→CLEANED em texto), seções por
 papel — NIR (enviar relatório+anexos, acompanhar, ciência, reenvio
 corrigido), médico (fila, detalhe com cards de anexos/verificação, decidir),

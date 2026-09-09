@@ -52,7 +52,7 @@ O sistema SHALL exibir em toda página autenticada um sino com a contagem de nã
 
 #### Scenario: Lista aplica janela de visibilidade
 
-- **GIVEN** uma notificação não lida antiga e outra lida há mais de 2 dias
+- **GIVEN** uma notificação não lida antiga e outra lida há mais de 48 horas
 - **WHEN** o usuário abre a lista
 - **THEN** a não lida aparece e a leitura antiga não (permanece no banco)
 

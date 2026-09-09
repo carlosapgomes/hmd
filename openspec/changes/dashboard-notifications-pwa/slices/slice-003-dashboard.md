@@ -9,17 +9,24 @@ view `dashboard:home` com seletor de período e template zero-PHI, link
 ## Contexto necessário
 
 - Design D3 (`openspec/changes/dashboard-notifications-pwa/design.md`).
-- Fontes imutáveis (lição ats-web `_compute_summary`):
-  - Resultado final por caso: eventos `CaseEventType.
-    CASE_STATUS_FINAL_REPLY_POSTED` (trilha append-only sobrevive à limpeza
-    do 09) com `payload["source"]` ∈ `DOCTOR_DENIED|SCHEDULING_CONFIRMED|
-    SCHEDULING_DENIED` (grep `apps/cases/events.py` + payload em
-    `apps/cases/services.py::post_final_reply`).
-  - Tipo/decisão: `CaseProcedure` (`procedure_type`, `decision`, lookup
-    `case.created_at` no período; decisão preservada pós-limpeza).
-  - Unidade: `Case.scheduled_unit` (choices `SchedulingUnit`, preservado
-    pós-limpeza — change 09).
-  - Tempo até decisão: `Case.doctor_decided_at` − `created_at`.
+- Fontes imutáveis (lição ats-web `_compute_summary`; **emenda P1 review**
+  — os nomes de campos abaixo são os REAIS):
+  - População: casos com `created_at` no período, SEMPRE.
+  - Outcome por caso: `payload["source"]` do **ÚLTIMO** evento
+    `CASE_STATUS_FINAL_REPLY_POSTED` do caso (grep `apps/cases/events.py` +
+    payload em `apps/cases/services.py::post_final_reply`) **apenas quando
+    o status atual é pós-final** (`FINAL_REPLY_POSTED`, `AWAITING_NIR_ACK`,
+    `CLEANING`, `CLEANED` — caso reaberto/em voo é "em andamento";
+    elimina dupla contagem de 2 eventos finais com sources distintos e
+    `em_andamento` negativo). Agendado = `SCHEDULING_CONFIRMED`; negado =
+    `DOCTOR_DENIED` ∪ `SCHEDULING_DENIED`.
+  - Tipo/decisão: `CaseProcedure` — o campo é **`doctor_disposition`**
+    (`approved|denied|pending`) e `doctor_decided_at` é **por row**
+    (`Case` NÃO tem `doctor_decided_at` — não invente o campo).
+  - Unidade: `Case.scheduled_unit` atual (`SchedulingUnit` 1/2,
+    preservado pós-limpeza do 09) dos casos com outcome agendado.
+  - Tempo até decisão: por caso, `max(CaseProcedure.doctor_decided_at) −
+    Case.created_at`.
 - Períodos: `hoje` (dia local — helper de bounds do repo? veja
   `apps/intake`/`timezone.localtime`; senão implemente `local_day_bounds`
   no metrics), `7d`, `30d`, `tudo` (default `hoje`).
@@ -44,10 +51,15 @@ view `dashboard:home` com seletor de período e template zero-PHI, link
   negados), `encerrados` (status `CLEANED` no total do período);
   `compute_by_procedure_type(period)` → linhas por tipo do catálogo
   (ordem canônica) com total/aprovados/negados/sem decisão;
-  `compute_by_unit(period)` → {unidade 1, unidade 2} dos agendados do
-  período (por `scheduled_unit` dos casos agendados); `compute_avg_time_
-  to_decision(period)` → `timedelta | None` (média de `doctor_decided_at
-  − created_at` dos casos com `doctor_decided_at` no período).
+  `compute_by_unit(period)` → {unidade 1, unidade 2} dos casos com outcome
+  agendado (por `scheduled_unit`); `compute_avg_time_to_decision(period)` →
+  `timedelta | None` (média de `max(CaseProcedure.doctor_decided_at por
+  caso) − case.created_at` dos casos da população com row decidida no
+  período — `doctor_disposition ≠ pending`).
+  **Nota (P2 review)**: a tabela por tipo conta ROWS de procedimento —
+  somatório da tabela ≠ total do resumo (esperado); NÃO assertar igualdade
+  de somas no teste, e a population do resumo é por `created_at` (o
+  outcome pode vir de evento posterior à janela).
 - **R2** View `dashboard:home`: login required; GET `?period=`
   validado contra `{hoje,7d,30d,tudo}` (inválido → default hoje);
   contexto com summary/tipos/unidade/tempo humanizado
@@ -60,11 +72,13 @@ view `dashboard:home` com seletor de período e template zero-PHI, link
   visível para autenticado (sem gate de papel).
 - **R5** Testes (com fixtures dirigidos): resumo coerente (2 agendados
   [1 unidade 1, 1 unidade 2], 1 negado médico, 1 negado agendamento, 2 em
-  andamento); caso CLEANED continua contado; períodos (caso de ontem fora
-  de `hoje`, dentro de `7d`); tabela por tipo com decisões parciais;
-  tempo médio calculado; página renderizada SEM nome/nº registro dos
-  pacientes do fixture (assert zero-PHI); anônimo → redirect login;
-  período inválido → hoje.
+  andamento); **caso reaberto por intercorrência conta como EM ANDAMENTO
+  apesar do evento final anterior** (emenda P1 review); caso CLEANED
+  continua contado pelo outcome; períodos (caso de ontem fora de `hoje`,
+  dentro de `7d`); tabela por tipo com decisões parciais (por
+  `doctor_disposition`); tempo médio calculado; página renderizada SEM
+  nome/nº registro dos pacientes do fixture (assert zero-PHI); anônimo →
+  redirect login; período inválido → hoje.
 
 ## Matriz requisito → arquivo → teste/check
 

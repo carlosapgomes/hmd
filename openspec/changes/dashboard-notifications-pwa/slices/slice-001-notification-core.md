@@ -18,7 +18,10 @@ signal `CaseEvent.post_save` criando notificações para os 3 marcos
   `Case.reopen_scheduling` em `apps/cases/models.py`: `extra_payload=
   {"reason": reason}`).
 - `apps/accounts/models.py` — `Role` (M2M `User.roles`, `name` único;
-  fan-out: `User.objects.filter(roles__name="scheduler")`, distinct);
+  fan-out: `User.objects.filter(roles__name="scheduler",
+  is_active=True, account_status="active").distinct()` — P2 review:
+  sem contas inativas; confira os valores de `account_status` no model
+  antes do literal);
   migration mais recente de accounts (nova migration depois dela).
 - Signal pattern: `apps/attachments/signals.py` (receiver `post_save,
   sender=CaseEvent`, filtro `created`, registro em `apps.py ready()`;
@@ -43,7 +46,9 @@ signal `CaseEvent.post_save` criando notificações para os 3 marcos
   event) -> list[UserNotification]`: fora do conjunto de marcos → `[]`
   sem tocar nada; `FINAL_REPLY_POSTED` → criador, título "Resposta final
   disponível", preview por `payload["source"]` (mapa fixo PT-BR: negativa
-  médica / negativa de agendamento / agendamento confirmado);
+  médica / negativa de agendamento / agendamento confirmado, COM fallback
+  "Resposta final disponível para o caso" para source inesperado/ausente —
+  P2 review);
   `SCHEDULER_REQUESTED` → fan-out schedulers, título "Caso pronto para
   agendamento"; `AWAITING_SCHEDULING` com `"reason" in payload` → criador,
   título "Caso reaberto por intercorrência" (SEM o motivo no preview —

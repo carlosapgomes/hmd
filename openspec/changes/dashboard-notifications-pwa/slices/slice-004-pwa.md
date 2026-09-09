@@ -19,9 +19,13 @@ HTML, bypass PDF, nunca POST) registrado no `base.html`.
 - Cor tema do HMD: `static/css/` (grep da cor do header/`.app-header`/
   `:root`) — use a MESMA cor do app em manifest `theme_color` e no fundo
   do ícone; `background_color` branco.
-- HMD rota de PDF: `scheduler:case_pdf` — o path contém `/pdf/` (ver
-  `apps/scheduler/urls.py`) → o bypass `url.pathname.includes("/pdf/")`
-  do ats-web já cobre.
+- HMD rota de PDF: `doctor:case_pdf` e `scheduler:case_pdf` — paths no
+  formato `.../pdf/<int:position>/` (ver `apps/{doctor,scheduler}/urls.py`)
+  → **P1 review: o bypass do SW DEVE ser `url.pathname.includes("/pdf/")`**;
+  NÃO copie o `endsWith("/pdf/")` do ats-web (lá o path TERMINA em
+  `/pdf/`; no HMD termina em `/pdf/<position>/` e `endsWith` NÃO casa —
+  o SW interceptaria a navegação e quebraria o viewer nativo, o motivo
+  exato documentado no próprio ats-web).
 - PyMuPDF (fitz) já é dependência (pdf_utils) — o script de ícones:
   `fitz` cria página quadrada, desenha retângulo arredondado na cor tema
   com texto "HMD" centralizado (fonte Helvetica-Bold), exporta PNG nos
@@ -53,16 +57,22 @@ HTML, bypass PDF, nunca POST) registrado no `base.html`.
   activate limpa versões antigas + `clients.claim()`; fetch: não-GET
   retorna direto; `/static/` network-first com fallback cache; navegação
   HTML network-first com fallback `caches.match("/")` e **bypass
-  `/pdf/`**; resto network-only. Sem referências a CHD/ats.
+  `url.pathname.includes("/pdf/")` (HMD — NUNCA o `endsWith` do ats-web,
+  ver P1 review no contexto)**; resto network-only. Sem referências a
+  CHD/ats.
 - **R5** `base.html`: `<link rel="manifest" href="/static/manifest.json">`
   + `<meta name="theme-color" content="{cor}">` no `<head>`; snippet de
   registro do SW no fim do body.
-- **R6** Testes (smoke, sem browser): GET `/static/manifest.json` 200 com
-  `"HMD"` e sem `"CHD"`; todos os ícones do manifest servem 200
-  (parse do JSON e requisição de cada src); GET `/static/js/sw.js` 200 e
-  conteúdo sem "CHD"/"ats-cache"; página autenticada renderizada contém
-  `rel="manifest"`, `theme-color` e `serviceWorker.register`; script
-  `--check` passa com os PNGs commitados.
+- **R6** Testes (smoke, **P1 review: /static/ NÃO é servido no setup de
+  teste** — DEBUG=False + WhiteNoise use_finders=False + STATIC_ROOT nunca
+  coletado → `client.get("/static/...")` dá 404; NÃO escreva teste de GET
+  /static/): valide ARQUIVOS via `django.contrib.staticfiles.finders.find(
+  "manifest.json")`/`("js/sw.js")`/ícones (assert não-None) + leitura do
+  conteúdo (manifest JSON: name/short_name `HMD`, sem `CHD`; TODOS os
+  `icons[].src` resolvem via finders; sw.js contém `includes("/pdf/")`
+  e NÃO contém `endsWith("/pdf/")` nem `CHD`/`ats-cache`); página
+  autenticada renderizada contém `rel="manifest"`, `theme-color` e
+  `serviceWorker.register`; script `--check` passa com os PNGs commitados.
 
 ## Matriz requisito → arquivo → teste/check
 
@@ -91,7 +101,11 @@ expected_files:
 
 out_of_scope:
   - notificações/dashboard (outras slices); push notifications; offline de dados
-  - ícone favicon (já existe? manter como está); iOS meta específicas (apple-touch — opcional, só se trivial)
+  - ícone favicon (fora de escopo — registrado no PROJECT_CONTEXT como follow-up; sem `<link rel="icon">` hoje)
+  - iOS meta específicas (apple-touch — opcional, só se trivial)
+  - NOTA (P2 review): `scripts/` é diretório NOVO na raiz — confira no gate
+    se `mypy .`/ruff o cobrem; se mypy não cobrir, o script é verificado
+    por ruff + `--check` (registrar no relatório do slice)
 ```
 
 ## Plano de testes do slice
@@ -99,7 +113,7 @@ out_of_scope:
 ### RED
 
 - Comando: `TEST_DB_PORT=55435 uv run pytest apps/accounts/tests/test_pwa.py`
-- Falha esperada: 404 em `/static/manifest.json` / arquivo de teste novo sem assets.
+- Falha esperada: 404/None em `finders.find("manifest.json")` (asset inexistente).
 
 ### GREEN / verificação local
 
@@ -111,7 +125,8 @@ out_of_scope:
 ## Critérios de aceitação
 
 - [ ] R1–R6 comprovados; zero referências a CHD/ats em manifest/sw/ícones
-- [ ] Todos os ícones do manifest existem de fato (teste itera o JSON)
-- [ ] SW nunca intercepta POST nem rotas de PDF (código espelha ats-web
-      nesses guards, com nomes/cache do HMD)
+- [ ] Todos os ícones do manifest existem de fato (finders por cada src)
+- [ ] SW nunca intercepta POST nem rotas de PDF (`includes("/pdf/")` —
+      NÃO o endsWith do ats-web; P1 review) e os smoke tests rodam SEM
+      GET /static/ (não servido em teste)
 - [ ] Gate parcial do slice verde

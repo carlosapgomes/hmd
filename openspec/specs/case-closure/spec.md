@@ -30,7 +30,7 @@ Quando o médico nega todos os procedimentos declarados, o sistema SHALL publica
 
 ### Requirement: Ciência do NIR com limpeza de dados clínicos
 
-O criador do caso SHALL poder confirmar o recebimento da resposta final, levando o caso de `FINAL_REPLY_POSTED` a `CLEANED` de forma transacional: documentos originais (rows e arquivos), texto extraído, texto anonimizado, mapa de pseudônimos e artefatos do pipeline (estrutura, sumário, sugestão, policy) são removidos; identificação do paciente, decisões médicas, trilha de eventos, comunicações e dados de agendamento são preservados. Um caso encerrado dentro da janela SHALL continuar elegível como prior-case.
+O criador do caso SHALL poder confirmar o recebimento da resposta final, levando o caso de `FINAL_REPLY_POSTED` a `CLEANED` de forma transacional: documentos originais e anexos (rows e arquivos), texto extraído, texto anonimizado, mapa de pseudônimos e artefatos do pipeline (estrutura, sumário, sugestão, policy) são removidos — inclusive o conteúdo e os mapas dos anexos; identificação do paciente, decisões médicas, trilha de eventos, comunicações e dados de agendamento são preservados. Um caso encerrado dentro da janela SHALL continuar elegível como prior-case.
 
 #### Scenario: Ciência encerra e limpa o caso
 
@@ -61,6 +61,12 @@ O criador do caso SHALL poder confirmar o recebimento da resposta final, levando
 - **GIVEN** um caso que não está em `FINAL_REPLY_POSTED`
 - **WHEN** a ciência é invocada
 - **THEN** a operação é recusada com erro nomeado e nada muda
+
+#### Scenario: Anexos são removidos na ciência
+
+- **GIVEN** um caso em `FINAL_REPLY_POSTED` com anexos processados (arquivos, textos extraídos/anonimizados e mapas de pseudônimos dos anexos)
+- **WHEN** o criador confirma o recebimento
+- **THEN** as rows e os arquivos dos anexos deixam de existir, junto com os documentos e artefatos do caso
 
 ### Requirement: Resultado e casos encerrados visíveis ao criador
 

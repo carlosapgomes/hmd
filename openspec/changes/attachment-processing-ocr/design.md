@@ -17,7 +17,9 @@ caso. Migration `apps/attachments/migrations/0001_initial`. Row (espelho
 enxuto do ats-web, sem supressão/fase):
 
 - `case` FK `PROTECT` `related_name="attachments"`; `file` FileField
-  (`case_attachments/<case_id>/<attachment_id>.<ext>`); `original_filename`,
+  (`case_attachments/<case_id>/<uuid4-hex>.<ext>` — UUID gerado no path
+  callable, padrão `case_document_upload_path`: nome original NUNCA no path,
+  arquivo gravado **antes do INSERT** com compensação best-effort do 04);
   `content_type`, `size_bytes`; `uploaded_by` FK User `PROTECT`; `created_at`;
 - processamento: `status` (`pending|processing|processed|failed`, default
   `pending`), `extraction_method` (`local_pdf|vision`), `extracted_text`
@@ -59,8 +61,12 @@ vision.py::transcribe_image(image_bytes, content_type) -> str` via
 `apps/pipeline/llm.py`; reutiliza `LlmError`; NÃO estende o protocolo
 `LlmClient` — domínio diferente, zero toque no contrato do change 06).
 
-**Worker**: task `process_case_attachments(case_id)` (idempotente: pula
-anexos em estado terminal) no **cluster `attachments`** (novo em
+**Worker**: task `process_case_attachments(case_id)` (idempotente **por
+etapa**: anexo com `extracted_text` já presente não re-extraí nem re-envia
+ao OCR externo; re-leitura da row antes de cada gravação/evento — anexo
+removido pela ciência do NIR → no-op silencioso sem evento, corrida
+ack×worker; retry do q2 nunca duplica o envio externo) no **cluster
+`attachments`** (novo em
 `Q_CLUSTER["ALT_CLUSTERS"]`; flag `ATTACHMENTS_RUN_TASKS_INLINE`, default
 true em dev/teste — padrão dos clusters pdf/anonymization/llm). Pipeline por
 anexo: extração → anonimização (D4) → verificação (D4) → persistência +
@@ -78,14 +84,26 @@ cards chegam quando chegarem (status visível; decisão nunca gated).
 
 ## D4 — Anonimização alinhada + verificação (LLM só vê tokens)
 
-**`apps/anonymization/services.py::anonymize_attachment_text(case, text)`**
-(aditivo): roda o núcleo `anonymize_text` no texto do anexo; o núcleo é
-determinístico por entidade (mesmo valor → mesmo token — precedente
-`_anonymized_reason` do prior-case, convergência com o mapa do caso); devolve
-`anonymized_text` + mapa do ANEXO (persistido na row; o mapa do CASO não é
-alterado). Helper `patient_token(case)` (reverse lookup no mapa do caso:
-token cujo valor real == `case.patient_name`; sem paciente/token → verificação
-segue sem comparação e o resultado é `unknown`).
+**`apps/anonymization/services.py`** (aditivo):
+`anonymize_text(text, seed_map=None)` — o `PseudonymOperator` ganha
+**semeadura explícita** com o mapa do caso (construtor recebe os tokens do
+caso pré-carregados por chave canônica `(categoria, valor_canônico)` — a
+chave já existe — e a numeração de cada categoria continua do máximo do
+caso; **a numeração é por primeira ocorrência no texto, portanto NÃO há
+convergência espontânea entre textos — sem semeadura, `<PESSOA_1>` do anexo
+não é o `<PESSOA_1>` do caso e a verificação colapsa em falsos
+match/mismatch**). `anonymize_attachment_text(case, text)` chama o núcleo
+com `seed_map=case.pseudonym_map` e persiste na row do anexo apenas as
+entradas **efetivamente usadas no texto** (semeadas usadas + novas);
+`anonymize_case_text` e o mapa do caso ficam intocados. Garantias do
+namespace estendido: (i) valor igual ao de uma entidade do caso → MESMO
+token do caso (paciente do caso → `<PESSOA_N>` do caso, qualquer que seja a
+ordem no texto do anexo); (ii) paciente DIFERENTE no anexo → token NOVO
+(número acima do máximo do caso) — **distinto** do token do caso, tornando
+o mismatch detectável pelo LLM; (iii) sem colisões de token entre os dois
+mapas. Helper `patient_token(case)` (reverse lookup no mapa do caso:
+token cujo valor real == `case.patient_name`); sem paciente/token →
+verificação segue sem comparação e o resultado é `unknown`.
 
 **`apps/attachments/verification.py`**: prompt versionado
 `ATTACHMENT_VERIFICATION` (seed em `apps/llm/prompts_seed.py` — 29º,
@@ -104,8 +122,11 @@ NUNCA descartam nada — são informação para o médico.
 nome, método (Local/OCR externo), status, badge
 `match|mismatch|unknown|processando|falhou`, `verification_summary`/
 `verification_evidence` **re-identificados na renderização** com o mapa do
-ANEXO (fallback mapa do caso; padrão `reidentify_text`); mismatch → badge de
-alerta + texto "divergência de identificação — avalie" (sem ação automática).
+ANEXO via o núcleo puro `reidentify(text, pseudonym_map)` — já aceita mapa
+arbitrário, **sem helper novo**; o mapa do anexo é auto-suficiente
+(namespace estendido do caso, ver D4; fallback ao mapa do caso apenas
+defensivo); padrão do change 07. Mismatch → badge de alerta + texto
+"divergência de identificação — avalie" (sem ação automática).
 Sem anexos → seção ausente (presenter intocado para casos sem anexo).
 
 ## D6 — Fechamento (integração com o change 09)

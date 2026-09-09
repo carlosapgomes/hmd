@@ -19,7 +19,14 @@ via kwargs aditivos; o detalhe do NIR lista os anexos com status.
   ANEXOS é fonte única nova em `apps/attachments/services.py`, separada dos
   PDFs do relatório).
 - Upload path seguro: padrão `case_document_upload_path`
-  (`apps/cases/models.py`) → `case_attachments/<case_id>/<attachment_id>.<ext>`.
+  (`apps/cases/models.py`) — UUID gerado NO PATH CALLABLE (nome original
+  nunca no path) e arquivo gravado **antes do INSERT** (`file.save(...,
+  save=False)` + compensação `_delete_saved_files_best_effort`) → espelhar
+  como `case_attachment_upload_path` (`case_attachments/<case_id>/
+  <uuid4-hex>.<ext>`, ext derivada do MIME aceito); NÃO usar pk no path.
+- Form de criação real: `templates/intake/home.html` (não existe template
+  de upload dedicado) + `IntakeUploadForm`/`CorrectedResubmissionForm` em
+  `apps/intake/forms.py` — campo `attachments` múltiplo em ambos.
 - `templates/intake/case_detail.html` (bloco de documentos existente —
   espelhar para anexos) e `templates/intake/upload`-equivalente do form de
   criação (input de anexos adicional, `multiple`).
@@ -83,7 +90,8 @@ expected_files:
   - apps/intake/forms.py                    # input de anexos
   - apps/intake/tests/test_attachments_upload.py
   - templates/intake/case_detail.html       # bloco Anexos
-  - templates/intake/<form de criação>.html # input múltiplo
+- `templates/intake/home.html`        # input múltiplo de anexos (form de criação)
+  - apps/intake/forms.py                  # campo attachments nos forms
   - config/settings/base.py                 # INSTALLED_APPS + limites D7
 
 out_of_scope:

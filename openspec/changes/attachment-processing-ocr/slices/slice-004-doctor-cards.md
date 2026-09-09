@@ -16,10 +16,11 @@ nunca descarta nem bloqueia. Casos sem anexos ficam visualmente idênticos.
   change 07 (seções por área; adicionar seção aditiva; casos sem anexo →
   chave ausente/vazia).
 - Re-identificação na renderização: `apps/anonymization/reidentify.py::
-  reidentify_text(case, text)` usa o mapa do CASO — para anexos usar o mapa
-  DO ANEXO (colisões convergem; fallback: mapa do caso). Helper novo
-  aditivo `reidentify_text_with_map(map, text)` se necessário (não alterar
-  o existente).
+  reidentify(text, pseudonym_map)` — o núcleo puro JÁ aceita mapa arbitrário
+  (P2 da review: **sem helper novo**); para anexos usar o mapa DO ANEXO
+  (auto-suficiente: namespace estendido do caso, D4 — semântica sem
+  ambiguidade, sem colisões); fallback ao mapa do caso apenas defensivo
+  (teste opcional).
 - `templates/doctor/case_detail.html` — padrão de seções/badges Bootstrap.
 - Testes de view do doctor: `apps/doctor/tests/` (conftest com fixtures de
   login/papel ativo; padrão de assert de conteúdo).
@@ -52,7 +53,7 @@ nunca descarta nem bloqueia. Casos sem anexos ficam visualmente idênticos.
 | --- | --- | --- |
 | R1 | `apps/doctor/presenters.py` | `test_presenter_attachments_reidentified`, `test_presenter_no_attachments_absent` |
 | R2 | `templates/doctor/case_detail.html` | `test_card_mismatch_alert_no_action` |
-| R3 | `apps/doctor/presenters.py` (+helper aditivo se preciso) | `test_no_tokens_rendered` |
+| R3 | `apps/doctor/presenters.py` | `test_no_tokens_rendered` |
 | R4 | `apps/doctor/tests/test_decision.py` (adição) | `test_decide_with_mismatch_attachment_ok` |
 | R5 | `apps/doctor/tests/test_detail.py` (adições) | suíte do slice |
 
@@ -62,8 +63,10 @@ nunca descarta nem bloqueia. Casos sem anexos ficam visualmente idênticos.
 expected_files:
   - apps/doctor/presenters.py            # seção attachments (aditiva)
   - templates/doctor/case_detail.html    # seção Anexos
-  - apps/anonymization/reidentify.py     # helper aditivo p/ mapa arbitrário (se necessário)
   - apps/doctor/tests/{test_detail,test_decision}.py
+
+out_of_scope:
+  - apps/anonymization/reidentify.py (núcleo puro já aceita mapa — sem helper novo)
 
 out_of_scope:
   - apps/attachments (consumido como está); apps/intake; closure (slice 005)
@@ -91,5 +94,6 @@ out_of_scope:
 
 - [ ] R1–R5 comprovados; zero tokens na página (assert com tokens no resumo)
 - [ ] Mismatch = alerta consultivo; decisão segue normal (POST testado)
-- [ ] Casos sem anexos idênticos (sem seção); helper de reidentify aditivo
+- [ ] Casos sem anexos idênticos (sem seção); reidentify puro usado com o
+      mapa do anexo (sem helper novo, sem ambiguidade de merge)
 - [ ] Gate parcial do slice verde

@@ -12,11 +12,18 @@ resumo + evidence persistidos na row e em evento. Falha → `failed`.
 - Slices 001–002 entregues (row com `extracted_text`; task extrai e deixa
   `processing`; eventos `CASE_ATTACHMENT_*` existem — falta o PROCESSED).
 - Design D4 (`openspec/changes/attachment-processing-ocr/design.md`) —
-  convergência determinística de tokens (precedente
-  `apps/pipeline/prior_case.py::_anonymized_reason`, que usa espaço próprio
-  e converge com o mapa do caso para o mesmo paciente).
+  **semeadura explícita do namespace de tokens do caso** (emenda da review:
+  sem semeadura, `<PESSOA_1>` do anexo não é o `<PESSOA_1>` do caso e a
+  verificação colapsa em falsos match/mismatch — anexo de OUTRO paciente
+  cujo nome é o 1º PESSOA do texto viraria `<PESSOA_1>` = falso match).
 - `apps/anonymization/services.py::anonymize_text` (núcleo, mapa fresco por
-  chamada) — o wrapper novo é ADITIVO, não altera `anonymize_case_text`.
+  chamada — numeração por **primeira ocorrência no texto**; NÃO há
+  convergência espontânea entre textos) — o wrapper novo e a semeadura do
+  operador são ADITIVOS, sem alterar `anonymize_case_text` nem o fluxo do
+  caso. `PseudonymOperator` (`apps/anonymization/operators.py`) já indexa
+  por chave canônica `(categoria, valor_canônico)` — estender o
+  construtor para pré-carregar tokens de um seed map e continuar a
+  numeração de cada categoria do máximo do seed.
 - `apps/pipeline/llm.py::get_llm_client().complete(model, messages, *,
   json_schema)` — cliente do pipeline (injeção por monkeypatch nos testes,
   padrão das suítes do change 06); `settings.LLM1_MODEL`.
@@ -25,18 +32,29 @@ resumo + evidence persistidos na row e em evento. Falha → `failed`.
   `apps/llm/services.py::build_case_prompts` (referência de uso) +
   `manage.py seed_prompts` (idempotente — o seed novo entra na mesma
   estrutura com chave própria `ATTACHMENT_VERIFICATION`; **não** usar o
-  mecanismo por-perfil).
+  mecanismo por-perfil). ATENÇÃO: `apps/llm/tests/test_prompts.py` fixa a
+  contagem em 28 e o conjunto exato `EXPECTED_SEED_NAMES` — atualizá-lo
+  para 29 é parte do slice (adicionar `ATTACHMENT_VERIFICATION` ao conjunto
+  e ajustar `test_seed_count_28`-equivalentes/idempotência/preserva edições).
 - Assert de tokens recursivo: padrão das suítes do change 06 (grep
   `assert_no_real_data`/equivalente em `apps/pipeline/tests/`).
 - `apps/cases/events.py` — acrescentar `CASE_ATTACHMENT_PROCESSED`.
 
 ## Requisitos verificáveis
 
-- **R1** `apps/anonymization/services.py::anonymize_attachment_text(case,
-  text)` (aditivo): roda o núcleo `anonymize_text`; devolve resultado com
-  `anonymized_text` + `pseudonym_map` DO ANEXO; o mapa do CASO não é
-  alterado (assert); convergência: entidade igual à do mapa do caso →
-  mesmo token (teste com nome do paciente em ambos).
+- **R1** `apps/anonymization/services.py`: `anonymize_text(text,
+  seed_map=None)` (aditivo — default `None` preserva o fluxo atual,
+  regressão testada) semando o `PseudonymOperator` com o mapa do caso
+  (chave canônica `(categoria, valor)` + `_next_number` continuado do
+  máximo); `anonymize_attachment_text(case, text)` chama com
+  `seed_map=case.pseudonym_map` e devolve `anonymized_text` + mapa do ANEXO
+  contendo APENAS entradas efetivamente usadas no texto (semeadas usadas +
+  novas); o mapa do CASO não é alterado (assert). Testes (emenda da review —
+  os triviais passariam sem o mecanismo): (a) texto com **ruído PESSOA
+  ANTES** do nome do paciente → paciente do caso mantém o token do caso
+  (ex. `<PESSOA_2>` mesmo sendo o 1º do caso); (b) anexo de paciente
+  DIFERENTE → token NOVO distinto do token do caso (número acima do máx);
+  (c) regressão: `anonymize_text(text)` sem seed inalterado.
 - **R2** `patient_token(case)` (apps/attachments; reverse lookup no mapa do
   caso: token cujo valor real == `case.patient_name`); sem
   paciente/token → verificação roda em modo sem-comparação e o resultado é
@@ -72,9 +90,9 @@ resumo + evidence persistidos na row e em evento. Falha → `failed`.
 
 | Requisito | Arquivo(s) esperado(s) | Teste/check |
 | --- | --- | --- |
-| R1 | `apps/anonymization/services.py` | `test_attachment_map_converges_with_case`, `test_case_map_untouched` |
+| R1 | `apps/anonymization/services.py` + `apps/anonymization/operators.py` | `test_attachment_seed_reuses_case_tokens_with_noise`, `test_attachment_different_patient_gets_distinct_token`, `test_case_map_untouched`, `test_anonymize_text_without_seed_unchanged` |
 | R2 | `apps/attachments/verification.py` | `test_patient_token_lookup`, `test_no_patient_token_yields_unknown` |
-| R3 | `apps/llm/prompts_seed.py` | `test_seed_prompts_idempotent_with_verification` |
+| R3 | `apps/llm/prompts_seed.py`, `apps/llm/tests/test_prompts.py` | `test_seed_prompts_idempotent_with_verification` (28→29 + EXPECTED_SEED_NAMES) |
 | R4 | `apps/attachments/verification.py` | `test_verify_match_persists`, `test_verify_mismatch_persists`, `test_verify_llm_failure_failed` |
 | R5 | `apps/attachments/tasks.py` | `test_full_attachment_pipeline_match` (extração→anonimização→verificação) |
 | R6 | `apps/attachments/tests/test_verification.py` | `test_llm_input_tokens_only` (assert recursivo) |
@@ -87,6 +105,8 @@ expected_files:
   - apps/attachments/verification.py
   - apps/attachments/tasks.py                # integra o pipeline do anexo
   - apps/llm/prompts_seed.py                 # +ATTACHMENT_VERIFICATION
+  - apps/llm/tests/test_prompts.py           # 28→29 + EXPECTED_SEED_NAMES (P2 review)
+  - apps/anonymization/operators.py          # semeadura do PseudonymOperator (aditiva)
   - apps/cases/events.py                     # +CASE_ATTACHMENT_PROCESSED
   - apps/attachments/tests/{test_verification.py,test_pipeline_integration.py}
   - apps/anonymization/tests/test_attachment_anonymization.py
@@ -117,6 +137,7 @@ out_of_scope:
 
 - [ ] R1–R6 comprovados; LLM de verificação recebe EXCLUSIVAMENTE tokens
       (assert recursivo com dados reais no texto do anexo)
-- [ ] Mapa do caso intocado; mapa do anexo persistido na row
+- [ ] Semeadura testada com ruído e com paciente diferente (sem coincidência
+      de ordenação); mapa do caso intocado; mapa do anexo persistido na row
 - [ ] Resultado/estado/evento no mesmo atomic; falha → failed sem efeito
 - [ ] Seed idempotente (29º prompt); gate parcial do slice verde

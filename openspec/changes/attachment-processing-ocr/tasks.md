@@ -2,7 +2,7 @@
 
 Baseline: `80be50b` (change 09 arquivado; 852 testes verdes ×2 rodadas).
 
-- [ ] 1. Preflight: árvore limpa; registrar `BASE_REF`; suíte completa uma única vez
+- [x] 1. Preflight: árvore limpa; `BASE_REF = c94c14c`; suíte completa verde ×1 (852 testes; ruff/format/mypy; validate --strict)
 - [ ] 2.1 Slice 001 — app `apps/attachments` (model `CaseAttachment` + migration 0001) + upload de anexos no intake + listagem NIR. Ver `slices/slice-001-model-upload.md`
 - [ ] 2.2 Slice 002 — extração híbrida (PyMuPDF local / `VISION_MODEL` externo com auditoria) + worker cluster `attachments` + trigger pós-anonimização. Ver `slices/slice-002-hybrid-extraction.md`
 - [ ] 2.3 Slice 003 — anonimização alinhada ao caso + verificação LLM de patient-match (tokens apenas; prompt seed 29º). Ver `slices/slice-003-anonymize-verify.md`

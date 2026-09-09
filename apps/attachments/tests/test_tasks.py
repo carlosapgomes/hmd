@@ -1,26 +1,40 @@
-"""Testes do worker ``process_case_attachments`` (R3) e das settings (R5).
+"""Testes do worker ``process_case_attachments`` (R3/R5) e das settings (R5).
 
 A task é chamada DIRETO (sem qcluster — a flag inline e o contrato do worker
 dispensam broker): anexos de fixture com PDFs reais (PyMuPDF) ou bytes de
 imagem fake; OCR externo sempre fake (monkeypatch de
-``apps.attachments.vision.transcribe_image``) — suíte sem rede. Cobre:
+``apps.attachments.vision.transcribe_image``) — suíte sem rede. Desde o slice
+003 o pipeline por anexo é completo (extração → anonimização → verificação), e
+a verificação LLM usa cliente fake via ``LLM_CLIENT_FACTORY`` + seed dos
+prompts + analyzer fake da anonimização (sem modelo spaCy). Cobre:
 processamento de anexo PDF-local e imagem→vision com evento de auditoria
 ANTES do envio; PDF-imagem rasterizado; teto de páginas → failed; falha de
 vision → failed + evento SEM afetar caso nem outros anexos; VISION_MODEL vazio
 → fail-closed; idempotência por etapa (retry não re-envia OCR nem duplica
-evento); anexo removido (antes e durante) → no-op silencioso sem evento; caso
-sem anexos → retorno imediato.
+evento; texto já extraído pula direto para anonimização/verificação); anexo
+removido (antes e durante) → no-op silencioso sem evento; caso sem anexos →
+retorno imediato.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import json
+from collections.abc import Callable, Sequence
+from io import StringIO
+from typing import Any
 
 import pytest
+from django.core.management import call_command
 from django.test import override_settings
 
 from apps.accounts.models import User
-from apps.attachments.models import AttachmentStatus, CaseAttachment, ExtractionMethod
+from apps.anonymization.engine import AnonymizationEngine
+from apps.attachments.models import (
+    AttachmentStatus,
+    CaseAttachment,
+    ExtractionMethod,
+    PatientMatch,
+)
 from apps.attachments.tasks import process_case_attachments
 from apps.cases.events import CaseEventType
 from apps.cases.models import Case, CaseEvent
@@ -35,8 +49,62 @@ _PDF_TEXT_PAGES = [
     "Conclusão: sem alterações isquêmicas induzidas pelo exercício.",
 ]
 
+FAKE_MODEL = "modelo-tasks-anexo-teste"
+
 DISPATCHED = CaseEventType.CASE_ATTACHMENT_EXTERNAL_OCR_DISPATCHED.value
+PROCESSED = CaseEventType.CASE_ATTACHMENT_PROCESSED.value
 FAILED = CaseEventType.CASE_ATTACHMENT_FAILED.value
+
+
+class _EmptyAnalyzer:
+    """Analyzer fake sem detecções (determinístico decide o que tokenizar)."""
+
+    def analyze(
+        self,
+        *,
+        text: str,
+        language: str,
+        score_threshold: float,
+    ) -> list[Any]:
+        del text, language, score_threshold
+        return []
+
+
+class _MatchLlmClient:
+    """Cliente fake da verificação: responde match e registra as chamadas."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[dict[str, str]], dict[str, Any] | None]] = []
+
+    def complete(
+        self,
+        model: str,
+        messages: Sequence[dict[str, str]],
+        *,
+        json_schema: dict[str, Any] | None = None,
+    ) -> str:
+        self.calls.append((model, list(messages), json_schema))
+        return json.dumps(
+            {
+                "patient_match": PatientMatch.MATCH,
+                "summary": "Documento clínico do paciente do caso.",
+                "evidence": "Identificação consistente com o token informado.",
+            },
+            ensure_ascii=False,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _seeded_prompts() -> None:
+    """Seed idempotente dos 29 prompts (a verificação exige o ATTACHMENT_VERIFICATION)."""
+    call_command("seed_prompts", stdout=StringIO())
+
+
+@pytest.fixture(autouse=True)
+def _stub_anonymization_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Engine fake na anonimização dos anexos (sem modelo spaCy na suíte)."""
+    fake = AnonymizationEngine(analyzer=_EmptyAnalyzer(), anonymizer=None)
+    monkeypatch.setattr("apps.anonymization.services.get_anonymization_engine", lambda: fake)
 
 
 def _install_vision_fake(
@@ -66,11 +134,19 @@ def _install_vision_fake(
     return lambda: calls
 
 
+def _run_pipeline(case: Case, client: _MatchLlmClient | None = None) -> _MatchLlmClient:
+    """Executa a task com o cliente fake da verificação injetado."""
+    fake = client or _MatchLlmClient()
+    with override_settings(LLM_CLIENT_FACTORY=lambda: fake, LLM1_MODEL=FAKE_MODEL):
+        process_case_attachments(case.case_id)
+    return fake
+
+
 def _events_of_type(case: Case, event_type: str) -> list[CaseEvent]:
     return list(case.events.filter(event_type=event_type).order_by("id"))
 
 
-# ── R3: processamento feliz ───────────────────────────────────────────────
+# ── R3/R5: processamento feliz (pipeline completo) ─────────────────────────
 
 
 @pytest.mark.django_db
@@ -81,8 +157,9 @@ def test_task_processes_pending_pdf_local(
     attachment_record_factory: Callable[..., CaseAttachment],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """R3: anexo pendente PDF com texto → extração local; status permanece
-    ``processing`` com texto/método persistidos; SEM evento externo."""
+    """R3/R5: anexo pendente PDF com texto → extração local + anonimização +
+    verificação; status final ``processed`` com texto/método/artefatos; SEM
+    evento externo (nem envio ao OCR)."""
     case = case_factory(owner_user)
     attachment = attachment_record_factory(
         case,
@@ -98,20 +175,20 @@ def test_task_processes_pending_pdf_local(
         raise AssertionError("PDF com camada de texto NÃO pode ir ao OCR externo")
 
     monkeypatch.setattr("apps.attachments.vision.transcribe_image", _fake_vision)
-    # Pré-check de configuração real faria fail-closed nos testes (sem env);
-    # o fake cobre o comportamento de transcrição.
     monkeypatch.setattr("apps.attachments.vision.ensure_vision_ready", lambda: None)
 
-    process_case_attachments(case.case_id)
+    _run_pipeline(case)
 
     attachment.refresh_from_db()
-    assert attachment.status == AttachmentStatus.PROCESSING
+    assert attachment.status == AttachmentStatus.PROCESSED
     assert attachment.extraction_method == ExtractionMethod.LOCAL_PDF
     assert attachment.extracted_text
     assert "Paciente: Maria da Silva" in attachment.extracted_text
+    assert attachment.anonymized_text
     assert vision_calls == []
     assert _events_of_type(case, DISPATCHED) == []
     assert _events_of_type(case, FAILED) == []
+    assert len(_events_of_type(case, PROCESSED)) == 1
 
 
 @pytest.mark.django_db
@@ -121,9 +198,9 @@ def test_task_image_vision_dispatch_event_before_send(
     attachment_record_factory: Callable[..., CaseAttachment],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """R3: imagem → vision; o evento de auditoria (actor system, payload
-    filename+método) é gravado ANTES do envio externo e o texto é persistido
-    com status ``processing``."""
+    """R3/R5: imagem → vision; o evento de auditoria (actor system, payload
+    filename+método) é gravado ANTES do envio externo; o pipeline completo
+    fecha como ``processed``."""
     case = case_factory(owner_user)
     attachment = attachment_record_factory(
         case,
@@ -141,12 +218,13 @@ def test_task_image_vision_dispatch_event_before_send(
     monkeypatch.setattr("apps.attachments.vision.transcribe_image", _transcribe)
     monkeypatch.setattr("apps.attachments.vision.ensure_vision_ready", lambda: None)
 
-    process_case_attachments(case.case_id)
+    _run_pipeline(case)
 
     attachment.refresh_from_db()
-    assert attachment.status == AttachmentStatus.PROCESSING
+    assert attachment.status == AttachmentStatus.PROCESSED
     assert attachment.extraction_method == ExtractionMethod.VISION
     assert attachment.extracted_text == "exame de imagem: sem alterações"
+    assert attachment.anonymized_text
 
     dispatched = _events_of_type(case, DISPATCHED)
     assert len(dispatched) == 1
@@ -155,6 +233,7 @@ def test_task_image_vision_dispatch_event_before_send(
     assert dispatched[0].actor_role == "system"
     assert dispatched[0].payload["filename"] == "foto-exame.jpg"
     assert dispatched[0].payload["method"] == ExtractionMethod.VISION
+    assert len(_events_of_type(case, PROCESSED)) == 1
 
 
 @pytest.mark.django_db
@@ -165,7 +244,7 @@ def test_task_pdf_image_rasterizes_and_dispatches_once(
     attachment_record_factory: Callable[..., CaseAttachment],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """R3: PDF-imagem → páginas rasterizadas em PNG; transcrições concatadas
+    """R3/R5: PDF-imagem → páginas rasterizadas em PNG; transcrições concatadas
     com ``\\n\\n`` e UM ÚNICO evento de auditoria (antes da primeira página)."""
     case = case_factory(owner_user)
     attachment = attachment_record_factory(
@@ -177,10 +256,10 @@ def test_task_pdf_image_rasterizes_and_dispatches_once(
     )
     vision_calls = _install_vision_fake(monkeypatch)
 
-    process_case_attachments(case.case_id)
+    _run_pipeline(case)
 
     attachment.refresh_from_db()
-    assert attachment.status == AttachmentStatus.PROCESSING
+    assert attachment.status == AttachmentStatus.PROCESSED
     assert attachment.extraction_method == ExtractionMethod.VISION
     assert attachment.extracted_text == "transcrição fake (1)\n\ntranscrição fake (2)"
     calls = vision_calls()
@@ -189,6 +268,7 @@ def test_task_pdf_image_rasterizes_and_dispatches_once(
         assert content_type == "image/png"
         assert image_bytes.startswith(b"\x89PNG")
     assert len(_events_of_type(case, DISPATCHED)) == 1
+    assert len(_events_of_type(case, PROCESSED)) == 1
 
 
 @pytest.mark.django_db
@@ -201,7 +281,7 @@ def test_task_no_attachments_returns_immediately(
     case = case_factory(owner_user)
     vision_calls = _install_vision_fake(monkeypatch)
 
-    process_case_attachments(case.case_id)
+    _run_pipeline(case)
 
     assert vision_calls() == []
     assert case.events.count() == 0
@@ -218,8 +298,9 @@ def test_task_vision_failure_marks_failed_other_attachments_intact(
     attachment_record_factory: Callable[..., CaseAttachment],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """R3: falha de vision num anexo → ``failed`` + evento de falha; o caso e
-    os demais anexos seguem processados normalmente (fail-closed por anexo)."""
+    """R3/R5: falha de vision num anexo → ``failed`` + evento de falha; o caso e
+    os demais anexos seguem o pipeline completo até ``processed`` (fail-closed
+    por anexo)."""
     case = case_factory(owner_user)
     failing = attachment_record_factory(
         case,
@@ -239,23 +320,25 @@ def test_task_vision_failure_marks_failed_other_attachments_intact(
         monkeypatch, raise_error=LlmError("network", "Falha de conexão com a OpenRouter.")
     )
 
-    process_case_attachments(case.case_id)
+    _run_pipeline(case)
 
     failing.refresh_from_db()
     assert failing.status == AttachmentStatus.FAILED
     assert failing.extracted_text == ""
     assert "Falha de conexão" in failing.failed_reason
     healthy.refresh_from_db()
-    assert healthy.status == AttachmentStatus.PROCESSING
+    assert healthy.status == AttachmentStatus.PROCESSED
     assert healthy.extraction_method == ExtractionMethod.LOCAL_PDF
     assert healthy.extracted_text
+    assert healthy.anonymized_text
 
     failed_events = _events_of_type(case, FAILED)
     assert len(failed_events) == 1
     assert failed_events[0].payload["filename"] == "foto-ruim.jpg"
     assert "Falha de conexão" in str(failed_events[0].payload["reason"])
     # O caso segue íntegro (sem transição/evento de estado do caso).
-    assert _events_of_type(case, DISPATCHED) != []  # auditoria do envio tentado
+    assert len(_events_of_type(case, DISPATCHED)) == 1  # auditoria do envio tentado
+    assert len(_events_of_type(case, PROCESSED)) == 1
 
 
 @pytest.mark.django_db
@@ -288,6 +371,7 @@ def test_task_page_cap_marks_failed_with_clear_reason(
     assert vision_calls() == []
     assert _events_of_type(case, DISPATCHED) == []
     assert len(_events_of_type(case, FAILED)) == 1
+    assert _events_of_type(case, PROCESSED) == []
 
 
 @pytest.mark.django_db
@@ -321,7 +405,7 @@ def test_task_vision_no_model_fails_closed(
     assert _events_of_type(case, DISPATCHED) == []
 
 
-# ── R3: idempotência por etapa e corrida com a ciência do NIR ─────────────
+# ── R3/R5: idempotência por etapa e corrida com a ciência do NIR ──────────
 
 
 @pytest.mark.django_db
@@ -331,9 +415,10 @@ def test_task_retry_skips_extraction(
     attachment_record_factory: Callable[..., CaseAttachment],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """R3: reexecução com ``extracted_text``/``extraction_method`` já
+    """R3/R5: reexecução com ``extracted_text``/``extraction_method`` já
     persistidos → SEM nova chamada de vision nem evento de auditoria (retry do
-    q2 nunca re-envia ao OCR externo)."""
+    q2 nunca re-envia ao OCR externo); o pipeline retoma da anonimização e
+    fecha ``processed``."""
     case = case_factory(owner_user)
     attachment = attachment_record_factory(
         case,
@@ -347,14 +432,16 @@ def test_task_retry_skips_extraction(
     )
     vision_calls = _install_vision_fake(monkeypatch)
 
-    process_case_attachments(case.case_id)
+    _run_pipeline(case)
 
     attachment.refresh_from_db()
     assert vision_calls() == []
     assert attachment.extracted_text == "texto já extraído na tentativa anterior"
-    assert attachment.status == AttachmentStatus.PROCESSING
+    assert attachment.anonymized_text == "texto já extraído na tentativa anterior"
+    assert attachment.status == AttachmentStatus.PROCESSED
     assert _events_of_type(case, DISPATCHED) == []
     assert _events_of_type(case, FAILED) == []
+    assert len(_events_of_type(case, PROCESSED)) == 1
 
 
 @pytest.mark.django_db
@@ -377,7 +464,7 @@ def test_task_attachment_deleted_noop(
     attachment.delete()
     vision_calls = _install_vision_fake(monkeypatch)
 
-    process_case_attachments(case.case_id)
+    _run_pipeline(case)
 
     assert vision_calls() == []
     assert case.events.count() == 0
@@ -390,9 +477,9 @@ def test_task_sibling_deleted_mid_run_is_silent_noop(
     attachment_record_factory: Callable[..., CaseAttachment],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """R3: anexo removido DURANTE o processamento (ciência do NIR) → o passo
+    """R3/R5: anexo removido DURANTE o processamento (ciência do NIR) → o passo
     do anexo re-lê a row e vira no-op silencioso — sem ``failed`` nem evento
-    para o removido; o anexo em processamento segue normal."""
+    para o removido; o anexo em processamento segue o pipeline até ``processed``."""
     case = case_factory(owner_user)
     # O "deleter" é processado primeiro (ordem created_at/pk) e remove o irmão.
     deleting = attachment_record_factory(
@@ -411,16 +498,18 @@ def test_task_sibling_deleted_mid_run_is_silent_noop(
     )
     vision_calls = _install_vision_fake(monkeypatch, delete_attachment_pk=sibling.pk)
 
-    process_case_attachments(case.case_id)
+    _run_pipeline(case)
 
     deleting.refresh_from_db()
-    assert deleting.status == AttachmentStatus.PROCESSING
+    assert deleting.status == AttachmentStatus.PROCESSED
     assert deleting.extraction_method == ExtractionMethod.VISION
     assert deleting.extracted_text
+    assert deleting.anonymized_text
     assert not CaseAttachment.objects.filter(pk=sibling.pk).exists()
     # Nenhum evento de falha para o anexo removido no meio.
     assert _events_of_type(case, FAILED) == []
     assert len(_events_of_type(case, DISPATCHED)) == 1
+    assert len(_events_of_type(case, PROCESSED)) == 1
     assert vision_calls() == [(_JPEG_BYTES, "image/jpeg")]
 
 
@@ -446,8 +535,9 @@ def test_task_self_deleted_mid_extraction_is_silent_noop(
     )
     _install_vision_fake(monkeypatch, delete_attachment_pk=attachment.pk)
 
-    process_case_attachments(case.case_id)
+    _run_pipeline(case)
 
     assert not CaseAttachment.objects.filter(pk=attachment.pk).exists()
     assert _events_of_type(case, FAILED) == []
     assert len(_events_of_type(case, DISPATCHED)) == 1
+    assert _events_of_type(case, PROCESSED) == []

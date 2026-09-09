@@ -24,7 +24,7 @@ from __future__ import annotations
 import importlib.metadata
 import re
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from django.db import transaction
@@ -80,8 +80,19 @@ class AnonymizationCoreResult:
     extraction: DeterministicExtraction
 
 
-def anonymize_text(text: str) -> AnonymizationCoreResult:
+def anonymize_text(
+    text: str,
+    seed_map: Mapping[str, Mapping[str, str]] | None = None,
+) -> AnonymizationCoreResult:
     """Núcleo puro da anonimização: passos 1–5 do design D6 (sem DB).
+
+    ``seed_map`` (aditivo; default ``None`` preserva o fluxo atual) semeia o
+    ``PseudonymOperator`` com o mapa do CASO (change attachment-processing-ocr,
+    slice 003, D4): valores iguais aos de entidades do caso reutilizam o token
+    do caso (o paciente do caso mantém o ``<PESSOA_N>`` do caso qualquer que
+    seja a ordem no texto); valores novos ganham token NOVO numerado acima do
+    máximo do seed. O mapa devolvido contém apenas entradas efetivamente usadas
+    no texto (semeadas usadas + novas). O mapa do caso NÃO é alterado.
 
     Exceção de qualquer etapa propaga (fail-closed é fechado no worker do slice
     004). Texto vazio retorna resultado com zero entidades (defensivo; o
@@ -112,7 +123,7 @@ def anonymize_text(text: str) -> AnonymizationCoreResult:
             candidates.append(SpanCandidate(start, end, category, deterministic=False))
 
     winners = merge_span_candidates(candidates)
-    operator = PseudonymOperator()
+    operator = PseudonymOperator(seed_map=seed_map)
     counts: Counter[str] = Counter()
     replacements: list[tuple[int, int, str]] = []
     for span in winners:
@@ -126,6 +137,20 @@ def anonymize_text(text: str) -> AnonymizationCoreResult:
         anonymization_report=_anonymization_report(counts),
         extraction=extraction,
     )
+
+
+def anonymize_attachment_text(case: Case, text: str) -> AnonymizationCoreResult:
+    """Anonimiza o texto de um anexo no espaço de tokens do caso (D4/R1).
+
+    Wrapper ADITIVO do núcleo para anexos clínicos (change
+    attachment-processing-ocr, slice 003): chama ``anonymize_text`` com
+    ``seed_map=case.pseudonym_map`` (semeadura explícita — o paciente do caso
+    mantém o token do caso; paciente diferente ganha token novo). Devolve o
+    resultado puro (texto + mapa do ANEXO com apenas entradas efetivamente
+    usadas); a persistência na row do anexo é responsabilidade da task
+    (``apps/attachments/tasks.py``). O mapa e o texto do caso não são tocados.
+    """
+    return anonymize_text(text, seed_map=case.pseudonym_map)
 
 
 def anonymize_case_text(case: Case) -> AnonymizationCoreResult:

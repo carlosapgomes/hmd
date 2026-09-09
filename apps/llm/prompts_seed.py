@@ -1,10 +1,14 @@
-"""Conteúdo versionado dos 28 prompts do seed (change llm-pipeline-per-type, slice 003, R2).
+"""Conteúdo versionado dos 29 prompts do seed (change llm-pipeline-per-type,
+slice 003, R2 + change attachment-processing-ocr, slice 003, R3).
 
 Sistema de nomes do design D3 (emenda aprovada no plano §7): systems NEUTROS
 compartilhados por estágio (``llm1.system``/``llm2.system``) e users por tipo
 (``proc.<type>.llm1.user``/``proc.<type>.llm2.user`` × 13 = 28 templates) —
 a composição união exige UMA chamada por estágio, então o system não carrega
-tipo.
+tipo. O 29º (``ATTACHMENT_VERIFICATION``, aditivo do change de anexos) fica
+FORA do mecanismo por-perfil: um prompt único da verificação de patient-match
+dos anexos clínicos, com os placeholders do texto anonimizado e do token do
+paciente do caso.
 
 Conteúdo clínico por tipo deriva da seção do tipo em
 ``temp/parametrosHMD.md`` (labels do catálogo em
@@ -185,10 +189,59 @@ def _build_user_prompt(procedure_type: str, stage: str) -> str:
     return "\n".join(lines)
 
 
-# Registro canônico (nome → conteúdo) dos 28 prompts seedados.
+# ── Verificação de anexos (change attachment-processing-ocr, D4/R3) ────────
+#
+# 29º conteúdo do seed, FORA do mecanismo por-perfil: a verificação de
+# patient-match de um anexo clínico é UMA chamada com prompt próprio — o
+# consumidor (apps/attachments/verification.py) monta a mensagem diretamente a
+# partir deste conteúdo, substituindo os placeholders ``{{attachment_text}}``
+# (texto ANONIMIZADO do anexo — só tokens) e ``{{patient_token}}`` (token do
+# paciente do caso, ou indicação de ausência). Regras: classificar se o
+# documento é exame/laudo/relatório clínico; comparar o paciente do documento
+# com o token quando houver; nunca introduzir valores reais; saída JSON com
+# patient_match (match|mismatch|unknown) + summary + evidence. Sem token do
+# paciente → sem comparação possível → patient_match=unknown.
+ATTACHMENT_VERIFICATION = "ATTACHMENT_VERIFICATION"
+
+_ATTACHMENT_VERIFICATION_PROMPT = (
+    "Você é o verificador de anexos clínicos da Hemodinâmica (HMD) — Hospital "
+    "Geral Roberto Santos. Você recebe o texto ANONIMIZADO de um documento "
+    "anexado ao processo (exame, laudo ou relatório) e, quando houver, o token "
+    "do paciente do caso, e responde APENAS com o objeto JSON pedido no schema "
+    "fornecido (response_format).\n"
+    "Regras obrigatórias:\n"
+    "- Retorne somente o JSON do schema, sem markdown, sem blocos de código e "
+    "sem texto antes ou depois do objeto.\n"
+    "- Escreva os campos narrativos em português brasileiro (pt-BR).\n"
+    "- Avalie se o documento é exame, laudo ou relatório clínico e registre em "
+    "summary/evidence o que ele é e o que sustenta a conclusão.\n"
+    "- Quando o token do paciente do caso for informado, compare-o com o "
+    "paciente identificado no documento: patient_match=match quando o paciente "
+    "do documento corresponde ao token; patient_match=mismatch quando o "
+    "documento identifica OUTRO paciente; patient_match=unknown quando o "
+    "documento não identifica paciente ou a comparação é impossível.\n"
+    "- Quando o token do paciente NÃO for informado (paciente do caso "
+    "desconhecido), não há comparação possível: responda patient_match=unknown "
+    "e registre em summary/evidence apenas a avaliação do documento.\n"
+    "- Pessoas e dados identificadores estão tokenizados no texto (ex.: "
+    "<PESSOA_1>, <CPF_1>); cite apenas tokens nos campos narrativos e NUNCA "
+    "introduza valores reais.\n"
+    "- Não invente: summary e evidence refletem apenas o texto fornecido; "
+    "mismatch/unknown nunca descartam nada — são informação para o médico.\n"
+    "\n"
+    "DOCUMENTO ANEXADO (texto anonimizado):\n"
+    "{{attachment_text}}\n"
+    "\n"
+    "PACIENTE DO CASO (token):\n"
+    "{{patient_token}}"
+)
+
+
+# Registro canônico (nome → conteúdo) dos 29 prompts seedados.
 PROMPT_SEED_CONTENTS: dict[str, str] = {}
 for stage in STAGES:
     PROMPT_SEED_CONTENTS[system_prompt_name(stage)] = _SYSTEM_PROMPT_CONTENTS[stage]
     for profile in PROCEDURE_PROFILES:  # ordem canônica do catálogo
         name = user_prompt_name(profile.procedure_type, stage)
         PROMPT_SEED_CONTENTS[name] = _build_user_prompt(profile.procedure_type, stage)
+PROMPT_SEED_CONTENTS[ATTACHMENT_VERIFICATION] = _ATTACHMENT_VERIFICATION_PROMPT

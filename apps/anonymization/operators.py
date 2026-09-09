@@ -28,6 +28,7 @@ factory do engine.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import date
 
 # ── Categorias canônicas de token (contrato D5/R1) ────────────────────────
@@ -69,6 +70,11 @@ _DIGITS_ONLY_CATEGORIES = frozenset({CPF, CNS, OCORRENCIA})
 _FOLDED_TEXT_CATEGORIES = frozenset({PESSOA, LOCAL, ORGANIZACAO})
 
 
+# Padrão de token ``<CATEGORIA_N>`` (semeadura D4/R1): extrai categoria e
+# número de um token do mapa do caso para continuar a numeração do máximo.
+_TOKEN_PATTERN = re.compile(r"^<(?P<category>[A-Z_]+)_(?P<number>\d+)>$")
+
+
 class PseudonymOperator:
     """Atribui tokens estáveis ``<CATEGORIA_N>`` por valor (fallback D5/R1).
 
@@ -81,12 +87,55 @@ class PseudonymOperator:
     a numeração segue o texto). Após o uso, ``mapping`` expõe
     ``token → {"value", "entity_type"}`` guardando a forma ORIGINAL da PRIMEIRA
     ocorrência do valor (não a canônica) — base do roundtrip do slice 005.
+
+    Semeadura aditiva (change attachment-processing-ocr, slice 003, D4): o
+    construtor opcionalmente recebe o ``seed_map`` do CASO (``token →
+    {"value", "entity_type"}``) e pré-carrega ``_tokens`` pela chave canônica
+    ``(entity_type, _canonical_value(value))`` + ``_next_number`` de cada
+    categoria no máximo do seed. Sem seed (default ``None``) o comportamento é
+    idêntico ao anterior — aditivo, nenhum fluxo existente muda. O ``_mapping``
+    NÃO é pré-carregado: registra apenas os tokens EFETIVAMENTE usados no texto
+    (uma entrada por token semeado reutilizado é criada no primeiro ``operate``
+    que o devolve — o mapa resultante tem só o usado).
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        seed_map: Mapping[str, Mapping[str, str]] | None = None,
+    ) -> None:
         self._tokens: dict[tuple[str, str], str] = {}
         self._next_number: dict[str, int] = {}
         self._mapping: dict[str, dict[str, str]] = {}
+        if seed_map:
+            self._seed(seed_map)
+
+    def _seed(self, seed_map: Mapping[str, Mapping[str, str]]) -> None:
+        """Pré-carrega os tokens do caso por chave canônica (D4/R1).
+
+        Para cada token do seed, a chave ``(entity_type, valor_canônico)`` do
+        valor real aponta para o token do caso — um valor igual ao de uma
+        entidade do caso (o paciente, por exemplo) reutiliza o MESMO token,
+        qualquer que seja a ordem no texto do anexo. A numeração de cada
+        categoria continua do MAIOR número do seed (paciente diferente no anexo
+        ganha token NOVO, acima do máximo do caso). Entradas corrompidas do JSON
+        (sem ``value``/``entity_type``) são ignoradas defensivamente.
+        """
+        for token, entry in seed_map.items():
+            if not isinstance(token, str) or not isinstance(entry, Mapping):
+                continue
+            value = entry.get("value")
+            entity_type = entry.get("entity_type")
+            if not isinstance(value, str) or not value or not isinstance(entity_type, str):
+                continue
+            self._tokens[(entity_type, _canonical_value(value, entity_type))] = token
+            match = _TOKEN_PATTERN.fullmatch(token)
+            if match is None:
+                continue
+            category = match.group("category")
+            number = int(match.group("number"))
+            current = self._next_number.get(category, 0)
+            if number > current:
+                self._next_number[category] = number
 
     def operate(self, text: str, entity_type: str) -> str:
         """Token estável de ``text`` na categoria ``entity_type``.
@@ -95,11 +144,16 @@ class PseudonymOperator:
         ``_canonical_value``): a primeira ocorrência de um valor (novo na
         categoria) cria o token com o próximo número da categoria; repetições do
         mesmo valor — mesmo em grafia variante — reusam o token e não criam nova
-        entrada no mapa.
+        entrada no mapa. O token semeado (já presente em ``_tokens`` sem estar
+        em ``_mapping``) é registrado no mapa no PRIMEIRO uso no texto — o mapa
+        do anexo contém apenas entradas efetivamente usadas (semeadas usadas +
+        novas; R1/D4).
         """
         key = (entity_type, _canonical_value(text, entity_type))
         token = self._tokens.get(key)
         if token is not None:
+            if token not in self._mapping:
+                self._mapping[token] = {"value": text, "entity_type": entity_type}
             return token
         number = self._next_number.get(entity_type, 0) + 1
         self._next_number[entity_type] = number

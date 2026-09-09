@@ -1,11 +1,11 @@
-"""Comando ``seed_prompts`` — seed idempotente dos 28 prompts (slice 003, R2).
+"""Comando ``seed_prompts`` — seed idempotente dos prompts versionados (slice 003, R2).
 
 Garante exatamente UMA versão ativa por nome (2 systems neutros + 26 users
 por tipo): quando não há ativo, cria uma nova versão **ativa** (v1 se não
 houver histórico; ``max(version)+1`` se houver); quando já há ativo, é
 no-op — nunca reativa versão antiga, nunca sobrescreve conteúdo editado e
 nunca apaga histórico (linhas/versões preservadas para auditoria/rollback).
-Reexecutar não duplica (28 templates no total).
+Reexecutar não duplica (contagem = len(PROMPT_SEED_CONTENTS), hoje 29: 2 system + 26 user por perfil + 1 attachment).
 
 Uso:
     uv run python manage.py seed_prompts --settings=config.settings.dev
@@ -18,7 +18,9 @@ from apps.llm.prompts_seed import PROMPT_SEED_CONTENTS
 
 
 class Command(BaseCommand):
-    help = "Seed idempotente dos prompts LLM do HMD (28 templates: 2 system + 26 user)"
+    help = (
+        "Seed idempotente dos prompts LLM do HMD (29 templates: 2 system + 26 user + 1 attachment)"
+    )
 
     def handle(self, *args: object, **options: object) -> None:
         created_count = 0

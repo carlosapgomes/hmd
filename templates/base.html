@@ -40,6 +40,13 @@
     </nav>
     {% endif %}
     {% if user.is_authenticated %}
+    <!-- Painel gerencial (dashboard-notifications-pwa, slice 003, R4): link
+         transversal, visível a TODO autenticado (sem gate de papel). -->
+    <nav class="navbar-nav flex-row align-items-center gap-2 ms-3" aria-label="Painel">
+      <a class="nav-link px-2" href="{% url 'dashboard:home' %}">Painel</a>
+    </nav>
+    {% endif %}
+    {% if user.is_authenticated %}
     <!-- Sessão: sino de notificações · papel ativo · display name · avatar/perfil · troca de papel · sair -->
     <div class="d-flex align-items-center gap-3 ms-auto">
       <!-- Sino com badge de não lidas (change 11, slice 002, R4): contagem SSR

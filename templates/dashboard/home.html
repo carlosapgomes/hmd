@@ -1,0 +1,122 @@
+{% extends 'base.html' %}
+{% block title %}Painel gerencial — {{ app_display_name }}{% endblock %}
+
+{% block content %}
+<!-- Painel gerencial (change dashboard-notifications-pwa, slice 003, D3):
+     métricas agregadas ZERO-PHI — nenhum nome/nº de registro/idade de paciente.
+     A tabela por tipo conta PROCEDIMENTOS (rows), não casos: o somatório das
+     linhas difere do total de casos do resumo (esperado). -->
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="h4 mb-0">Painel gerencial</h1>
+  <nav class="btn-group" aria-label="Período das métricas">
+    {% for option in period_options %}
+    <a href="?period={{ option.value }}"
+       class="btn btn-sm {% if option.value == period %}btn-primary{% else %}btn-outline-secondary{% endif %}"
+       {% if option.value == period %}aria-current="page"{% endif %}>{{ option.label }}</a>
+    {% endfor %}
+  </nav>
+</div>
+
+<!-- Cards de resumo do período -->
+<div class="row row-cols-2 row-cols-md-5 g-3 mb-4">
+  <div class="col">
+    <div class="card h-100 text-center">
+      <div class="card-body">
+        <div class="fs-3 fw-bold">{{ summary.total }}</div>
+        <div class="text-muted small text-uppercase">Total</div>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card h-100 text-center border-success">
+      <div class="card-body">
+        <div class="fs-3 fw-bold text-success">{{ summary.agendados }}</div>
+        <div class="text-muted small text-uppercase">Agendados</div>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card h-100 text-center border-danger">
+      <div class="card-body">
+        <div class="fs-3 fw-bold text-danger">{{ summary.negados }}</div>
+        <div class="text-muted small text-uppercase">Negados</div>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card h-100 text-center border-secondary">
+      <div class="card-body">
+        <div class="fs-3 fw-bold text-secondary">{{ summary.em_andamento }}</div>
+        <div class="text-muted small text-uppercase">Em andamento</div>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card h-100 text-center">
+      <div class="card-body">
+        <div class="fs-3 fw-bold">{{ summary.encerrados }}</div>
+        <div class="text-muted small text-uppercase">Encerrados</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <!-- Tabela por tipo de procedimento (ordem canônica do catálogo) -->
+  <div class="col-lg-8">
+    <div class="card h-100">
+      <div class="card-header">Procedimentos por tipo</div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle">
+          <thead>
+            <tr>
+              <th scope="col">Tipo</th>
+              <th scope="col" class="text-end">Total</th>
+              <th scope="col" class="text-end">Aprovados</th>
+              <th scope="col" class="text-end">Negados</th>
+              <th scope="col" class="text-end">Sem decisão</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in by_type %}
+            <tr>
+              <td>{{ row.label }}</td>
+              <td class="text-end">{{ row.total }}</td>
+              <td class="text-end">{{ row.approved }}</td>
+              <td class="text-end">{{ row.denied }}</td>
+              <td class="text-end">{{ row.pending }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="card-footer text-muted small">
+        Esta tabela conta procedimentos, não casos: um caso com vários
+        procedimentos aparece mais de uma vez — o somatório das linhas difere
+        do total de casos do resumo.
+      </div>
+    </div>
+  </div>
+
+  <!-- Unidade e tempo médio -->
+  <div class="col-lg-4">
+    <div class="card mb-3">
+      <div class="card-header">Agendamentos por unidade</div>
+      <ul class="list-group list-group-flush">
+        <li class="list-group-item d-flex justify-content-between">
+          <span>{{ unit_labels.unit_1 }}</span><span class="fw-bold">{{ by_unit.unit_1 }}</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between">
+          <span>{{ unit_labels.unit_2 }}</span><span class="fw-bold">{{ by_unit.unit_2 }}</span>
+        </li>
+      </ul>
+    </div>
+    <div class="card text-center">
+      <div class="card-body">
+        <div class="fs-3 fw-bold">{{ avg_time }}</div>
+        <div class="text-muted small text-uppercase">Tempo médio até decisão médica</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -58,6 +58,10 @@ INSTALLED_APPS = [
     # CaseAttachment + validação própria (apps/attachments/services.py); o
     # worker/extração/verificação chegam nos slices 002/003.
     "apps.attachments",
+    # Painel gerencial (change dashboard-notifications-pwa, slice 003):
+    # serviços puros de métricas + view dashboard:home (login-required,
+    # transversal, zero-PHI). Sem models próprios.
+    "apps.dashboard",
 ]
 
 # Modelo de usuário customizado (D8) — estendido uma única vez.

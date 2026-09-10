@@ -20,4 +20,7 @@ urlpatterns: list[URLPattern | URLResolver] = [
     # fila por estado com abas (aguardando/processados), detalhe limitado,
     # POSTs de ação (confirmar/negar/desmarcar) e PDF pós-decisão.
     path("scheduler/", include("apps.scheduler.urls")),
+    # Painel gerencial (change dashboard-notifications-pwa, slice 003): /dashboard/ —
+    # métricas por período/tipo/unidade (zero-PHI) com namespace ``dashboard``.
+    path("dashboard/", include("apps.dashboard.urls")),
 ]

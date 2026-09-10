@@ -8,7 +8,7 @@ Notificações in-app por marcos do ciclo do caso (resposta final, pronto para a
 
 ### Requirement: Notificações por marcos do caso
 
-O sistema SHALL criar notificação in-app quando eventos-marco da FSM ocorrerem: resposta final publicada e reabertura por intercorrência notificam o criador do caso; caso pronto para agendamento notifica todos os usuários com papel scheduler. As notificações SHALL ser idempotentes (evento reprocessado não duplica), SHALL conter apenas texto fixo e identificador do caso (sem dados de paciente) e uma falha na criação SHALL jamais impedir a transição do caso.
+O sistema SHALL criar notificação in-app quando eventos-marco da FSM ocorrerem: resposta final publicada e reabertura por intercorrência notificam o criador do caso; caso pronto para agendamento notifica todos os usuários com papel scheduler. As notificações SHALL ser idempotentes (evento reprocessado não duplica), SHALL conter apenas texto fixo e identificador do caso (sem dados de paciente) e uma falha na criação SHALL jamais impedir a transição do caso. Textos canônicos (implementação): preview de agendamento = "Caso aguardando confirmação de agendamento"; preview de reabertura = "Reconfirme os dados do caso"; fallback de resposta final = "Resposta final disponível para o caso".
 
 #### Scenario: Resposta final notifica o criador
 

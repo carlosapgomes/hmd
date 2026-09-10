@@ -1,11 +1,16 @@
 """Modelos de conta e acesso do HMD (slice 003).
 
 ``Role`` (papéis fixos do sistema), ``DoctorSpecialty`` (subtipos de médico,
-change doctor-queue-decision) e ``User(AbstractUser)`` customizado com
-multi-role, status de conta e registro profissional opcional par-ou-nada.
-``AUTH_USER_MODEL`` aponta para ``accounts.User`` (D8).
+change doctor-queue-decision), ``User(AbstractUser)`` customizado com
+multi-role, status de conta e registro profissional opcional par-ou-nada e
+``UserNotification`` (notificações in-app por marcos do caso, change
+dashboard-notifications-pwa). ``AUTH_USER_MODEL`` aponta para
+``accounts.User`` (D8).
 """
 
+import uuid
+
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
@@ -143,3 +148,62 @@ class User(AbstractUser):
         if self.professional_council and self.professional_council_number:
             return f"{self.professional_council} {self.professional_council_number}"
         return ""
+
+
+class NotificationType(models.TextChoices):
+    """Tipo da notificação in-app — os 3 marcos do ciclo (change 11, D1)."""
+
+    FINAL_REPLY_POSTED = "final_reply_posted", "Resposta final publicada"
+    SCHEDULER_REQUESTED = "scheduler_requested", "Caso pronto para agendamento"
+    SCHEDULING_REOPENED = "scheduling_reopened", "Caso reaberto por intercorrência"
+
+
+class UserNotification(models.Model):
+    """Notificação in-app de um marco do caso para um usuário (D1).
+
+    Derivada do EVENTO da trilha (``CaseEvent``), nunca da mensagem ``system``
+    (D6): o par (``recipient``, ``event``) é único — idempotência estrutural
+    para signal re-disparado. O conteúdo é sempre texto fixo + o caso
+    referenciado (zero PHI). A row nasce na mesma transação do evento: se o
+    caso sofrer rollback, a notificação some junto (desejável).
+    """
+
+    notification_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    case = models.ForeignKey(
+        "cases.Case",
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    # Reserva (nullable): eventos futuros podem não ter row de trilha própria.
+    event = models.ForeignKey(
+        "cases.CaseEvent",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    notification_type = models.CharField(max_length=30, choices=NotificationType.choices)
+    title = models.CharField(max_length=160)
+    body_preview = models.CharField(max_length=240)
+    created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["recipient", "read_at", "created_at"]),
+            models.Index(fields=["case", "created_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["recipient", "event"], name="uniq_notif_recipient_event"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"UserNotification {self.notification_type} → {self.recipient_id}"

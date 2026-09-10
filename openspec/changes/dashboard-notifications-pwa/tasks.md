@@ -3,7 +3,7 @@
 Baseline: `4f756cf` (change 10 arquivado; 940 testes verdes ×2 rodadas).
 
 - [x] 1. Preflight: árvore limpa; `BASE_REF = 520f6a6`; suíte completa verde ×1 (940 testes; ruff/format/mypy; validate --strict)
-- [ ] 2.1 Slice 001 — `UserNotification` (model+migration) + services + signal de marcos (idempotente, fan-out schedulers, fail-safe). Ver `slices/slice-001-notification-core.md`
+- [x] 2.1 Slice 001 — `UserNotification` (model+migration) + services + signal de marcos (idempotente, fan-out schedulers, fail-safe). Review: sem P0/P1 (marcos/destinatários/mapeamento de sources 100% verificados contra os produtores reais); 3 P2s report-only, 2 fechados pelo pai (savepoint no signal; strings canônicas registradas na spec), P2-3 (rows event=NULL fora da constraint) aceito como reserva documentada
 - [ ] 2.2 Slice 002 — UI de notificações: badge/context processor, lista com janela, abrir+redirect por papel, marcar-todas, endpoint JSON. Ver `slices/slice-002-notification-ui.md`
 - [ ] 3.1 Slice 003 — app `apps/dashboard`: métricas por período/tipo/unidade (fontes imutáveis, zero-PHI) + view/template + navbar. Ver `slices/slice-003-dashboard.md`
 - [ ] 4.1 Slice 004 — PWA: ícones HMD (script+assets), manifest, service worker, wiring `base.html`. Ver `slices/slice-004-pwa.md`

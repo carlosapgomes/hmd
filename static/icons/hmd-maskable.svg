@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="HMD">
+  <title>HMD — Hemodinâmica</title>
+  <!-- Maskable: fundo full-bleed + marca em ~80% central (safe zone) -->
+  <rect width="512" height="512" fill="#0d4a8a"/>
+  <g transform="translate(256 256) scale(0.8)">
+    <text x="0" y="48.5" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-weight="bold" font-size="133" fill="#ffffff">HMD</text>
+  </g>
+</svg>

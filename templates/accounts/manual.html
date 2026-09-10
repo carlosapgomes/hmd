@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+
+{# Manual de uso do HMD (change 11, slice 005, R2/D5): página ESTÁTICA por papel,
+   sem dados de caso. Descreve o fluxo REAL (specs promovidas + telas) e é
+   imprimível (CSS @media print abaixo). #}
+{% block title %}Manual de uso — {{ app_display_name }}{% endblock %}
+
+{% block content %}
+<style>
+  /* Manual imprimível (slice 005, R2): remove a navegação/chrome e evita
+     quebrar seções no meio ao imprimir. */
+  @media print {
+    .app-header, .no-print { display: none !important; }
+    .app-shell { max-width: 100% !important; }
+    section { break-inside: avoid; }
+    a[href] { text-decoration: none; color: inherit; }
+  }
+</style>
+
+<article class="container py-3 manual" aria-label="Manual de uso">
+  <header class="mb-4">
+    <h1 class="h3 mb-1">Manual de uso — {{ app_display_name }}</h1>
+    <p class="text-muted mb-0">
+      Guia das operações de cada papel no ciclo do caso. Esta página é estática
+      (não exibe dados de pacientes) e pode ser impressa.
+    </p>
+  </header>
+
+  <section id="ciclo" class="mb-5" aria-labelledby="ciclo-titulo">
+    <h2 id="ciclo-titulo" class="h4">Visão geral do ciclo do caso</h2>
+    <p>
+      Todo caso percorre o mesmo ciclo, do envio pelo NIR até o encerramento. A
+      sequência abaixo mostra os estados do caso (<code>NEW</code> →
+      <code>CLEANED</code>) e o papel que atua em cada ponto.
+    </p>
+    <ol class="list-group list-group-numbered mb-3">
+      <li class="list-group-item">
+        <strong>NIR</strong> envia o relatório e declara os tipos de procedimento —
+        o caso nasce em <code>NEW</code> e entra em extração
+        (<code>PDF_EXTRACTING</code>).
+      </li>
+      <li class="list-group-item">
+        <strong>Sistema</strong> processa o texto: anonimização
+        (<code>ANONYMIZING</code>), extração (<code>LLM_EXTRACTING</code>) e
+        sumarização (<code>LLM_SUMMARIZING</code>) chegam a
+        <code>AWAITING_DOCTOR</code>. Uma falha de processamento leva o caso a
+        <code>FAILED</code>.
+      </li>
+      <li class="list-group-item">
+        <strong>Médico</strong> decide por procedimento —
+        <code>DOCTOR_DENIED</code> quando nega todos (publica a resposta final) ou
+        <code>DOCTOR_ACCEPTED</code> quando aprova ao menos um (segue para o
+        agendamento).
+      </li>
+      <li class="list-group-item">
+        <strong>Agendador</strong> confirma ou nega por unidade —
+        <code>SCHEDULER_REQUESTED</code> → <code>AWAITING_SCHEDULING</code> →
+        <code>SCHEDULING_CONFIRMED</code> ou <code>SCHEDULING_DENIED</code>.
+      </li>
+      <li class="list-group-item">
+        Resposta final publicada (<code>FINAL_REPLY_POSTED</code>); o
+        <strong>NIR</strong> dá ciência do recebimento
+        (<code>AWAITING_NIR_ACK</code>).
+      </li>
+      <li class="list-group-item">
+        <strong>Sistema</strong> limpa os dados clínicos —
+        <code>CLEANING</code> → <code>CLEANED</code> (caso concluído).
+      </li>
+    </ol>
+    <p class="small text-muted mb-0">
+      <strong>Estados possíveis:</strong>
+      <code>NEW</code>, <code>PDF_EXTRACTING</code>, <code>ANONYMIZING</code>,
+      <code>LLM_EXTRACTING</code>, <code>LLM_SUMMARIZING</code>,
+      <code>AWAITING_DOCTOR</code>, <code>DOCTOR_DENIED</code>,
+      <code>DOCTOR_ACCEPTED</code>, <code>SCHEDULER_REQUESTED</code>,
+      <code>AWAITING_SCHEDULING</code>, <code>SCHEDULING_CONFIRMED</code>,
+      <code>SCHEDULING_DENIED</code>, <code>FAILED</code>,
+      <code>FINAL_REPLY_POSTED</code>, <code>AWAITING_NIR_ACK</code>,
+      <code>CLEANING</code>, <code>CLEANED</code>.
+    </p>
+  </section>
+
+  <section id="nir" class="mb-5" aria-labelledby="nir-titulo">
+    <h2 id="nir-titulo" class="h4">NIR — envio e acompanhamento</h2>
+    <ul>
+      <li>
+        <strong>Enviar relatório</strong> (<em>Enviar relatório</em>): crie um caso
+        anexando de 1 a N PDFs do relatório de regulação e declarando ao menos um
+        tipo de procedimento do catálogo. Arquivo não-PDF ou acima dos limites é
+        rejeitado com erro claro, sem criar o caso.
+      </li>
+      <li>
+        <strong>Anexos de evidência</strong>: no mesmo envio (ou no reenvio
+        corrigido) você pode incluir anexos em JPEG, PNG ou PDF, respeitando os
+        limites de quantidade e tamanho. Os anexos ficam listados no detalhe do
+        caso com nome e status de processamento; um caso sem anexos segue o fluxo
+        normal.
+      </li>
+      <li>
+        <strong>Gate de regulação</strong>: se os documentos estiverem fora do
+        padrão, o caso fica retido para revisão. No detalhe você pode
+        <em>liberar</em> (bypass, com registro na trilha) ou <em>reenviar os
+        documentos</em> para reprocessar do início. Se os procedimentos
+        detectados divergirem dos declarados, o caso também é retido — nesse
+        caso só há a liberação (o reenvio não se aplica à retenção por
+        divergência).
+      </li>
+      <li>
+        <strong>Meus casos</strong> (<em>Meus casos</em>): a lista separa os casos
+        <em>ativos</em> (em andamento) dos <em>encerrados</em> (<code>CLEANED</code>).
+        O detalhe mostra documentos, trilha e comunicações apenas dos seus casos.
+      </li>
+      <li>
+        <strong>Ciência do recebimento</strong>: quando a resposta final é
+        publicada, o detalhe em destaque permite confirmar o recebimento — ao dar
+        ciência, o caso é encerrado e os dados clínicos são limpos. Apenas o autor
+        do caso pode confirmar.
+      </li>
+      <li>
+        <strong>Reenvio corrigido</strong>: para um caso seu já encerrado, é
+        possível reenviar de forma corrigida; o sistema cria um novo caso que
+        percorre o pipeline desde o início, vinculado ao original com motivo
+        obrigatório e tipos declarados novamente (nunca herdados).
+      </li>
+    </ul>
+  </section>
+
+  <section id="medico" class="mb-5" aria-labelledby="medico-titulo">
+    <h2 id="medico-titulo" class="h4">Médico — decisão por procedimento</h2>
+    <ul>
+      <li>
+        <strong>Fila médica</strong> (<em>Fila médica</em>): casos aguardando
+        decisão (<code>AWAITING_DOCTOR</code>) e já decididos, ordenados por
+        chegada, com filtro por subtipo (médico generalista e admin veem todos).
+      </li>
+      <li>
+        <strong>Detalhe re-identificado</strong>: identificação do paciente,
+        histórico/sumário, estrutura extraída, PDF original, alertas da
+        <em>policy</em> com recomendação por procedimento e requisitos gerais
+        acionáveis. Os alertas são consultivos e não bloqueiam a decisão.
+      </li>
+      <li>
+        <strong>Casos prévios (prior-case)</strong>: para cada procedimento com
+        caso prévio, um card mostra data, desfecho e o motivo real da decisão
+        anterior.
+      </li>
+      <li>
+        <strong>Cards de anexos com verificação de paciente</strong>: quando o
+        caso tem anexos, cada um aparece em um card com status, método e,
+        <strong>após o processamento</strong>, o resultado da verificação de
+        paciente (<em>match</em>, <em>mismatch</em> ou <em>unknown</em>) com
+        resumo e evidência — anexos ainda pendentes/em processamento ou que
+        falharam aparecem apenas com o status. Uma divergência
+        (<em>mismatch</em>) aparece como <strong>alerta consultivo</strong> — ela
+        <em>nunca</em> descarta nem bloqueia o caso; a decisão é sempre do médico.
+      </li>
+      <li>
+        <strong>Decidir</strong>: registre a <em>decisão por procedimento</em>
+        (aprovar ou negar), com motivo obrigatório em cada negativa. Negações
+        totais publicam a resposta final ao NIR; ao menos uma aprovação encaminha
+        o caso à fila de agendamento.
+      </li>
+    </ul>
+  </section>
+
+  <section id="agendador" class="mb-5" aria-labelledby="agendador-titulo">
+    <h2 id="agendador-titulo" class="h4">Agendador — confirmação por unidade</h2>
+    <ul>
+      <li>
+        <strong>Fila de agendamento</strong> (<em>Fila de agendamento</em>): casos
+        prontos para agendamento (<code>SCHEDULER_REQUESTED</code> e casos
+        reabertos por intercorrência em <code>AWAITING_SCHEDULING</code>),
+        ordenados por chegada, com aba de casos já processados. A fila não é
+        separada por unidade.
+      </li>
+      <li>
+        <strong>Confirmar por unidade</strong>: informe unidade (1 ou 2),
+        data/hora (futura) e local.
+        <strong>Unidade 1</strong>: a resposta final ao NIR é o texto padrão com
+        o local e a data/hora registrados.
+        <strong>Unidade 2</strong>: a resposta final é fixa —
+        <em>"Recusar o relatório — caso agendado na Unidade 2, que comunicará a
+        Secretaria"</em>.
+      </li>
+      <li>
+        <strong>Negar</strong>: recuse o agendamento informando o motivo
+        (obrigatório) — o caso é publicado com resposta final ao NIR.
+      </li>
+      <li>
+        <strong>PDF do relatório</strong>: após a decisão de agendamento, os PDFs
+        do relatório original ficam disponíveis por documento, apenas para os casos
+        processados por você mesmo.
+      </li>
+      <li>
+        <strong>Intercorrência (desmarcar/reabrir)</strong>: para um caso
+        confirmado na <strong>Unidade 1</strong> e ainda sem ciência do NIR, você
+        pode registrar uma intercorrência com motivo
+        obrigatório — o caso volta à fila (<code>AWAITING_SCHEDULING</code>) e o
+        NIR é comunicado. Casos confirmados na <strong>Unidade 2</strong> têm a
+        intercorrência desabilitada; após a re-confirmação o ciclo pode se
+        repetir.
+      </li>
+    </ul>
+  </section>
+
+  <section id="transversal" class="mb-5" aria-labelledby="transversal-titulo">
+    <h2 id="transversal-titulo" class="h4">Recursos transversais</h2>
+    <ul>
+      <li>
+        <strong>Notificações</strong>: o sino na barra superior mostra um
+        <em>badge</em> com a quantidade de notificações não lidas. Cada
+        notificação é criada por um marco do caso — resposta final disponível,
+        caso pronto para agendamento e reabertura por intercorrência — e abrir a
+        notificação leva ao detalhe do caso na visão do seu papel ativo.
+      </li>
+      <li>
+        <strong>Painel</strong> (<em>Painel</em>): resumo gerencial de casos
+        agendados, negados, em andamento e encerrados, com recortes por período,
+        por tipo de procedimento e por unidade. Exibe apenas números e rótulos —
+        nenhum dado de paciente.
+      </li>
+      <li>
+        <strong>Instalar o app (PWA)</strong>: o sistema é instalável como
+        aplicativo (PWA). Use a opção de instalação do navegador ("Instalar app"
+        / "Adicionar à tela inicial") para abrir o {{ app_display_name }} em janela
+        própria; o app funciona com cache dos arquivos estáticos.
+      </li>
+    </ul>
+  </section>
+
+  <footer class="text-muted small border-top pt-3">
+    <p class="mb-0">
+      Este manual é estático e deve ser atualizado sempre que um fluxo mudar.
+    </p>
+  </footer>
+</article>
+{% endblock %}

@@ -180,6 +180,18 @@ def home_view(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
+def manual_view(request: HttpRequest) -> HttpResponse:
+    """Manual de uso estático por papel (change 11, slice 005, R1/D5).
+
+    Rota de nome GLOBAL ``manual`` (sem namespace — mesma decisão A de D2),
+    login-required como as demais views de ``apps.accounts`` (o manual descreve
+    as telas autenticadas). O conteúdo é estático (nenhum dado de caso) e vive
+    em ``templates/accounts/manual.html``.
+    """
+    return render(request, "accounts/manual.html")
+
+
+@login_required
 def notifications_list(request: HttpRequest) -> HttpResponse:
     """Lista de notificações do usuário (nome de rota GLOBAL ``notifications``, D2).
 

@@ -2,7 +2,7 @@
 
 Baseline: `4f756cf` (change 10 arquivado; 940 testes verdes ×2 rodadas).
 
-- [ ] 1. Preflight: árvore limpa; registrar `BASE_REF`; suíte completa uma única vez
+- [x] 1. Preflight: árvore limpa; `BASE_REF = 520f6a6`; suíte completa verde ×1 (940 testes; ruff/format/mypy; validate --strict)
 - [ ] 2.1 Slice 001 — `UserNotification` (model+migration) + services + signal de marcos (idempotente, fan-out schedulers, fail-safe). Ver `slices/slice-001-notification-core.md`
 - [ ] 2.2 Slice 002 — UI de notificações: badge/context processor, lista com janela, abrir+redirect por papel, marcar-todas, endpoint JSON. Ver `slices/slice-002-notification-ui.md`
 - [ ] 3.1 Slice 003 — app `apps/dashboard`: métricas por período/tipo/unidade (fontes imutáveis, zero-PHI) + view/template + navbar. Ver `slices/slice-003-dashboard.md`

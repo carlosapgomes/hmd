@@ -1,7 +1,9 @@
-"""URLs de conta e sessão (slice 004, R5; slice 005, R2).
+"""URLs de conta, sessão e notificações (slice 004, R5; slice 005, R2).
 
-Incluídas na raiz em ``config/urls.py``: home autenticada em ``/``, login,
-logout, perfil e seleção/troca de papel ativo (``/switch-role/``).
+Incluídas na raiz em ``config/urls.py`` **SEM namespace** (D2/Nota de rotas):
+seus nomes (``home``, ``login``, ``notifications``, …) são globais e
+referenciados sem prefixo. Rotas de notificação in-app adicionadas no slice 002
+do change 11.
 """
 
 from django.urls import URLPattern, path
@@ -14,4 +16,21 @@ urlpatterns: list[URLPattern] = [
     path("logout/", views.logout_view, name="logout"),
     path("switch-role/", views.switch_role_view, name="switch_role"),
     path("profile/", views.profile_view, name="profile"),
+    # Notificações in-app (change 11, slice 002; nomes GLOBAIS, sem namespace).
+    path("notifications/", views.notifications_list, name="notifications"),
+    path(
+        "notifications/<uuid:notification_id>/open/",
+        views.notification_open,
+        name="notifications_open",
+    ),
+    path(
+        "notifications/mark-all-read/",
+        views.notifications_mark_all_read,
+        name="notifications_mark_all_read",
+    ),
+    path(
+        "notifications/unread-count/",
+        views.notifications_unread_count,
+        name="notifications_unread_count",
+    ),
 ]

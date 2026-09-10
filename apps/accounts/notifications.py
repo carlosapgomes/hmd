@@ -28,9 +28,11 @@ chama da transição do caso (o signal) protege a chamada com ``try/except``.
 
 from __future__ import annotations
 
+from django.urls import reverse
+
 from apps.accounts.models import NotificationType, User, UserNotification
 from apps.cases.events import CaseEventType
-from apps.cases.models import CaseEvent
+from apps.cases.models import Case, CaseEvent
 
 # Papel do modelo ``Role`` que recebe o marco de fila de agendamento.
 SCHEDULER_ROLE_NAME = "scheduler"
@@ -51,6 +53,32 @@ SCHEDULER_REQUESTED_PREVIEW = "Caso aguardando confirmação de agendamento"
 SCHEDULING_REOPENED_TITLE = "Caso reaberto por intercorrência"
 # O motivo da intercorrência é interno do fluxo — nunca entra no preview.
 SCHEDULING_REOPENED_PREVIEW = "Reconfirme os dados do caso"
+
+# Rota de detalhe do caso por papel ativo (D2): as views de destino fazem o
+# guard de acesso REAL do caso; sem papel (ou admin) cai na home.
+NOTIFICATION_DETAIL_ROUTE_BY_ROLE: dict[str, str] = {
+    "nir": "intake:case_detail",
+    "doctor": "doctor:case_detail",
+    "scheduler": "scheduler:case_detail",
+}
+
+
+def get_unread_notification_count(user: User) -> int:
+    """Contagem de não lidas do usuário — fonte única do badge, da lista e do JSON (D2)."""
+    return UserNotification.objects.filter(recipient=user, read_at__isnull=True).count()
+
+
+def resolve_notification_redirect_url(case: Case, active_role: str) -> str:
+    """URL de destino ao abrir uma notificação, pelo papel ativo (D2).
+
+    ``nir``/``doctor``/``scheduler`` vão ao detalhe do caso na própria visão
+    (a view de destino faz o guard real); qualquer outro papel (incl. admin) ou
+    ausência de papel ativo cai na ``home``.
+    """
+    route_name = NOTIFICATION_DETAIL_ROUTE_BY_ROLE.get(active_role)
+    if route_name is None:
+        return reverse("home")
+    return reverse(route_name, kwargs={"case_id": case.pk})
 
 
 def create_milestone_notifications(event: CaseEvent) -> list[UserNotification]:

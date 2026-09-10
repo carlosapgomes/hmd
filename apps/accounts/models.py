@@ -9,12 +9,14 @@ dashboard-notifications-pwa). ``AUTH_USER_MODEL`` aponta para
 """
 
 import uuid
+from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
 from django.db import models
+from django.utils import timezone
 
 # Validação de formato do UPN (D3): ``usuario@dominio`` com sufixo livre — o
 # ambiente é uma floresta multi-domínio e o sufixo do UPN não é restrito a um
@@ -158,6 +160,40 @@ class NotificationType(models.TextChoices):
     SCHEDULING_REOPENED = "scheduling_reopened", "Caso reaberto por intercorrência"
 
 
+class UserNotificationQuerySet(models.QuerySet["UserNotification"]):
+    """QuerySet de ``UserNotification`` com predicados de visibilidade nomeados."""
+
+    def visible_for_list(self, *, now: datetime | None = None) -> "UserNotificationQuerySet":
+        """Filtra a janela de visibilidade da lista (D2).
+
+        Devolve não lidas (``read_at IS NULL``) OU lidas dentro da janela de
+        retenção (``read_at >= cutoff``). Esconde somente as lidas antes do
+        corte — o ``exclude`` NUNCA remove não lidas porque ``read_at <
+        cutoff`` avalia NULL para elas. Nada é apagado: a leitura antiga só sai
+        do resultado.
+        """
+        cutoff = (now or timezone.now()) - timedelta(
+            hours=getattr(settings, "NOTIFICATION_READ_RETENTION_HOURS", 48)
+        )
+        return self.exclude(read_at__lt=cutoff)
+
+
+class UserNotificationManager(models.Manager["UserNotification"]):
+    """Manager padrão de ``UserNotification`` expondo ``visible_for_list``.
+
+    A instância usada em ``objects`` é derivada com ``from_queryset`` para
+    copiar os métodos públicos de ``UserNotificationQuerySet``; as assinaturas
+    ficam declaradas aqui para o type checker, que não enxerga métodos
+    copiados dinamicamente pelo django-stubs.
+    """
+
+    def get_queryset(self) -> "UserNotificationQuerySet":
+        return UserNotificationQuerySet(self.model, using=self._db)
+
+    def visible_for_list(self, *, now: datetime | None = None) -> "UserNotificationQuerySet":
+        return self.get_queryset().visible_for_list(now=now)
+
+
 class UserNotification(models.Model):
     """Notificação in-app de um marco do caso para um usuário (D1).
 
@@ -167,6 +203,10 @@ class UserNotification(models.Model):
     referenciado (zero PHI). A row nasce na mesma transação do evento: se o
     caso sofrer rollback, a notificação some junto (desejável).
     """
+
+    # Manager construído com from_queryset: preserva a API de Manager
+    # (filter/create) e expõe o QuerySet customizado no runtime.
+    objects = UserNotificationManager.from_queryset(UserNotificationQuerySet)()
 
     notification_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     recipient = models.ForeignKey(

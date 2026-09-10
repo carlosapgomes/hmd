@@ -1,23 +1,33 @@
-"""Views de conta e sessão (login AD, perfil e switch-role).
+"""Views de conta, sessão e notificações (login AD, perfil, switch-role, sino).
 
 Fluxo do ADR-0003: o login local comum foi substituído por autenticação AD
 (Kerberos, usuários com ``ad_upn``); o admin do sistema é identidade local
 permanente (superuser sem ``ad_upn``, ADR-0009). Logout, perfil e home
 autenticada. O papel ativo em sessão e o switch-role chegam no slice 005; o
-guard de intranet no 006.
+guard de intranet no 006. As views de notificação in-app (lista, abrir, marcar
+todas, contagem JSON) chegam no slice 002 do change 11 — nomes de rota globais.
 """
+
+from __future__ import annotations
+
+import uuid
 
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.http import HttpRequest, HttpResponse
-from django.shortcuts import redirect, render
+from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.views.decorators.http import require_POST
+from django.utils import timezone
+from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.middleware import NO_ROLES_MESSAGE
-from apps.accounts.models import User
+from apps.accounts.models import User, UserNotification
+from apps.accounts.notifications import (
+    get_unread_notification_count,
+    resolve_notification_redirect_url,
+)
 
 from .forms import HospitalPasswordChangeForm, LoginForm
 from .ratelimit import clear_login_failures, is_login_locked, register_failed_login
@@ -167,3 +177,63 @@ def home_view(request: HttpRequest) -> HttpResponse:
     user = _require_user(request)
     role_names = list(user.roles.order_by("name").values_list("name", flat=True))
     return render(request, "accounts/home.html", {"role_names": role_names})
+
+
+@login_required
+def notifications_list(request: HttpRequest) -> HttpResponse:
+    """Lista de notificações do usuário (nome de rota GLOBAL ``notifications``, D2).
+
+    Aplica a janela de visibilidade (``visible_for_list``: não lidas + leituras
+    dentro de ``NOTIFICATION_READ_RETENTION_HOURS``) escopada ao destinatário;
+    a ordenação ``-created_at`` vem do model.
+    """
+    user = _require_user(request)
+    user_notifications = UserNotification.objects.visible_for_list().filter(recipient=user)
+    return render(
+        request,
+        "accounts/notifications.html",
+        {
+            "notifications": user_notifications,
+            # A contagem do sino vem do context processor (fonte única —
+            # P2 review: sem COUNT duplicado por render).
+        },
+    )
+
+
+@login_required
+@require_POST
+def notification_open(request: HttpRequest, notification_id: uuid.UUID) -> HttpResponse:
+    """Abre a notificação: marca como lida (se ainda não) e redireciona (D2).
+
+    ``get_object_or_404(recipient=request.user)`` garante que ninguém abre a
+    notificação de outro usuário (404, nada é marcado). O destino vem do papel
+    ativo da sessão via ``resolve_notification_redirect_url``.
+    """
+    user = _require_user(request)
+    notification = get_object_or_404(
+        UserNotification, notification_id=notification_id, recipient=user
+    )
+    if notification.read_at is None:
+        notification.read_at = timezone.now()
+        notification.save(update_fields=["read_at"])
+    active_role = request.session.get("active_role", "")
+    return redirect(resolve_notification_redirect_url(notification.case, active_role))
+
+
+@login_required
+@require_POST
+def notifications_mark_all_read(request: HttpRequest) -> HttpResponse:
+    """Marca todas as não lidas do usuário como lidas e volta à lista (D2)."""
+    user = _require_user(request)
+    UserNotification.objects.filter(recipient=user, read_at__isnull=True).update(
+        read_at=timezone.now()
+    )
+    return redirect("notifications")
+
+
+@login_required
+@require_GET
+def notifications_unread_count(request: HttpRequest) -> HttpResponse:
+    """JSON ``{"unread_count": N}`` do autenticado (D2; sem PHI, sem lista)."""
+    user = _require_user(request)
+    return JsonResponse({"unread_count": get_unread_notification_count(user)})

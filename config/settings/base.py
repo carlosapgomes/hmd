@@ -116,6 +116,12 @@ INTRANET_IP_RANGE = os.environ.get("INTRANET_IP_RANGE", "")
 # Header de proxy reverso com o IP real do cliente (túnel Cloudflare).
 TRUSTED_PROXY_HEADER = os.environ.get("TRUSTED_PROXY_HEADER", "HTTP_CF_CONNECTING_IP")
 
+# Notificações in-app (change dashboard-notifications-pwa, slice 002, design
+# D2): janela de retenção, em horas, das notificações JÁ LIDAS na lista. As não
+# lidas nunca somem e nada é apagado — a leitura fora da janela apenas sai do
+# resultado de ``UserNotification.objects.visible_for_list()``.
+NOTIFICATION_READ_RETENTION_HOURS = int(os.environ.get("NOTIFICATION_READ_RETENTION_HOURS", "48"))
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
@@ -152,6 +158,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "apps.accounts.context_processors.app_display_name",
                 "apps.accounts.context_processors.role_context",
+                "apps.accounts.context_processors.notification_unread_count",
             ],
         },
     },

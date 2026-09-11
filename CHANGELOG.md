@@ -4,6 +4,48 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.2] — 2026-09-11
+
+Correções obrigatórias do blueprint (owner) para o piloto no HGRS: alias
+estável do web, **todos** os segredos por arquivos read-only e `latest` fora
+dos releases futuros.
+
+### Deploy (piloto fase 1)
+
+- **Alias estável `hmd`**: o serviço `web` declara
+  `networks.hospital_ingress_hmd.aliases: ["hmd"]` — o upstream do Caddy é
+  **sempre `hmd:8000`**, independente do nome gerado pelo compose (o README
+  deixa de citar `hmd-prod-web-1:8000`).
+- **Segredos por ARQUIVO** (`docker-compose.prod.yml`): top-level `secrets`
+  (`app_db_password`, `migrator_db_password`, `secret_key`,
+  `superuser_password`; caminhos configuráveis por `*_FILE`, default
+  `./secrets/`) montados read-only, **um consumidor por segredo**: web/workers
+  usam `secret_key` + `app_db_password`; o passo migrate usa `secret_key` +
+  `migrator_db_password` + `superuser_password`. `DATABASE_URL`/
+  `MIGRATOR_DATABASE_URL` saem do compose inteiro — o banco é montado por
+  `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER` (+ `DB_PASSWORD_FILE`; o migrate usa
+  `MIGRATOR_DB_USER`).
+- **Runbook**: imagem pinada por **tag+digest**
+  (`HMD_IMAGE_TAG=v0.1.2@sha256:<digest>`); `.gitignore` passa a ignorar
+  `secrets/`.
+
+### Configuração
+
+- **`SECRET_KEY` por arquivo**: `config.settings.prod` lê
+  `DJANGO_SECRET_KEY_FILE` (arquivo com **precedência** sobre
+  `DJANGO_SECRET_KEY`; ilegível/vazio aborta com `ImproperlyConfigured`).
+- **`DATABASES` de produção** resolvidas por `database_config` (`DB_*` +
+  `DB_PASSWORD_FILE`), sem depender de `DATABASE_URL` no ambiente.
+- **`seed_admin`** aceita `DJANGO_SUPERUSER_PASSWORD_FILE` (mesma semântica de
+  precedência/fail-closed; o username segue em env não-sensível).
+
+### Release
+
+- **Sem `latest`**: o workflow publica apenas a tag da versão nos releases
+  futuros — a imagem do piloto é pinada por tag+digest.
+
+**Baseline**: 1074 testes · ruff/format/mypy limpos.
+
 ## [0.1.1] — 2026-09-11
 
 Primeiro release **de produção** do HMD para o piloto no HGRS: runtime web em

@@ -126,7 +126,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml build
 
 # 2. Ambiente (.env na raiz — modelo em .env.example):
 #    - DJANGO_SECRET_KEY (obrigatório; gere um segredo real)
-#    - DATABASE_URL / credenciais do Postgres
+#    - credenciais do Postgres (ver .env.example)
 #    - OPENROUTER_API_KEY + LLM_MODEL_LLM1/LLM2 (pipeline; sem elas os
 #      casos ficam retidos fail-closed)
 #    - VISION_MODEL (OCR externo de anexos; sem ela anexos de imagem
@@ -163,15 +163,22 @@ O piloto roda por `docker-compose.prod.yml` (arquivo autônomo, change
 one-shot **migrate**; nenhum worker ligado.
 
 **Topologia.** O web não publica porta no host (`expose: 8000`): o **Caddy**
-do servidor é o upstream na rede `hospital_ingress_hmd`, termina o TLS e
-injeta `X-Forwarded-Proto` (por isso `PROXY_SSL_HEADER=true`). O PostgreSQL 17
-é **compartilhado e externo** (rede `hospital-db-hmd`, DB `app_hmd`) — o
-serviço de banco e seus aliases pertencem a outro compose, fora deste repo. A
-rede `hospital_egress_hmd` é a saída restrita: o web só sai para
-**AD/DNS/Kerberos**; egress OpenRouter/OCR fica desligado na fase 1. Logs em
-stdout com rotação pelo log driver (`json-file`, 10m × 3).
+do servidor é o upstream na rede `hospital_ingress_hmd` pelo aliás estável
+`hmd`, termina o TLS e injeta `X-Forwarded-Proto` (por isso
+`PROXY_SSL_HEADER=true`). O PostgreSQL 17 é **compartilhado e externo** (rede
+`hospital-db-hmd`, DB `app_hmd`) — o serviço de banco e seus aliases
+pertencem a outro compose, fora deste repo. A rede `hospital_egress_hmd` é a
+saída restrita: o web só sai para **AD/DNS/Kerberos**; egress OpenRouter/OCR
+fica desligado na fase 1. Todo segredo é montado por **arquivo** read-only (um
+por consumidor). Logs em stdout com rotação pelo log driver (`json-file`,
+10m × 3).
 
 ```bash
+# 0. Segredos: crie os arquivos (uma senha por linha, FORA do Git) em
+#    ./secrets/ (já ignorado) ou aponte APP_DB_PASSWORD_FILE /
+#    MIGRATOR_DB_PASSWORD_FILE / SECRET_KEY_FILE / SUPERUSER_PASSWORD_FILE
+#    para os arquivos no .env do host.
+
 # 1. Migração + seeds (one-shot, credencial de MIGRATOR):
 #    migrate && createcachetable hmd_cache && seed_admin && seed_prompts &&
 #    seed_procedure_catalog — todos já no command do serviço.
@@ -185,20 +192,36 @@ docker compose -f docker-compose.prod.yml up -d web
 #    DESLIGADOS — só sobem com `--profile workers`, na próxima mudança.
 ```
 
+**Segredos por arquivo.** Nenhum segredo trafega em variável de ambiente no
+compose: cada serviço monta Docker secrets read-only em `/run/secrets/` e
+aponta o `*_FILE` correspondente — o arquivo tem **precedência** sobre
+qualquer env equivalente e falha fechado (inicialização aborta) se estiver
+ilegível ou vazio. Consumidor por segredo: **web/workers** usam `secret_key`
++ `app_db_password`; o passo **migrate** usa `secret_key` +
+`migrator_db_password` + `superuser_password`. Crie os arquivos em
+`./secrets/` (default do compose, já no `.gitignore`) ou aponte
+`APP_DB_PASSWORD_FILE`/`MIGRATOR_DB_PASSWORD_FILE`/`SECRET_KEY_FILE`/
+`SUPERUSER_PASSWORD_FILE` para outro caminho no `.env` do host.
+
 **Configuração (`.env` no host, fora do Git).** Nomes novos documentados em
-`.env.example`: `HMD_IMAGE_TAG` (default `v0.1.1`),
-`MIGRATOR_DATABASE_URL` (credencial DDL só do passo migrate),
-`CSRF_TRUSTED_ORIGINS`, `PROXY_SSL_HEADER`, `DJANGO_SUPERUSER_USERNAME`/
-`DJANGO_SUPERUSER_PASSWORD` (seed do admin local). **Obrigatórios e não
-default**: `DJANGO_SECRET_KEY` real (a de exemplo é pública e serve só p/
-dev), `DATABASE_URL` apontando o DB `app_hmd` com a credencial da APLICAÇÃO
+`.env.example`: `HMD_IMAGE_TAG` (**obrigatório pinado tag+digest**:
+`v0.1.2@sha256:<digest>`), as envs de arquivo de segredo acima, os nomes de
+banco `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER` (+ `MIGRATOR_DB_USER`, role DDL
+usada só pelo passo migrate) — o compose não usa mais URL de banco —,
+`CSRF_TRUSTED_ORIGINS`, `PROXY_SSL_HEADER` e `DJANGO_SUPERUSER_USERNAME` (env
+não-sensível; a senha vem do arquivo). **Obrigatórios e não default**: os
+arquivos de segredo reais (a chave de exemplo é pública e serve só p/ dev),
+`DB_HOST`/`DB_NAME` apontando o DB `app_hmd` com a credencial da APLICAÇÃO
 (distinta da migrator; a role da aplicação precisa de **DML** nas tabelas do
 schema, incluindo `hmd_cache`), `ALLOWED_HOSTS=hmd.projetoshgrs.com` (sem
 ele, a URL pública dá 400 mesmo com o container healthy — o healthcheck
-interno usa 127.0.0.1) e `DJANGO_SUPERUSER_*` — sem eles o passo 1 aborta
-antes de semear os prompts (o `&&` do one-shot é sequencial).
+interno usa 127.0.0.1) e o username do superusuário do seed — sem ele o passo
+1 aborta antes de semear os prompts (o `&&` do one-shot é sequencial).
 (`CSRF_TRUSTED_ORIGINS`/`PROXY_SSL_HEADER` têm default no compose, mas
-defina-os explicitamente para não depender disso.)
+defina-os explicitamente para não depender disso.) Use
+`DB_HOST=postgres-app-hmd` (alias inequívoco do PG na rede do banco) — **nunca**
+`hmd`, que na rede de ingress é o alias do próprio web (ambiguidade de DNS
+Docker entre redes).
 
 **Pré-requisitos de infraestrutura** (fora deste repo): as 3 redes externas
 (`hospital-db-hmd`, `hospital_ingress_hmd`, `hospital_egress_hmd`) e o
@@ -216,7 +239,7 @@ appended XFF permite spoof do primeiro IP e burlaria o guard de intranet.
 `INTAKE_ENABLED` fica **false** (fase 1: nenhum relatório enviado; criação
 de casos/reenvios bloqueada no boundary do serviço).
 
-**Caddy.** O alvo do upstream é o serviço `web` deste compose na rede
-`hospital_ingress_hmd` — prefira o nome estável `hmd-prod-web-1:8000`
-(qualificado pelo `name: hmd-prod` do projeto, sem ambiguidade com outros
-composes) e o healthcheck do próprio compose em `/readyz/`.
+**Caddy.** O alvo do upstream é o **aliás estável `hmd:8000`** na rede
+`hospital_ingress_hmd` (declarado em `networks.hospital_ingress_hmd.aliases`
+do serviço `web` — não use o nome gerado pelo compose, que muda junto com o
+projeto) e o healthcheck do próprio compose em `/readyz/`.

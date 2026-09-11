@@ -1,7 +1,8 @@
-# Pipeline de release do piloto (change pilot-deployment-v0-1-1, slice 004/R1,
-# design D5): em tag `v*` constrói a imagem linux/amd64 e publica no GHCR com a
-# tag da versão + `latest`; o passo final imprime o digest da imagem para o
-# reporte do gate 4.1. A tag v0.1.1 só é empurrada APÓS o review final — este
+# Pipeline de release do piloto (change pilot-deployment-v0-1-1, slices 004/R1
+# e 005/R5, design D5): em tag `v*` constrói a imagem linux/amd64 e publica no
+# GHCR com a tag da versão (SEM `latest` a partir do slice 005 — releases
+# futuros publicam apenas a tag); o passo final imprime o digest da imagem para
+# o reporte do gate 4.1. A tag só é empurrada APÓS o review final — este
 # workflow não cria tags nem releases.
 name: release
 
@@ -36,8 +37,9 @@ jobs:
           password: ${{ github.token }}
 
       # Tags/labels derivados da ref: `type=ref,event=tag` produz a tag da
-      # release (v0.1.1, igual ao default de HMD_IMAGE_TAG no compose) e
-      # `latest` a acompanha.
+      # release (v0.1.2, igual ao default de HMD_IMAGE_TAG no compose). SEM
+      # `latest` (slice 005/R5): releases futuros publicam apenas a tag — o
+      # deploy pinado por tag+digest não depende de um alias mutável.
       - name: metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -45,7 +47,6 @@ jobs:
           images: ghcr.io/carlosapgomes/hmd
           tags: |
             type=ref,event=tag
-            type=raw,value=latest
 
       # Plataforma única do piloto (design D5); `provenance: false` porque o
       # build é amd64 único e o manifesto extra de attestation não é usado

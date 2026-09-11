@@ -1,23 +1,31 @@
 """Production settings do HMD.
 
-Falha fechado: sem ``DJANGO_SECRET_KEY`` a inicialização aborta com
-``ImproperlyConfigured`` — nunca há fallback para valor de build (R6). Cache
-compartilhado entre workers (change pilot-deployment-v0-1-1, slice 001/R4):
-produção usa ``DatabaseCache`` (tabela ``hmd_cache``) e o guard anti-LocMem do
-slice 004/R3b segue ativo — a inicialização aborta se o backend voltar a ser
-por-processo.
+Falha fechado: sem ``DJANGO_SECRET_KEY_FILE``/``DJANGO_SECRET_KEY`` a
+inicialização aborta com ``ImproperlyConfigured`` — nunca há fallback para
+valor de build (R6). Segredos por ARQUIVO (change pilot-deployment-v0-1-1,
+slice 005/R1): o arquivo apontado por ``*_FILE`` tem precedência sobre a env
+correspondente e falha fechado se ilegível/vazio (mesma semântica do
+``_read_secret`` de ``config.settings.db``). Cache compartilhado entre workers
+(slice 001/R4): produção usa ``DatabaseCache`` (tabela ``hmd_cache``) e o guard
+anti-LocMem do slice 004/R3b segue ativo — a inicialização aborta se o backend
+voltar a ser por-processo.
 """
 
 import os
 
-import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
+
+from config.settings.db import _read_secret, database_config
 
 from .base import *  # noqa: F401,F403,F405
 
 DEBUG = False
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
+# Arquivo com precedência sobre a env (slice 005/R1): o compose monta o
+# Docker secret em ``DJANGO_SECRET_KEY_FILE``. Sem nenhuma fonte, aborta.
+SECRET_KEY = _read_secret(os.environ, "DJANGO_SECRET_KEY_FILE")
+if SECRET_KEY is None:
+    SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
 if not SECRET_KEY:
     raise ImproperlyConfigured("DJANGO_SECRET_KEY é obrigatório em produção.")
 
@@ -68,7 +76,10 @@ if os.environ.get("PROXY_SSL_HEADER", "true").lower() in ("true", "1", "yes"):
 else:
     SECURE_PROXY_SSL_HEADER = None
 
-DATABASES = {"default": dj_database_url.config(conn_max_age=600, conn_health_checks=True)}
+# Banco por componentes ``DB_*`` + ``DB_PASSWORD_FILE`` (slice 005/R1): o
+# compose do piloto não define ``DATABASE_URL``; a função pura mantém a URL
+# com precedência se alguém a setar (dev).
+DATABASES = {"default": database_config(os.environ, conn_max_age=600, conn_health_checks=True)}
 
 # Processamento do intake (change intake-nir-upload, slice 003, R4): em
 # produção o default é enfileirar no cluster pdf — nunca processar inline sem

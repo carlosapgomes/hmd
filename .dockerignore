@@ -23,3 +23,5 @@ staticfiles/
 
 # Temporários / relatórios locais
 temp/
+# Segredos do deploy (slice 005): NUNCA entram no build context/imagem.
+secrets/

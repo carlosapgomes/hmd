@@ -6,6 +6,9 @@ node_modules/
 .env.*
 !.env.example
 
+# Segredos do host (arquivos de Docker secret — docker-compose.prod.yml)
+secrets/
+
 # Python / Django
 .venv/
 __pycache__/

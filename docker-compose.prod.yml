@@ -1,5 +1,5 @@
-# Compose produtivo do piloto HMD — change pilot-deployment-v0-1-1, slice 003
-# (design D4). Arquivo AUTÔNOMO: `docker compose -f docker-compose.prod.yml …`
+# Compose produtivo do piloto HMD — change pilot-deployment-v0-1-1, slices 003 e
+# 005 (design D4). Arquivo AUTÔNOMO: `docker compose -f docker-compose.prod.yml …`
 # (o compose de dev é outro arquivo e não participa do piloto).
 #
 # Ordem do deploy (sem depends_on bloqueante — a dependência do web com o
@@ -10,21 +10,26 @@
 #
 # Topologia (tudo que é externo é gerido FORA deste repo):
 # - hospital_ingress_hmd: o Caddy do host é o upstream — alcança o web pelo
-#   nome do serviço na porta 8000. O web NÃO publica porta no host (expose
-#   apenas); publicar `ports` furaria o TLS terminado no proxy.
+#   ALIAS estável `hmd` na porta 8000 (independente do nome gerado pelo
+#   compose). O web NÃO publica porta no host (expose apenas); publicar
+#   `ports` furaria o TLS terminado no proxy.
 # - hospital-db-hmd: PostgreSQL 17/18 COMPARTILHADO, DB `app_hmd`. O serviço de
 #   PG e seus aliases de rede (postgres-app-hmd / hmd) pertencem ao compose
-#   externo; aqui só referenciamos o host pelo DATABASE_URL/MIGRATOR_DATABASE_URL
-#   (valor no .env do host, fora do Git).
+#   externo; aqui as settings são montadas por DB_* (o compose não usa mais
+#   URL de banco com senha embutida).
 # - hospital_egress_hmd: saída restrita da rede. O web sai apenas para
 #   AD/DNS/Kerberos; os workers de LLM/OCR (desligados na fase 1) usam a mesma
 #   rede quando ativados. Os workers de pdf/anonymization não saem.
-# - Segredos: SEMPRE por ${VAR} (arquivo .env no host / secret manager).
-#   Nenhum valor de segredo entra no Git.
+# - Segredos (slice 005/R3): SEMPRE por ARQUIVO read-only (top-level `secrets`),
+#   um segredo por consumidor — web/workers montam `secret_key` +
+#   `app_db_password`; migrate monta `secret_key` + `migrator_db_password` +
+#   `superuser_password`. Nenhum valor de segredo entra em env/Git; os
+#   arquivos do host ficam fora do Git (`.gitignore`: `secrets/`).
 # - Logs: json-file rotacionado por serviço (max-size 10m, max-file 3); o
 #   gunicorn do CMD do Dockerfile escreve em stdout/stderr.
 # - Imagem: pronta do GHCR (amd64, release v*) com o CMD de produção do
-#   Dockerfile — nenhum build acontece aqui.
+#   Dockerfile — nenhum build acontece aqui. Fixe SEMPRE tag+digest no .env do
+#   host (`HMD_IMAGE_TAG=v0.1.2@sha256:<digest>`): a tag sozinha é mutável.
 
 name: hmd-prod
 
@@ -32,7 +37,7 @@ services:
   # Web de produção (gunicorn, CMD do Dockerfile): somente a imagem pronta,
   # sem bind de código e sem porta publicada.
   web:
-    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.1}
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.2}
     restart: unless-stopped
     stop_grace_period: 40s
     # expose = documenta a porta interna para a rede do compose; o Caddy do
@@ -40,10 +45,14 @@ services:
     expose:
       - "8000"
     environment:
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-      # Credencial da APLICAÇÃO (DML) — a de migrator fica só no serviço
-      # `migrate`.
-      DATABASE_URL: ${DATABASE_URL}
+      # Banco por componentes (slice 005/R1): credencial da APLICAÇÃO (DML) lida
+      # do arquivo do secret — a de migrator fica só no serviço `migrate`.
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD_FILE: /run/secrets/app_db_password
+      DJANGO_SECRET_KEY_FILE: /run/secrets/secret_key
       # P0 review: o healthcheck interno usa Host 127.0.0.1:8000 — sem ele
       # em ALLOWED_HOSTS, DisallowedHost vira 400 e o container fica
       # permanentemente unhealthy (DEBUG=False valida Host em toda request).
@@ -75,6 +84,10 @@ services:
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
       LLM_RUN_TASKS_INLINE: "false"
       ATTACHMENTS_RUN_TASKS_INLINE: "false"
+    # Segredo consumido pelo web: chave da aplicação + senha da role da aplicação.
+    secrets:
+      - secret_key
+      - app_db_password
     volumes:
       - media_data:/app/media
     # Readiness com BARRA (/readyz/): a rota é isenta do IntranetGuard e faz
@@ -93,15 +106,20 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - hospital_ingress_hmd
-      - hospital-db-hmd
-      - hospital_egress_hmd
+      # Alias estável `hmd` (slice 005/R4): o upstream do Caddy é SEMPRE
+      # `hmd:8000`, independente do nome `<projeto>-<serviço>-<n>` que o Docker
+      # geraria — o deploy pode renomear/reprojetar sem tocar no Caddy.
+      hospital_ingress_hmd:
+        aliases:
+          - hmd
+      hospital-db-hmd:
+      hospital_egress_hmd:
 
   # Passo one-shot (profile "migrate"): migrate + tabela do cache + seeds
   # idempotentes. Usa a credencial de MIGRATOR (DDL), nunca a da aplicação.
   # `restart: "no"`: roda uma vez e sai (invocado com `run --rm migrate`).
   migrate:
-    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.1}
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.2}
     profiles: ["migrate"]
     restart: "no"
     command: >
@@ -111,11 +129,24 @@ services:
              python manage.py seed_prompts --settings=config.settings.prod &&
              python manage.py seed_procedure_catalog --settings=config.settings.prod"
     environment:
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-      DATABASE_URL: ${MIGRATOR_DATABASE_URL}
-      # Consumidas pelo `seed_admin` (ele falha fechado sem as duas).
+      # Banco por componentes (slice 005/R1/R3): role de MIGRATOR (DDL) lida do
+      # arquivo do secret — nunca a credencial da aplicação.
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${MIGRATOR_DB_USER}
+      DB_PASSWORD_FILE: /run/secrets/migrator_db_password
+      DJANGO_SECRET_KEY_FILE: /run/secrets/secret_key
+      # Consumidas pelo `seed_admin` (ele falha fechado sem username e senha;
+      # a senha vem do ARQUIVO do secret — username é env não-sensível).
       DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME}
-      DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD}
+      DJANGO_SUPERUSER_PASSWORD_FILE: /run/secrets/superuser_password
+    # Segredos consumidos pelo migrate: chave da aplicação + senha do migrator
+    # (DDL) + senha do superusuário do seed.
+    secrets:
+      - secret_key
+      - migrator_db_password
+      - superuser_password
     logging:
       driver: json-file
       options:
@@ -136,7 +167,7 @@ services:
   # no volume compartilhado e enfileira; este processo lê). Ao concluir, o
   # signal enfileira no cluster anonymization.
   worker-pdf:
-    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.1}
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.2}
     profiles: ["workers"]
     restart: unless-stopped
     stop_grace_period: 40s
@@ -144,14 +175,21 @@ services:
     volumes:
       - media_data:/app/media
     environment:
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-      DATABASE_URL: ${DATABASE_URL}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD_FILE: /run/secrets/app_db_password
+      DJANGO_SECRET_KEY_FILE: /run/secrets/secret_key
       Q_CLUSTER_NAME: pdf
       INTAKE_ENABLED: "false"
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
       LLM_RUN_TASKS_INLINE: "false"
       ATTACHMENTS_RUN_TASKS_INLINE: "false"
+    secrets:
+      - secret_key
+      - app_db_password
     logging:
       driver: json-file
       options:
@@ -163,20 +201,27 @@ services:
   # Cluster anonymization: único processo que carrega o engine Presidio/spaCy
   # (singleton; o modelo vive na imagem). Não sai para a rede (nenhum egress).
   worker-anonymization:
-    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.1}
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.2}
     profiles: ["workers"]
     restart: unless-stopped
     stop_grace_period: 40s
     command: python manage.py qcluster --settings=config.settings.prod
     environment:
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-      DATABASE_URL: ${DATABASE_URL}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD_FILE: /run/secrets/app_db_password
+      DJANGO_SECRET_KEY_FILE: /run/secrets/secret_key
       Q_CLUSTER_NAME: anonymization
       INTAKE_ENABLED: "false"
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
       LLM_RUN_TASKS_INLINE: "false"
       ATTACHMENTS_RUN_TASKS_INLINE: "false"
+    secrets:
+      - secret_key
+      - app_db_password
     logging:
       driver: json-file
       options:
@@ -189,7 +234,7 @@ services:
   # concluir a anonimização, o signal enfileira aqui (nunca inline no worker
   # de anonimização).
   worker-llm:
-    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.1}
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.2}
     profiles: ["workers"]
     restart: unless-stopped
     stop_grace_period: 40s
@@ -197,14 +242,21 @@ services:
     volumes:
       - media_data:/app/media
     environment:
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-      DATABASE_URL: ${DATABASE_URL}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD_FILE: /run/secrets/app_db_password
+      DJANGO_SECRET_KEY_FILE: /run/secrets/secret_key
       Q_CLUSTER_NAME: llm
       INTAKE_ENABLED: "false"
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
       LLM_RUN_TASKS_INLINE: "false"
       ATTACHMENTS_RUN_TASKS_INLINE: "false"
+    secrets:
+      - secret_key
+      - app_db_password
     logging:
       driver: json-file
       options:
@@ -218,7 +270,7 @@ services:
   # externa). Dispara no CASE_ANONYMIZATION_COMPLETED, em paralelo ao cluster
   # llm (nunca inline no worker de anonimização).
   worker-attachments:
-    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.1}
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.2}
     profiles: ["workers"]
     restart: unless-stopped
     stop_grace_period: 40s
@@ -226,14 +278,21 @@ services:
     volumes:
       - media_data:/app/media
     environment:
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-      DATABASE_URL: ${DATABASE_URL}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD_FILE: /run/secrets/app_db_password
+      DJANGO_SECRET_KEY_FILE: /run/secrets/secret_key
       Q_CLUSTER_NAME: attachments
       INTAKE_ENABLED: "false"
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
       LLM_RUN_TASKS_INLINE: "false"
       ATTACHMENTS_RUN_TASKS_INLINE: "false"
+    secrets:
+      - secret_key
+      - app_db_password
     logging:
       driver: json-file
       options:
@@ -242,6 +301,19 @@ services:
     networks:
       - hospital-db-hmd
       - hospital_egress_hmd
+
+# Segredos por ARQUIVO (slice 005/R3): o caminho no host é configurável por
+# env (`*_FILE`), com default em `./secrets/` (fora do Git). Cada serviço monta
+# APENAS os segredos que consome, read-only, em /run/secrets/<nome>.
+secrets:
+  app_db_password:
+    file: ${APP_DB_PASSWORD_FILE:-./secrets/app_db_password.txt}
+  migrator_db_password:
+    file: ${MIGRATOR_DB_PASSWORD_FILE:-./secrets/migrator_db_password.txt}
+  secret_key:
+    file: ${SECRET_KEY_FILE:-./secrets/secret_key.txt}
+  superuser_password:
+    file: ${SUPERUSER_PASSWORD_FILE:-./secrets/superuser_password.txt}
 
 # Redes EXTERNAS (geridas fora do repo — o `docker network create` e o IPAM
 # são da infra do hospital). O PostgreSQL compartilhado e seus aliases vivem

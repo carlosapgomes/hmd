@@ -1,8 +1,8 @@
 # Tasks: pilot-deployment-v0-1-1
 
-Baseline: `5554ba0` (v0.1.0 sanitizado; 1037 testes verdes).
+Baseline: `cde28ff`; `BASE_REF = cde28ff`; suíte ×1 verde (1037).
 
-- [ ] 1. Preflight: árvore limpa; registrar `BASE_REF`; suíte completa uma única vez
+- [x] 1. Preflight: árvore limpa; `BASE_REF = cde28ff`; suíte verde ×1 (1037)
 - [ ] 2.1 Slice 001 — runtime prod: gunicorn+CMD+collectstatic no Dockerfile, /healthz+/readyz, settings prod (DatabaseCache hmd_cache, CSRF/PROXY/HOSTS). Ver `slices/slice-001-runtime.md`
 - [ ] 2.2 Slice 002 — INTAKE_ENABLED fail-closed (serviços+views+tests). Ver `slices/slice-002-intake-lock.md`
 - [ ] 2.3 Slice 003 — docker-compose.prod.yml (redes externas/aliases/shared-PG/profiles migrate+workers/secrets por arquivo/healthcheck/rotlogs) + .env.example + README piloto. Ver `slices/slice-003-compose-prod.md`

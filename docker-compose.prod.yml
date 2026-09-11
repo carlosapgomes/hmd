@@ -48,8 +48,10 @@ services:
       # em ALLOWED_HOSTS, DisallowedHost vira 400 e o container fica
       # permanentemente unhealthy (DEBUG=False valida Host em toda request).
       ALLOWED_HOSTS: ${ALLOWED_HOSTS},127.0.0.1
-      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
-      PROXY_SSL_HEADER: ${PROXY_SSL_HEADER}
+      # P1 review final: sem default, o compose injeta string vazia e
+      # anula o default das settings (CSRF 403 no login pela URL pública).
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-https://hmd.projetoshgrs.com}
+      PROXY_SSL_HEADER: ${PROXY_SSL_HEADER:-true}
       # Fase 1 do piloto: intake DESLIGADO (fail-closed — o default de
       # config.settings.prod é false e aqui ele fica explícito).
       INTAKE_ENABLED: ${INTAKE_ENABLED:-false}

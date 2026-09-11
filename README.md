@@ -192,8 +192,20 @@ docker compose -f docker-compose.prod.yml up -d web
 `DJANGO_SUPERUSER_PASSWORD` (seed do admin local). **Obrigatórios e não
 default**: `DJANGO_SECRET_KEY` real (a de exemplo é pública e serve só p/
 dev), `DATABASE_URL` apontando o DB `app_hmd` com a credencial da APLICAÇÃO
-(distinta da migrator) e `DJANGO_SUPERUSER_*` — sem eles o passo 1 aborta
-antes de semear os prompts (o `&&` do one-shot é sequencial). Ajustes do
+(distinta da migrator; a role da aplicação precisa de **DML** nas tabelas do
+schema, incluindo `hmd_cache`), `ALLOWED_HOSTS=hmd.projetoshgrs.com` (sem
+ele, a URL pública dá 400 mesmo com o container healthy — o healthcheck
+interno usa 127.0.0.1) e `DJANGO_SUPERUSER_*` — sem eles o passo 1 aborta
+antes de semear os prompts (o `&&` do one-shot é sequencial).
+(`CSRF_TRUSTED_ORIGINS`/`PROXY_SSL_HEADER` têm default no compose, mas
+defina-os explicitamente para não depender disso.)
+
+**Pré-requisitos de infraestrutura** (fora deste repo): as 3 redes externas
+(`hospital-db-hmd`, `hospital_ingress_hmd`, `hospital_egress_hmd`) e o
+PostgreSQL compartilhado (DB `app_hmd` + aliases `postgres-app-hmd`/`hmd`)
+devem existir ANTES do `up`; e o host precisa de credencial para puxar a
+imagem do GHCR (`docker login ghcr.io` com PAT `read:packages`) — ou o
+pacote deve ser público. Ajustes do
 piloto: `ALLOWED_HOSTS=hmd.projetoshgrs.com` (o compose acrescenta
 `127.0.0.1` automaticamente p/ o healthcheck), `AD_DCS` e
 `INTRANET_IP_RANGE` (valores reais fora do Git) e

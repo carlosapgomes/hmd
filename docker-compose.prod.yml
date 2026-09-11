@@ -40,11 +40,33 @@ services:
     image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.2}
     restart: unless-stopped
     stop_grace_period: 40s
+    # Limites de recurso — PLANEJADOS/INICIAIS da fase 1 (blueprint/Eon,
+    # 2026-09-11): gunicorn 3×2 sem spaCy no processo web. A revisar por
+    # observação em produção; workers (fase 2) exigirão faixas PRÓPRIAS
+    # (worker-anonymization carrega spaCy lg: sugerir 1536m–2048m lá).
+    mem_limit: 512m
+    cpus: "1.0"
+    pids_limit: 200
+    # Risco residual ACEITO na fase 1: container como root (imagem sem USER;
+    # non-root fica p/ fase 2/v0.1.3). Mitigações ativas: rootfs read-only
+    # (escritas só em volume media e tmpfs /tmp), sem novos privilégios e
+    # todos os caps derrubados.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     # expose = documenta a porta interna para a rede do compose; o Caddy do
     # host (hospital_ingress_hmd) é quem publica externamente.
     expose:
       - "8000"
     environment:
+      # P1 (review de hardening, 2026-09-11): o config/wsgi.py defaulta para
+      # config.settings.dev e o gunicorn NÃO aceita --settings — sem esta
+      # env, o web de produção boota com settings de DEV (DEBUG=True).
+      DJANGO_SETTINGS_MODULE: config.settings.prod
       # Banco por componentes (slice 005/R1): credencial da APLICAÇÃO (DML) lida
       # do arquivo do secret — a de migrator fica só no serviço `migrate`.
       DB_HOST: ${DB_HOST}

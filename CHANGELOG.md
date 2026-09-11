@@ -6,6 +6,21 @@ OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 
 ## [0.1.2] — 2026-09-11
 
+**Adendos pós-release (compose/docs — sem nova imagem; a imagem v0.1.2 permanece
+a referência de deploy)**: (a) topologia Cloudflared→Caddy→HMD — default
+`TRUSTED_PROXY_HEADER=HTTP_CF_CONNECTING_IP` (Caddy repassa sem tocar; sem
+`header_up X-Forwarded-For` nesse hop); (b) limites PLANEJADOS/INICIAIS de
+fase 1 do web (512m / 1.0 cpu / 200 pids — revisar por observação; workers
+exigirão faixas próprias) + hardening de container (rootfs read-only,
+tmpfs /tmp 64m, no-new-privileges, cap_drop ALL) mitigando o risco residual
+de root aceito na fase 1 (non-root fica p/ v0.1.3); (c) **correção P1**:
+`DJANGO_SETTINGS_MODULE=config.settings.prod` no web (sem ela, o wsgi.py
+defaulta para settings de DEV — DEBUG=True — pois o gunicorn não aceita
+`--settings`); (d) verificação: extensões `unaccent`/`pg_trgm` do init.sql
+de dev/teste não são usadas por código/migrations (normalização do
+prior-case é NFKD puro em Python) — produção não precisa delas nem de
+grants de EXECUTE.
+
 Correções obrigatórias do blueprint (owner) para o piloto no HGRS: alias
 estável do web, **todos** os segredos por arquivos read-only e `latest` fora
 dos releases futuros.

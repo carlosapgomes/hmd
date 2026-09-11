@@ -9,7 +9,12 @@ Cobre:
 - R2: ``seed_admin`` aceita ``DJANGO_SUPERUSER_PASSWORD_FILE`` (arquivo com
   precedência sobre ``DJANGO_SUPERUSER_PASSWORD``; fail-closed sem fonte);
 - R3/R4: ``docker-compose.prod.yml`` resolve com TODOS os profiles e um
-  segredo por consumidor, sem ``DATABASE_URL``/``MIGRATOR_DATABASE_URL``.
+  segredo por consumidor, sem ``DATABASE_URL``/``MIGRATOR_DATABASE_URL``;
+- Hardening de container (diretiva blueprint/Eon): limites PLANEJADOS de
+  fase 1 do web (512m/1.0/200) + rootfs read-only/no-new-privileges/
+  cap_drop ALL (risco residual de root aceito na fase 1) e a env
+  ``DJANGO_SETTINGS_MODULE=prod`` do web (P1: o wsgi.py defaulta p/ dev e
+  o gunicorn não aceita --settings).
 
 O import de ``config.settings.prod`` segue o padrão de ``test_health.py``:
 ``importlib`` com envs dummy e ``sys.modules.pop`` a cada teste — nenhum
@@ -331,3 +336,24 @@ def test_compose_trusted_proxy_default_is_cloudflare(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "TRUSTED_PROXY_HEADER: HTTP_CF_CONNECTING_IP" in result.stdout
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker compose indisponível")
+def test_compose_web_has_phase1_limits_and_container_hardening(tmp_path: Path) -> None:
+    """Fase 1 (blueprint): limites planejados/iniciais do web + mitigação do
+    risco residual de rodar como root (rootfs read-only, no-new-privileges,
+    cap_drop ALL). Workers exigirão faixas próprias (fase 2)."""
+    result = _run_compose(_compose_env(_create_secret_dummies(tmp_path)), quiet=False)
+
+    assert result.returncode == 0, result.stderr
+    web = result.stdout.split("  web:")[1].split("\n\n  ")[0]
+    # O render do compose normaliza unidades (512m -> bytes; "1.0" -> 1).
+    assert 'mem_limit: "536870912"' in web
+    assert "cpus: 1" in web
+    assert "pids_limit: 200" in web
+    assert "read_only: true" in web
+    assert "no-new-privileges:true" in web
+    assert "cap_drop:" in web and "- ALL" in web
+    # P1 (review de hardening): sem esta env o wsgi.py defaulta para settings
+    # de DEV no web de produção (gunicorn não aceita --settings).
+    assert "DJANGO_SETTINGS_MODULE: config.settings.prod" in web

@@ -18,9 +18,12 @@ Python 3.13+ · Django 5.2+ · PostgreSQL 17+ · Bootstrap 5.3 · Vanilla JS · 
 
 ## Status
 
-Bootstrap em andamento (change 01). O slice 001 entrega o scaffold executável
-(settings por ambiente, toolchain de qualidade e smoke tests) **sem banco de
-dados**; o ambiente docker compose e as migrações chegam no slice 002.
+**v0.1.0 — roadmap completo (11 changes)**. Ciclo do caso de ponta a ponta
+(`NEW→CLEANED`): upload com anexos, extração/anonimização fail-closed,
+pipeline LLM por tipo (só tokens), decisão médica consultiva, agendamento
+em 2 unidades com intercorrência, resposta final/ciência com limpeza,
+reenvio corrigido, notificações in-app, painel gerencial, PWA e manual.
+1037 testes · 13 specs promovidas (`openspec/`). Veja `CHANGELOG.md`.
 
 ## Ambiente de desenvolvimento
 
@@ -108,3 +111,47 @@ O recall mínimo default é o setting `ANONYMIZATION_BENCHMARK_MIN_RECALL`
 (0.90), sobreponível por `--min-recall`. Corpus sintético versionado acompanha
 a suíte; a aceitação com relatórios reais é passo operacional manual,
 pré-produção (ADR-0007).
+
+## Primeiros testes (implantação interna)
+
+Release `v0.1.0` destina-se a testes internos na intranet do HGRS. O caminho
+mais rápido é o compose de desenvolvimento em um servidor interno (runserver +
+workers), enquanto o serviço web de produção (gunicorn) não é adicionado.
+
+```bash
+# 1. Código + imagem (workers/pdf/anonymization/llm/attachments usam a
+#    imagem pronta com o modelo spaCy pt_core_news_lg no build):
+git clone https://github.com/carlosapgomes/hmd.git && cd hmd
+docker compose -f docker-compose.yml -f docker-compose.dev.yml build
+
+# 2. Ambiente (.env na raiz — modelo em .env.example):
+#    - DJANGO_SECRET_KEY (obrigatório; gere um segredo real)
+#    - DATABASE_URL / credenciais do Postgres
+#    - OPENROUTER_API_KEY + LLM_MODEL_LLM1/LLM2 (pipeline; sem elas os
+#      casos ficam retidos fail-closed)
+#    - VISION_MODEL (OCR externo de anexos; sem ela anexos de imagem
+#      falham nomeados — extração local de PDFs segue)
+#    - ALLOWED_HOSTS com o nome do servidor de teste
+
+# 3. Banco + dados-base (idempotentes — re-executar é seguro):
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db
+docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm web \
+  python manage.py migrate --settings=config.settings.dev
+docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm web \
+  python manage.py seed_admin --settings=config.settings.dev   # papéis + admin local
+docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm web \
+  python manage.py seed_prompts --settings=config.settings.dev  # 29 prompts versionados
+
+# 4. Sobe tudo (web + worker-pdf/anonymization/llm/attachments):
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+```
+
+Checklist pós-install: `manage.py ad_check` (se AD/Kerberos estiver no ar),
+criar usuários de teste com os papéis (admin local → perfil), atribuir
+especialidades aos médicos, e conferir o sino de notificações/painel/manual
+na navbar. Os 13 tipos de procedimento vêm do catálogo; especialidades médicas
+vêm da migration `0003` (idempotente).
+
+Limitações conhecidas deste release: workers exigem `VISION_MODEL` para OCR
+externo; benchmark com corpus real e revisão dos prompts são aceite
+pré-produção (`CHANGELOG.md` → pendências).

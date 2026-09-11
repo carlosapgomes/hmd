@@ -4,6 +4,55 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.1] — 2026-09-11
+
+Primeiro release **de produção** do HMD para o piloto no HGRS: runtime web em
+imagem versionada, healthchecks, settings endurecidas e o compose produtivo.
+O upload do NIR (intake) fica **desligado** nesta fase.
+
+### Runtime de produção
+
+- **gunicorn** (`>=23,<24`) como servidor WSGI do `CMD` da imagem (3 workers ×
+  2 threads, timeout 60s / graceful 30s, access e error log em stdout/stderr —
+  a rotação é do log driver do compose).
+- **`collectstatic` no build** da imagem (estáticos + manifest do WhiteNoise
+  dentro dela, com envs dummy de build); nenhuma etapa de estáticos no startup.
+- **`/healthz`** (liveness, sem tocar o banco) e **`/readyz`** (readiness:
+  `SELECT 1` + validação do cache `hmd_cache`) — públicas, isentas do guard de
+  intranet e usadas pelo healthcheck do compose.
+
+### Configuração e hardening
+
+- **Cache `DatabaseCache`** em `hmd_cache` (tabela criada pelo passo migrate
+  one-shot via `createcachetable`); guard anti-LocMem mantido em produção.
+- **Settings env-driven**: `CSRF_TRUSTED_ORIGINS` (default
+  `https://hmd.projetoshgrs.com`), `SECURE_PROXY_SSL_HEADER` (via
+  `PROXY_SSL_HEADER`, Caddy termina o TLS) e `ALLOWED_HOSTS`.
+- **`INTAKE_ENABLED` fail-closed**: criação de casos bloqueada no boundary de
+  serviço (erro nomeado antes de qualquer validação/escrita/arquivo/enqueue) e
+  nos POSTs do intake (flash + redirect); default **false** em produção e true
+  em dev/teste.
+
+### Deploy (piloto fase 1)
+
+- **`docker-compose.prod.yml`** autônomo: web GHCR sem porta no host (Caddy
+  como upstream na rede de ingress), PostgreSQL 17 compartilhado e externo
+  (DB `app_hmd`), redes externas (`hospital-db-hmd`,
+  `hospital_ingress_hmd`, `hospital_egress_hmd`), **migrate one-shot**
+  (`migrate && createcachetable hmd_cache && seeds`, com credencial de
+  migrator) e workers django-q2 sob profile **desligado**; secrets apenas por
+  `${VAR}`, fora do Git.
+- **Imagem `ghcr.io/carlosapgomes/hmd:v0.1.1`** publicada pelo workflow de
+  release (linux/amd64, tag da versão + `latest`) no push da tag `v0.1.1`.
+
+### Notas
+
+- A ativação de **intake**, dos **workers** (pdf/anonymization/llm/attachments)
+  e do **egress OpenRouter/OCR** (`OPENROUTER_API_KEY`/`VISION_MODEL`) será uma
+  **outra mudança**; a fase 1 opera o ciclo assistencial com o upload bloqueado.
+
+**Baseline**: 1061 testes · ruff/format/mypy limpos.
+
 ## [0.1.0] — 2026-09-10
 
 Primeiro release do HMD para **testes internos** no HGRS: ciclo completo do

@@ -33,6 +33,7 @@ import logging
 import uuid
 from typing import Any, cast
 
+from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.http import FileResponse, HttpRequest, HttpResponse
@@ -52,6 +53,7 @@ from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 
 from .forms import CorrectedResubmissionForm, IntakeUploadForm
 from .services import (
+    INTAKE_DISABLED_MESSAGE,
     PDF_CONTENT_TYPE,
     CaseNotRetainedError,
     IntakeValidationError,
@@ -200,6 +202,12 @@ def intake_home(request: HttpRequest) -> HttpResponse:
     form = IntakeUploadForm()
 
     if request.method == "POST":
+        # Intake desligado (D7, slice 002 do pilot-deployment): informa sem
+        # efeito — o guard do serviço também bloqueia, mas aqui a resposta é
+        # amigável (flash + redirect) em vez de erro de validação.
+        if not settings.INTAKE_ENABLED:
+            messages.error(request, INTAKE_DISABLED_MESSAGE)
+            return redirect(reverse("intake:home"))
         form = IntakeUploadForm(request.POST, request.FILES)
         if form.is_valid():
             documents = form.cleaned_data["documents"]
@@ -399,6 +407,12 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         created_by=user,
     )
     detail_url = reverse("intake:case_detail", args=[case.case_id])
+    # Intake desligado (D7; P2 review: checado ANTES do estado, para a
+    # mensagem de "desabilitado" prevalecer sobre a de estado em qualquer
+    # caso) — bloqueado sem efeito.
+    if not settings.INTAKE_ENABLED:
+        messages.error(request, INTAKE_DISABLED_MESSAGE)
+        return redirect(detail_url)
     if case.status != CaseStatus.CLEANED:
         messages.error(
             request,
@@ -563,6 +577,11 @@ def gate_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         case_id=case_id,
         created_by=user,
     )
+    # Intake desligado (D7): bloqueia o reenvio do gate antes do serviço — a
+    # resposta volta ao detalhe (302), nunca 4xx/500 nem efeito colateral.
+    if not settings.INTAKE_ENABLED:
+        messages.error(request, INTAKE_DISABLED_MESSAGE)
+        return redirect(reverse("intake:case_detail", args=[case.case_id]))
     documents = request.FILES.getlist("documents")
     try:
         resubmit_case_documents(

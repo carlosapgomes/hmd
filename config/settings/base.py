@@ -256,6 +256,18 @@ INTAKE_RUN_TASKS_INLINE = os.environ.get("INTAKE_RUN_TASKS_INLINE", "true").lowe
     "yes",
 )
 
+# Chave geral do intake do NIR (change pilot-deployment-v0-1-1, slice 002,
+# design D7): ``True`` (default em dev/teste) permite criar casos/reenviar
+# documentos; ``False`` bloqueia fail-closed no boundary do serviço (guard
+# ``_assert_intake_enabled``) e informa o usuário nas rotas de POST. Em
+# produção o default é ``False`` (mesma convenção dos flags
+# ``*_RUN_TASKS_INLINE``) — fase 1 do piloto sem upload.
+INTAKE_ENABLED = os.environ.get("INTAKE_ENABLED", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # Anonimização Presidio (change presidio-anonymization, slice 002, design
 # D3/D4): modelo spaCy pt-BR do engine singleton e limiar de score do
 # analyzer. O modelo default (pt_core_news_lg, ~541 MB) é trocável por um

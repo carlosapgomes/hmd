@@ -80,6 +80,17 @@ INTAKE_RUN_TASKS_INLINE = os.environ.get("INTAKE_RUN_TASKS_INLINE", "false").low
     "yes",
 )
 
+# Chave geral do intake (change pilot-deployment-v0-1-1, slice 002, R1/D7):
+# em produção o default é DESLIGADO — fase 1 do piloto sem upload (nenhum
+# caso/documento/anexo/tarefa criado ou enfileirado). Só liga com intenção
+# explícita via env, mesma convenção fail-closed dos flags *_RUN_TASKS_INLINE
+# abaixo. Ativação futura junto aos workers/egress.
+INTAKE_ENABLED = os.environ.get("INTAKE_ENABLED", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # Processamento da anonimização (change presidio-anonymization, slice 004,
 # R2): em produção o default é enfileirar no cluster anonymization — nunca
 # rodar inline sem intenção explícita (o processo web nunca carrega o modelo

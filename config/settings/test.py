@@ -56,6 +56,12 @@ APP_DISPLAY_NAME = "HMD — Hemodinâmica"
 # local com INTAKE_RUN_TASKS_INLINE=false.
 INTAKE_RUN_TASKS_INLINE = True
 
+# Intake HABILITADO na suíte (P1 review do slice 002 do pilot-deployment):
+# dezenas de testes chamam o serviço de criação sem override — pinar aqui
+# torna a suíte determinística mesmo com INTAKE_ENABLED=false no ambiente
+# (ex.: .env copiado de um host do piloto).
+INTAKE_ENABLED = True
+
 # Processamento da anonimização roda inline na suíte (design D7/R2): o signal
 # de entrada em ANONYMIZING executa a task sincronamente — determinístico
 # independente de um .env local com ANONYMIZATION_RUN_TASKS_INLINE=false.

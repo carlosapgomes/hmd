@@ -54,9 +54,27 @@ logger = logging.getLogger(__name__)
 # Único content-type aceito para documentos do relatório (R3/D1).
 PDF_CONTENT_TYPE = "application/pdf"
 
+# Mensagem única do bloqueio fail-closed do intake (D7): usada pelo guard de
+# serviço (ValueError nomeado) e pelo flash das views de POST.
+INTAKE_DISABLED_MESSAGE = "O envio de relatórios está desabilitado neste ambiente."
+
 
 class IntakeValidationError(ValueError):
-    """Lote de upload inválido — nada foi persistido (R3)."""
+    """Upload rejeitado SEM efeito: lote inválido ou intake desabilitado —
+    nada foi persistido (R3; guard do slice 002 do pilot-deployment)."""
+
+
+def _assert_intake_enabled() -> None:
+    """Fail-closed: bloqueia o intake quando ``INTAKE_ENABLED`` é falso (D7).
+
+    Guard no TOPO das três funções de criação (nova, reenvio corrigido e
+    reprocessamento do gate), ANTES de qualquer validação, escrita de banco ou
+    gravação de arquivo — cobre qualquer caller, não só as rotas HTTP
+    (``ValueError`` nomeado: ``INTAKE_DISABLED_MESSAGE``). O default é true em
+    dev/teste e false em produção (fase 1 do piloto).
+    """
+    if not settings.INTAKE_ENABLED:
+        raise IntakeValidationError(INTAKE_DISABLED_MESSAGE)
 
 
 class CaseNotRetainedError(Exception):
@@ -157,6 +175,7 @@ def create_case_with_documents(
     corrigido — os defaults ``()``/``None``/``""`` preservam o comportamento
     do change 04 (criação pura — regressão coberta por teste).
     """
+    _assert_intake_enabled()
     uploaded_files = list(files)
     declared_types = tuple(procedure_types)
     attachment_files = list(attachments)
@@ -398,6 +417,7 @@ def resubmit_case_documents(
         CaseNotRetainedError: caso fora da retenção (sem efeito).
         CaseLockConflictError: lock ativo não-expirado de outro ator (sem efeito).
     """
+    _assert_intake_enabled()
     uploaded_files = list(files)
     _validate_batch(uploaded_files)
 
@@ -486,6 +506,7 @@ def create_corrected_resubmission(
         AttachmentValidationError: anexo inválido (nada muda).
         Http404: caso não é do criador (escopo por criador, sem vazar informação).
     """
+    _assert_intake_enabled()
     reason = (correction_reason or "").strip()
     if not reason:
         raise IntakeValidationError("Informe o motivo do reenvio corrigido.")

@@ -30,7 +30,7 @@ apenas por `${VAR}` (nunca values no Git).
 - **R1** `docker-compose.prod.yml`: serviço `web` (image
   `ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.1}`, SEM `ports`,
   `expose: ["8000"]`; redes hospital_ingress_hmd + hospital-db-hmd +
-  hospital_egress_hmd; healthcheck `GET /readyz`; logging json-file
+  hospital_egress_hmd; healthcheck `GET /readyz/` (com barra — rotas/exempt exigem; curl -f não segue 301); logging json-file
   rotacionado (max-size 10m, max-file 3); envs por `${VAR}`; depende do
   migrate apenas documentacional — sem depends_on bloqueante).
 - **R2** Serviço `migrate` (profile `migrate`, `restart: "no"`): command

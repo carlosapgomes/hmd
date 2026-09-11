@@ -3,14 +3,19 @@
 Incluídas na raiz em ``config/urls.py`` **SEM namespace** (D2/Nota de rotas):
 seus nomes (``home``, ``login``, ``manual``, ``notifications``, …) são globais e
 referenciados sem prefixo. Rotas de notificação in-app adicionadas no slice 002
-do change 11; a de manual no slice 005.
+do change 11; a de manual no slice 005; healthz/readyz no slice 001 do change
+pilot-deployment-v0-1-1.
 """
 
 from django.urls import URLPattern, path
 
-from . import views
+from . import views, views_health
 
 urlpatterns: list[URLPattern] = [
+    # Saúde do runtime (change pilot-deployment-v0-1-1, slice 001/R3): nomes
+    # GLOBAIS, sem namespace — consumidos pelo healthcheck do compose.
+    path("healthz/", views_health.healthz_view, name="healthz"),
+    path("readyz/", views_health.readyz_view, name="readyz"),
     path("", views.home_view, name="home"),
     path("login/", views.login_view, name="login"),
     path("logout/", views.logout_view, name="logout"),

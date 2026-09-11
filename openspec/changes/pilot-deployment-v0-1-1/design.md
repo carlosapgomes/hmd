@@ -99,7 +99,7 @@ Tag anotada `v0.1.1` somente após review final; digest da imagem reportado.
 - Compose/web não recebem `OPENROUTER_API_KEY`/`VISION_MODEL` na fase 1
   (egress LLM desligado por ausência de workers E de chave).
 - `INTRANET_RESTRICTED_ROLES` segue default `nir` (igual ATS);
-  `INTRANET_IP_RANGE` por env no host (fora do Git).
+  `INTRANET_IP_RANGE` por env no host (fora do Git); NOTA (review 001): com Caddy de upstream, o default `TRUSTED_PROXY_HEADER=HTTP_CF_CONNECTING_IP` não casa — documentar no README/.env.example do piloto o ajuste para `HTTP_X_FORWARDED_FOR` (Caddy injeta) para o guard de intranet ver o IP real do cliente.
 
 ## D7 — Intake desligável fail-closed (decisão owner, fase 1)
 

@@ -22,8 +22,23 @@ RUN uv sync --frozen --no-dev
 # o /app/.venv recém-instalado acima nunca é sobrescrito pelo COPY.
 COPY . /app
 
-# Workers executam o venv da imagem diretamente (imagem pronta, sem uv run
-# resolvendo sync em runtime).
+# Workers/collectstatic executam o venv da imagem diretamente (imagem pronta,
+# sem uv run resolvendo sync em runtime).
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Estáticos coletados no BUILD (change pilot-deployment-v0-1-1, slice 001/R2,
+# design D1): o WhiteNoise de produção
+# (CompressedManifestStaticFilesStorage) exige os arquivos + manifest dentro da
+# imagem, e o .dockerignore mantém ``staticfiles/`` fora do contexto — eles
+# entram por esta camada. As envs são DUMMY (o import de prod exige secret e
+# banco válidos; o collectstatic não abre conexão) — nenhum secret real no
+# build.
+RUN DJANGO_SECRET_KEY=build-dummy \
+    DATABASE_URL=postgres://build:build@localhost/build \
+    python manage.py collectstatic --noinput --settings=config.settings.prod
+
 EXPOSE 8000
+
+# Servidor de produção (R2/design D1): logs em stdout/stderr (o log driver do
+# compose rotaciona), 3 workers x 2 threads para o perfil do piloto.
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--threads", "2", "--timeout", "60", "--graceful-timeout", "30", "--capture-output", "--access-logfile", "-", "--error-logfile", "-"]

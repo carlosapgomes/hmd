@@ -25,8 +25,10 @@ from apps.accounts.models import User
 logger = logging.getLogger(__name__)
 
 # Caminhos que não exigem papel ativo (D4/D5): autenticação e seleção de
-# papel ficam fora do guard para não criar loop de redirect.
-EXEMPT_PATHS = {"/login/", "/logout/", "/switch-role/"}
+# papel ficam fora do guard para não criar loop de redirect. Os endpoints de
+# saúde do runtime (change pilot-deployment-v0-1-1, slice 001/R3) são públicos
+# e isentos do IntranetGuard: o healthcheck do compose nunca recebe 403.
+EXEMPT_PATHS = {"/login/", "/logout/", "/switch-role/", "/healthz/", "/readyz/"}
 # Admin e estáticos seguem fluxo próprio (mesmo padrão do ats-web).
 EXEMPT_PREFIXES = ("/admin/", "/static/")
 

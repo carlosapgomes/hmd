@@ -7,6 +7,10 @@ dependencies = [
     "django>=5.2,<6",
     "psycopg[binary]",
     "whitenoise",
+    # Servidor WSGI de produção (change pilot-deployment-v0-1-1, slice 001/R1,
+    # design D1): CMD da imagem, logs em stdout/stderr — deploy é parte do
+    # produto, não do host.
+    "gunicorn>=23,<24",
     "python-dotenv",
     "dj-database-url",
     # Cliente Kerberos puro em Python para validação de senha AD (D1).

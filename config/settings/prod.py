@@ -2,9 +2,10 @@
 
 Falha fechado: sem ``DJANGO_SECRET_KEY`` a inicialização aborta com
 ``ImproperlyConfigured`` — nunca há fallback para valor de build (R6). Cache
-do anti-lockout (slice 004/R3b): enquanto ``CACHES`` for o default
-``LocMemCache`` (por-processo) a inicialização também aborta — produção exige
-cache compartilhado entre workers (Redis/Memcached) configurado no deploy.
+compartilhado entre workers (change pilot-deployment-v0-1-1, slice 001/R4):
+produção usa ``DatabaseCache`` (tabela ``hmd_cache``) e o guard anti-LocMem do
+slice 004/R3b segue ativo — a inicialização aborta se o backend voltar a ser
+por-processo.
 """
 
 import os
@@ -20,22 +21,52 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
 if not SECRET_KEY:
     raise ImproperlyConfigured("DJANGO_SECRET_KEY é obrigatório em produção.")
 
+# Cache compartilhado entre workers (change pilot-deployment-v0-1-1, slice
+# 001/R4, design D3): ``DatabaseCache`` na tabela ``hmd_cache`` — criada pelo
+# passo de migração ``manage.py createcachetable hmd_cache`` (idempotente; a
+# tabela é de infraestrutura, não de domínio). Sobrescreve o LocMem do base.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.database.DatabaseCache",
+        "LOCATION": "hmd_cache",
+    },
+}
+
 # Cache do anti-lockout local (change ad-kerberos, slice 004, R3b/D7):
 # ``LocMemCache`` é por-processo — com múltiplos workers o limiar efetivo do
-# rate-limit de login seria multiplicado. Produção falha fechado enquanto
-# ``CACHES`` permanecer LocMem: o deploy precisa configurar um cache
-# compartilhado (Redis/Memcached) para o limiar valer entre workers. Dev/teste
-# continuam em LocMem (limiar por processo é suficiente lá).
+# rate-limit de login seria multiplicado. O guard segue proibindo LocMem em
+# produção: qualquer troca de backend que reintroduza cache local aborta a
+# inicialização. Dev/teste continuam em LocMem (limiar por processo é
+# suficiente lá).
 if CACHES["default"]["BACKEND"] == "django.core.cache.backends.locmem.LocMemCache":  # noqa: F405
     raise ImproperlyConfigured(
         "CACHES não pode ser LocMemCache em produção: o rate-limit de login "
-        "(LOGIN_ATTEMPTS_LIMIT) exige cache compartilhado entre workers "
-        "(Redis/Memcached) — configure CACHES no deploy."
+        "(LOGIN_ATTEMPTS_LIMIT) exige cache compartilhado entre workers. "
+        "O default daqui é DatabaseCache na tabela hmd_cache (criada pelo "
+        "passo de migração via createcachetable) — este guard é self-check "
+        "contra regressões de configuração."
     )
 
 ALLOWED_HOSTS = [
     host.strip() for host in os.environ.get("ALLOWED_HOSTS", "").split(",") if host.strip()
 ]
+
+# Origem pública do piloto como default (D3): DNS público, não secret. O env
+# aceita várias origens separadas por vírgula.
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("CSRF_TRUSTED_ORIGINS", "https://hmd.projetoshgrs.com").split(",")
+    if origin.strip()
+]
+
+# O TLS termina no proxy reverso, que injeta ``X-Forwarded-Proto`` (D3): ligado
+# por default no piloto; ``PROXY_SSL_HEADER=false`` desliga quando não houver
+# proxy HTTPS à frente.
+SECURE_PROXY_SSL_HEADER: tuple[str, str] | None
+if os.environ.get("PROXY_SSL_HEADER", "true").lower() in ("true", "1", "yes"):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+else:
+    SECURE_PROXY_SSL_HEADER = None
 
 DATABASES = {"default": dj_database_url.config(conn_max_age=600, conn_health_checks=True)}
 

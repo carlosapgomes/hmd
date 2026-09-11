@@ -8,8 +8,9 @@ Cobre R1–R5 do slice (design D7):
   nunca de header arbitrário;
 - R2: bloqueio checado ANTES de qualquer backend/KDC — a tentativa no limiar
   excedido não aciona a factory fake; sucesso zera contadores;
-- R3/R3b: limiar/janela/duração nas settings; ``config.settings.prod`` falha
-  fechado (``ImproperlyConfigured``) com CACHES LocMem;
+- R3/R3b: limiar/janela/duração nas settings; ``config.settings.prod`` usa
+  cache compartilhado entre workers por default (``DatabaseCache`` na tabela
+  ``hmd_cache`` — slice 001 do change pilot-deployment-v0-1-1/R4);
 - R4: bloqueio temporário expira (cache zerado simula o TTL) sem tocar
   ``account_status`` nem persistir em banco;
 - R5: IP+CPF independente do contador por CPF; spoof de header não-confiável
@@ -21,12 +22,10 @@ e 003). O cache LocMem é zerado entre testes pelo conftest do diretório.
 """
 
 import importlib
-import sys
 from collections.abc import Sequence
 
 import pytest
 from django.core.cache import cache
-from django.core.exceptions import ImproperlyConfigured
 from django.http import HttpRequest
 from django.test import Client, RequestFactory, override_settings
 from django.urls import reverse
@@ -362,13 +361,20 @@ class TestLoginLockoutFlow:
         assert recovered.headers["Location"] == reverse("home")
 
 
-class TestProdRequiresSharedCache:
-    """R3b: produção falha fechado enquanto CACHES for LocMem."""
+class TestProdCacheDefault:
+    """R3b/R4: produção usa cache compartilhado entre workers por default.
 
-    def test_prod_requires_shared_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Importar ``config.settings.prod`` com LocMem → ImproperlyConfigured."""
+    Guard anti-LocMem permanece em prod.py como self-check do deploy; o default
+    é DatabaseCache (R4 do slice 001).
+    """
+
+    def test_prod_cache_default_is_database_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Importar ``config.settings.prod`` resolve o cache para ``hmd_cache``."""
         monkeypatch.setenv("DJANGO_SECRET_KEY", "chave-de-teste-de-producao")
-        monkeypatch.delenv("DATABASE_URL", raising=False)
-        sys.modules.pop("config.settings.prod", None)
-        with pytest.raises(ImproperlyConfigured, match="compartilhado"):
-            importlib.import_module("config.settings.prod")
+        monkeypatch.setenv("DATABASE_URL", "postgres://build:build@localhost/build")
+        prod = importlib.reload(importlib.import_module("config.settings.prod"))
+
+        assert prod.CACHES["default"]["BACKEND"] == (
+            "django.core.cache.backends.database.DatabaseCache"
+        )
+        assert prod.CACHES["default"]["LOCATION"] == "hmd_cache"

@@ -66,3 +66,25 @@ O repositório SHALL publicar, em cada tag `v*`, uma imagem Docker `linux/amd64`
 - **GIVEN** a tag `v0.1.1` pushed
 - **WHEN** o workflow de release executa
 - **THEN** a imagem amd64 aparece no GHCR com a tag v0.1.1 e digest reportável
+
+### Requirement: Segredos por arquivos no deploy produtivo
+
+O deploy de produção SHALL fornecer todos os valores secretos (senha do banco da aplicação e do migrator, chave secreta do Django e senha do admin local inicial) por arquivos montados como segredos read-only, um consumidor por segredo, sem senha em variável de ambiente ou em `DATABASE_URL`, e sem qualquer valor secreto no repositório. O carregamento SHALL ser fail-closed: arquivo ausente/ilegível/vazio, ou ausência de qualquer fonte, aborta a inicialização com erro nomeado; o arquivo tem precedência sobre a variável de ambiente correspondente quando ambas existirem.
+
+#### Scenario: Segredo lido de arquivo com precedência
+
+- **GIVEN** a variável apontando para um arquivo de segredo válido e a variável de ambiente com a senha também definida
+- **WHEN** as configurações são carregadas
+- **THEN** o valor usado é o do arquivo
+
+#### Scenario: Falha fechada sem fonte de segredo
+
+- **GIVEN** nem o arquivo de segredo nem a variável de ambiente correspondente definidos em produção
+- **WHEN** as configurações são carregadas
+- **THEN** a inicialização aborta com erro nomeado indicando a fonte esperada
+
+#### Scenario: Consumidores isolados por segredo
+
+- **GIVEN** o compose de produção renderizado
+- **WHEN** os segredos são inspecionados
+- **THEN** a senha do migrator só está montada no serviço de migração, a senha do admin só no serviço de migração, e a senha da aplicação e a chave secreta apenas nos serviços que as consomem — nenhuma URL de banco com senha no environment

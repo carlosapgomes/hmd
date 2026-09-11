@@ -38,13 +38,17 @@ jobs:
 
       # Tags/labels derivados da ref: `type=ref,event=tag` produz a tag da
       # release (v0.1.2, igual ao default de HMD_IMAGE_TAG no compose). SEM
-      # `latest` (slice 005/R5): releases futuros publicam apenas a tag — o
-      # deploy pinado por tag+digest não depende de um alias mutável.
+      # `latest` (slice 005/R5): o flavor default do metadata-action é
+      # `latest=auto`, que move :latest em todo evento de tag mesmo sem
+      # `type=raw,value=latest` (foi o que aconteceu no v0.1.2) — por isso o
+      # `latest=false` EXPLÍCITO: releases publicam apenas a tag da versão.
       - name: metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/carlosapgomes/hmd
+          flavor: |
+            latest=false
           tags: |
             type=ref,event=tag
 

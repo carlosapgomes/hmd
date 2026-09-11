@@ -66,7 +66,7 @@ resultado (ok/código/razão/latência). A senha é lida via prompt (`getpass`) 
 nunca em argumentos, variável de ambiente ou logs:
 
 ```bash
-uv run python manage.py ad_check --cpf 12345678901@dominio-teste.local
+uv run python manage.py ad_check --cpf 12345678901@<dominio-ad>
 ```
 
 Requer rede hospitalar; útil para a matriz de aceitação da pesquisa (senha

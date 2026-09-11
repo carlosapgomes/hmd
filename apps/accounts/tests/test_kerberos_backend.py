@@ -212,7 +212,7 @@ class TestKerberosBackend:
         factory = FakeKerberosFactory([KerberosAuthResult(False, code=24, reason="kdc_error")])
 
         with caplog.at_level(logging.WARNING, logger="apps.accounts.backends"):
-            with override_settings(KERBEROS_CLIENT_FACTORY=factory):
+            with override_settings(KERBEROS_CLIENT_FACTORY=factory, AD_DCS=["dc-teste-1"]):
                 result = KerberosBackend().authenticate(None, username=CPF, password=AD_PASSWORD)
 
         assert result is None
@@ -225,9 +225,11 @@ class TestKerberosBackend:
 
     def test_get_user_returns_only_active_accounts(self) -> None:
         """``get_user`` rejeita contas não-ativas (paridade com o backend)."""
-        active = _create_user(username="ad.ativo", ad_upn="ad.ativo@<dominio-ad>")
+        active = _create_user(username="ad.ativo", ad_upn="ad.ativo@dominio-teste.local")
         _create_user(
-            username="ad.bloqueado", ad_upn="ad.bloqueado@<dominio-ad>", account_status="blocked"
+            username="ad.bloqueado",
+            ad_upn="ad.bloqueado@dominio-teste.local",
+            account_status="blocked",
         )
 
         assert KerberosBackend().get_user(active.pk) == active
@@ -253,7 +255,7 @@ class TestLocalAccountBackend:
 
     def test_superuser_with_ad_upn_cannot_use_local_password(self) -> None:
         """Mesmo superusuário, com ``ad_upn`` → AD manda; senha local recusada."""
-        _create_user(username="admin.ad", ad_upn="admin.ad@<dominio-ad>", is_superuser=True)
+        _create_user(username="admin.ad", ad_upn="admin.ad@dominio-teste.local", is_superuser=True)
 
         result = LocalAccountBackend().authenticate(
             None, username="admin.ad", password=LOCAL_PASSWORD

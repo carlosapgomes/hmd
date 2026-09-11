@@ -248,7 +248,7 @@ class TestHmdAdminSiteLogin:
             [KerberosAuthResult(False, code=24, reason="kdc_error")] * attempts
         )
 
-        with override_settings(KERBEROS_CLIENT_FACTORY=factory):
+        with override_settings(KERBEROS_CLIENT_FACTORY=factory, AD_DCS=["dc-teste-1"]):
             for _ in range(attempts):
                 response = client.post(
                     reverse("admin:login"), {"username": USERNAME, "password": WRONG_PASSWORD}

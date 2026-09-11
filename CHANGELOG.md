@@ -22,8 +22,9 @@ promovidas.
   ambiente (base/dev/test/prod), toolchain de qualidade, compose de
   desenvolvimento e de teste, contas com multi-role e papel ativo, guard de
   intranet.
-- **ad-kerberos-authentication** — login AD/Kerberos (minikerberos pinado,
-  SPNEGO do browser, provisionamento por UPN), lockout/rate-limit
+- **ad-kerberos-authentication** — login AD por CPF+senha no form (AS-REQ
+  server-side via minikerberos pinado, provisionamento por UPN no admin,
+  failover entre DCs por transporte; sem SPNEGO/keytab), lockout/rate-limit
   anti-brute-force; admin é identidade local por design (emenda
   `admin-local-identity`: gate e flag extintos, ADR-0009).
 - **case-core-fsm-procedures** — FSM de 17 estados com transições protegidas

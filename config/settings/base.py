@@ -81,11 +81,10 @@ AUTHENTICATION_BACKENDS = [
 # configurável: é derivado do sufixo do ``ad_upn`` no momento da validação
 # (D3 — floresta multi-domínio). ``AD_KDC_TIMEOUT`` é o timeout por tentativa
 # (default 3s). Failover entre DCs só em erro de transporte (D5).
-AD_DCS = [
-    dc.strip()
-    for dc in os.environ.get("AD_DCS", "<DC1-IP>,<DC2-IP>").split(",")
-    if dc.strip()
-]
+# Sem ``AD_DCS`` configurado o login AD fica indisponível por config
+# (fail-closed nomeado — nenhum endereço interno fica embutido no repo;
+# provisionar via env no ambiente de cada deploy).
+AD_DCS = [dc.strip() for dc in os.environ.get("AD_DCS", "").split(",") if dc.strip()]
 AD_KDC_TIMEOUT = int(os.environ.get("AD_KDC_TIMEOUT", "3"))
 # Factory injetável do wrapper real (D6): dotted-path resolvido em tempo de
 # chamada por ``apps.accounts.kerberos``. Testes sobrescrevem com fakes via

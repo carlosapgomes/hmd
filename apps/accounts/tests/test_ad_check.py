@@ -13,6 +13,7 @@ Cobre o contrato do comando **sem rede**:
 import io
 
 import pytest
+from django.conf import settings
 from django.core.management import CommandError, call_command
 
 from apps.accounts.kerberos import KerberosAuthResult
@@ -65,6 +66,8 @@ def test_malformed_upn_fails_before_getpass(monkeypatch: pytest.MonkeyPatch, cpf
 
 def test_valid_upn_reaches_getpass(monkeypatch: pytest.MonkeyPatch) -> None:
     """UPN completo válido chega ao ``getpass`` e reporta ok por DC (R5/D9)."""
+    # AD_DCS explícito: o default é vazio (sem endereços no repo).
+    monkeypatch.setattr(settings, "AD_DCS", ["dc-teste-1", "dc-teste-2"])
     spy = GetpassSpy(password=VALID_PASSWORD)
     monkeypatch.setattr("getpass.getpass", spy)
     _patch_fake_validate_password(monkeypatch)

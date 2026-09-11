@@ -315,3 +315,19 @@ def test_compose_config_uses_secret_files(tmp_path: Path) -> None:
     assert "/run/secrets/app_db_password" in rendered
     assert "/run/secrets/migrator_db_password" in rendered
     assert "/run/secrets/superuser_password" in rendered
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker compose indisponível")
+def test_compose_trusted_proxy_default_is_cloudflare(tmp_path: Path) -> None:
+    """Topologia do piloto (Cloudflared → Caddy → HMD): o default do compose
+    para o header de IP confiável é ``HTTP_CF_CONNECTING_IP`` (borda
+    Cloudflare fixa com o cliente real; Caddy repassa sem tocar). Um default
+    de XFF aqui faria o guard de intranet ler o IP do cloudflared (finding
+    de integração do blueprint, 2026-09-11)."""
+    env = _compose_env(_create_secret_dummies(tmp_path))
+    env.pop("TRUSTED_PROXY_HEADER", None)
+
+    result = _run_compose(env, quiet=False)
+
+    assert result.returncode == 0, result.stderr
+    assert "TRUSTED_PROXY_HEADER: HTTP_CF_CONNECTING_IP" in result.stdout

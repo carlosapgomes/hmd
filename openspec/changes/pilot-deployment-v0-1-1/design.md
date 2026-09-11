@@ -99,7 +99,7 @@ Tag anotada `v0.1.1` somente após review final; digest da imagem reportado.
 - Compose/web não recebem `OPENROUTER_API_KEY`/`VISION_MODEL` na fase 1
   (egress LLM desligado por ausência de workers E de chave).
 - `INTRANET_RESTRICTED_ROLES` segue default `nir` (igual ATS);
-  `INTRANET_IP_RANGE` por env no host (fora do Git); NOTA (review 001): com Caddy de upstream, o default `TRUSTED_PROXY_HEADER=HTTP_CF_CONNECTING_IP` não casa — documentar no README/.env.example do piloto o ajuste para `HTTP_X_FORWARDED_FOR` (Caddy injeta) para o guard de intranet ver o IP real do cliente.
+  `INTRANET_IP_RANGE` por env no host (fora do Git); NOTA (corrigida em 2026-09-11, finding do blueprint): na topologia REAL do piloto (Cloudflared → Caddy → HMD) o default `TRUSTED_PROXY_HEADER=HTTP_CF_CONNECTING_IP` é o CORRETO — a borda Cloudflare fixa esse header com o IP real do cliente e o Caddy o repassa sem tocar (NÃO usar `header_up X-Forwarded-For {remote_host}` nesse hop: gravaria o IP do cloudflared). XFF+header_up vale apenas em topologia Caddy-direto (a nota original da review 001 estava errada para esta topologia).
 
 ## D7 — Intake desligável fail-closed (decisão owner, fase 1)
 

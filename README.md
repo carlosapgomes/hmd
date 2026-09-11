@@ -231,11 +231,18 @@ imagem do GHCR (`docker login ghcr.io` com PAT `read:packages`) — ou o
 pacote deve ser público. Ajustes do
 piloto: `ALLOWED_HOSTS=hmd.projetoshgrs.com` (o compose acrescenta
 `127.0.0.1` automaticamente p/ o healthcheck), `AD_DCS` e
-`INTRANET_IP_RANGE` (valores reais fora do Git) e
-`TRUSTED_PROXY_HEADER=HTTP_X_FORWARDED_FOR` — configure o Caddy para
-**sobrescrever** o header (`header_up X-Forwarded-For {remote_host}`):
-appended XFF permite spoof do primeiro IP e burlaria o guard de intranet.
+`INTRANET_IP_RANGE` (valores reais fora do Git).
 `INTRANET_RESTRICTED_ROLES` tem default `nir` no compose (iguais ao ATS).
+O guard avalia o **IP reportado pelo Cloudflare** (`Cf-Connecting-IP`): se
+usuários internos acessarem pela URL pública, o IP visto é o de **egress de
+internet do hospital** — inclua essa faixa no `INTRANET_IP_RANGE`; acessos
+sem o header (LAN direta ao Caddy) caem em `REMOTE_ADDR` (IP do proxy).
+`TRUSTED_PROXY_HEADER=HTTP_CF_CONNECTING_IP` (default) — na topologia do
+piloto (Cloudflared → Caddy → HMD) a borda Cloudflare fixa esse header com o
+IP real do cliente e o Caddy apenas o repassa: **não** configure
+`header_up X-Forwarded-For {remote_host}` nesse hop (gravaria o IP do
+cloudflared e o guard de intranet nunca casaria). Sobrescrever XFF só vale
+em topologia Caddy-direto (cliente → Caddy → HMD).
 `INTAKE_ENABLED` fica **false** (fase 1: nenhum relatório enviado; criação
 de casos/reenvios bloqueada no boundary do serviço).
 

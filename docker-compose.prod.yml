@@ -69,10 +69,13 @@ services:
       AD_KDC_TIMEOUT: ${AD_KDC_TIMEOUT:-3}
       INTRANET_IP_RANGE: ${INTRANET_IP_RANGE}
       INTRANET_RESTRICTED_ROLES: ${INTRANET_RESTRICTED_ROLES:-nir}
-      # Piloto (Caddy): X-Forwarded-For. Configure o Caddy para SOBRESCREVER
-      # o header (header_up X-Forwarded-For {remote_host}) — appended XFF
-      # permite spoof do primeiro IP e burlaria o guard de intranet.
-      TRUSTED_PROXY_HEADER: ${TRUSTED_PROXY_HEADER:-HTTP_X_FORWARDED_FOR}
+      # Topologia do piloto (Cloudflared → Caddy → HMD): a borda Cloudflare
+      # fixa Cf-Connecting-IP com o cliente real e o túnel o preserva até a
+      # origem; o Caddy repassa headers de entrada SEM tocá-los (NÃO usar
+      # header_up X-Forwarded-For {remote_host} neste hop — gravaria o IP do
+      # cloudflared e o guard de intranet nunca casaria). Default = default
+      # do código desde o change 02. XFF só vale em topologia Caddy-direto.
+      TRUSTED_PROXY_HEADER: ${TRUSTED_PROXY_HEADER:-HTTP_CF_CONNECTING_IP}
       # Anti-lockout local no cache compartilhado (tabela hmd_cache).
       LOGIN_ATTEMPTS_LIMIT: ${LOGIN_ATTEMPTS_LIMIT:-5}
       LOGIN_ATTEMPTS_WINDOW_SECONDS: ${LOGIN_ATTEMPTS_WINDOW_SECONDS:-900}

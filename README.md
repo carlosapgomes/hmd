@@ -155,3 +155,56 @@ vêm da migration `0003` (idempotente).
 Limitações conhecidas deste release: workers exigem `VISION_MODEL` para OCR
 externo; benchmark com corpus real e revisão dos prompts são aceite
 pré-produção (`CHANGELOG.md` → pendências).
+
+## Piloto (fase 1)
+
+O piloto roda por `docker-compose.prod.yml` (arquivo autônomo, change
+`pilot-deployment-v0-1-1`): **web** (gunicorn, CMD do Dockerfile) + passo
+one-shot **migrate**; nenhum worker ligado.
+
+**Topologia.** O web não publica porta no host (`expose: 8000`): o **Caddy**
+do servidor é o upstream na rede `hospital_ingress_hmd`, termina o TLS e
+injeta `X-Forwarded-Proto` (por isso `PROXY_SSL_HEADER=true`). O PostgreSQL 17
+é **compartilhado e externo** (rede `hospital-db-hmd`, DB `app_hmd`) — o
+serviço de banco e seus aliases pertencem a outro compose, fora deste repo. A
+rede `hospital_egress_hmd` é a saída restrita: o web só sai para
+**AD/DNS/Kerberos**; egress OpenRouter/OCR fica desligado na fase 1. Logs em
+stdout com rotação pelo log driver (`json-file`, 10m × 3).
+
+```bash
+# 1. Migração + seeds (one-shot, credencial de MIGRATOR):
+#    migrate && createcachetable hmd_cache && seed_admin && seed_prompts &&
+#    seed_procedure_catalog — todos já no command do serviço.
+docker compose -f docker-compose.prod.yml --profile migrate run --rm migrate
+
+# 2. Web (healthcheck /readyz/ — a barra é obrigatória: sem ela o teste
+#    seguiria um 301 e não provaria a prontidão real):
+docker compose -f docker-compose.prod.yml up -d web
+
+# 3. Workers do django-q2 (pdf/anonymization/llm/attachments) ficam
+#    DESLIGADOS — só sobem com `--profile workers`, na próxima mudança.
+```
+
+**Configuração (`.env` no host, fora do Git).** Nomes novos documentados em
+`.env.example`: `HMD_IMAGE_TAG` (default `v0.1.1`),
+`MIGRATOR_DATABASE_URL` (credencial DDL só do passo migrate),
+`CSRF_TRUSTED_ORIGINS`, `PROXY_SSL_HEADER`, `DJANGO_SUPERUSER_USERNAME`/
+`DJANGO_SUPERUSER_PASSWORD` (seed do admin local). **Obrigatórios e não
+default**: `DJANGO_SECRET_KEY` real (a de exemplo é pública e serve só p/
+dev), `DATABASE_URL` apontando o DB `app_hmd` com a credencial da APLICAÇÃO
+(distinta da migrator) e `DJANGO_SUPERUSER_*` — sem eles o passo 1 aborta
+antes de semear os prompts (o `&&` do one-shot é sequencial). Ajustes do
+piloto: `ALLOWED_HOSTS=hmd.projetoshgrs.com` (o compose acrescenta
+`127.0.0.1` automaticamente p/ o healthcheck), `AD_DCS` e
+`INTRANET_IP_RANGE` (valores reais fora do Git) e
+`TRUSTED_PROXY_HEADER=HTTP_X_FORWARDED_FOR` — configure o Caddy para
+**sobrescrever** o header (`header_up X-Forwarded-For {remote_host}`):
+appended XFF permite spoof do primeiro IP e burlaria o guard de intranet.
+`INTRANET_RESTRICTED_ROLES` tem default `nir` no compose (iguais ao ATS).
+`INTAKE_ENABLED` fica **false** (fase 1: nenhum relatório enviado; criação
+de casos/reenvios bloqueada no boundary do serviço).
+
+**Caddy.** O alvo do upstream é o serviço `web` deste compose na rede
+`hospital_ingress_hmd` — prefira o nome estável `hmd-prod-web-1:8000`
+(qualificado pelo `name: hmd-prod` do projeto, sem ambiguidade com outros
+composes) e o healthcheck do próprio compose em `/readyz/`.

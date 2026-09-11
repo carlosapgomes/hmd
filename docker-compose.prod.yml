@@ -1,0 +1,258 @@
+# Compose produtivo do piloto HMD — change pilot-deployment-v0-1-1, slice 003
+# (design D4). Arquivo AUTÔNOMO: `docker compose -f docker-compose.prod.yml …`
+# (o compose de dev é outro arquivo e não participa do piloto).
+#
+# Ordem do deploy (sem depends_on bloqueante — a dependência do web com o
+# migrate é de DADOS, não de processo):
+#   1) docker compose -f docker-compose.prod.yml --profile migrate run --rm migrate
+#   2) docker compose -f docker-compose.prod.yml up -d web
+#   3) workers/egress/intake seguem DESLIGADOS na fase 1 (profile "workers")
+#
+# Topologia (tudo que é externo é gerido FORA deste repo):
+# - hospital_ingress_hmd: o Caddy do host é o upstream — alcança o web pelo
+#   nome do serviço na porta 8000. O web NÃO publica porta no host (expose
+#   apenas); publicar `ports` furaria o TLS terminado no proxy.
+# - hospital-db-hmd: PostgreSQL 17/18 COMPARTILHADO, DB `app_hmd`. O serviço de
+#   PG e seus aliases de rede (postgres-app-hmd / hmd) pertencem ao compose
+#   externo; aqui só referenciamos o host pelo DATABASE_URL/MIGRATOR_DATABASE_URL
+#   (valor no .env do host, fora do Git).
+# - hospital_egress_hmd: saída restrita da rede. O web sai apenas para
+#   AD/DNS/Kerberos; os workers de LLM/OCR (desligados na fase 1) usam a mesma
+#   rede quando ativados. Os workers de pdf/anonymization não saem.
+# - Segredos: SEMPRE por ${VAR} (arquivo .env no host / secret manager).
+#   Nenhum valor de segredo entra no Git.
+# - Logs: json-file rotacionado por serviço (max-size 10m, max-file 3); o
+#   gunicorn do CMD do Dockerfile escreve em stdout/stderr.
+# - Imagem: pronta do GHCR (amd64, release v*) com o CMD de produção do
+#   Dockerfile — nenhum build acontece aqui.
+
+name: hmd-prod
+
+services:
+  # Web de produção (gunicorn, CMD do Dockerfile): somente a imagem pronta,
+  # sem bind de código e sem porta publicada.
+  web:
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.1}
+    restart: unless-stopped
+    stop_grace_period: 40s
+    # expose = documenta a porta interna para a rede do compose; o Caddy do
+    # host (hospital_ingress_hmd) é quem publica externamente.
+    expose:
+      - "8000"
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      # Credencial da APLICAÇÃO (DML) — a de migrator fica só no serviço
+      # `migrate`.
+      DATABASE_URL: ${DATABASE_URL}
+      # P0 review: o healthcheck interno usa Host 127.0.0.1:8000 — sem ele
+      # em ALLOWED_HOSTS, DisallowedHost vira 400 e o container fica
+      # permanentemente unhealthy (DEBUG=False valida Host em toda request).
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS},127.0.0.1
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
+      PROXY_SSL_HEADER: ${PROXY_SSL_HEADER}
+      # Fase 1 do piloto: intake DESLIGADO (fail-closed — o default de
+      # config.settings.prod é false e aqui ele fica explícito).
+      INTAKE_ENABLED: ${INTAKE_ENABLED:-false}
+      # Login AD/Kerberos (egress restrito) + guard de intranet do papel nir.
+      AD_DCS: ${AD_DCS}
+      AD_KDC_TIMEOUT: ${AD_KDC_TIMEOUT:-3}
+      INTRANET_IP_RANGE: ${INTRANET_IP_RANGE}
+      INTRANET_RESTRICTED_ROLES: ${INTRANET_RESTRICTED_ROLES:-nir}
+      # Piloto (Caddy): X-Forwarded-For. Configure o Caddy para SOBRESCREVER
+      # o header (header_up X-Forwarded-For {remote_host}) — appended XFF
+      # permite spoof do primeiro IP e burlaria o guard de intranet.
+      TRUSTED_PROXY_HEADER: ${TRUSTED_PROXY_HEADER:-HTTP_X_FORWARDED_FOR}
+      # Anti-lockout local no cache compartilhado (tabela hmd_cache).
+      LOGIN_ATTEMPTS_LIMIT: ${LOGIN_ATTEMPTS_LIMIT:-5}
+      LOGIN_ATTEMPTS_WINDOW_SECONDS: ${LOGIN_ATTEMPTS_WINDOW_SECONDS:-900}
+      LOGIN_LOCKOUT_SECONDS: ${LOGIN_LOCKOUT_SECONDS:-900}
+      APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-HMD — Hemodinâmica}
+      # Nunca processar inline no processo web (fase 1: nada é enfileirado —
+      # intake desligado e workers sob profile desligado).
+      INTAKE_RUN_TASKS_INLINE: "false"
+      ANONYMIZATION_RUN_TASKS_INLINE: "false"
+      LLM_RUN_TASKS_INLINE: "false"
+      ATTACHMENTS_RUN_TASKS_INLINE: "false"
+    volumes:
+      - media_data:/app/media
+    # Readiness com BARRA (/readyz/): a rota é isenta do IntranetGuard e faz
+    # SELECT 1 + toque no cache; sem barra o teste seguiria um 301 e não
+    # provaria a prontidão real. python:3.13-slim não tem curl — urllib é o
+    # cliente disponível na imagem.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz/', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - hospital_ingress_hmd
+      - hospital-db-hmd
+      - hospital_egress_hmd
+
+  # Passo one-shot (profile "migrate"): migrate + tabela do cache + seeds
+  # idempotentes. Usa a credencial de MIGRATOR (DDL), nunca a da aplicação.
+  # `restart: "no"`: roda uma vez e sai (invocado com `run --rm migrate`).
+  migrate:
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.1}
+    profiles: ["migrate"]
+    restart: "no"
+    command: >
+      sh -c "python manage.py migrate --settings=config.settings.prod &&
+             python manage.py createcachetable hmd_cache --settings=config.settings.prod &&
+             python manage.py seed_admin --settings=config.settings.prod &&
+             python manage.py seed_prompts --settings=config.settings.prod &&
+             python manage.py seed_procedure_catalog --settings=config.settings.prod"
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DATABASE_URL: ${MIGRATOR_DATABASE_URL}
+      # Consumidas pelo `seed_admin` (ele falha fechado sem as duas).
+      DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME}
+      DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - hospital-db-hmd
+
+  # Workers do django-q2 (profile "workers" — DESLIGADO na fase 1 do piloto):
+  # cada serviço consome um cluster alternativo via Q_CLUSTER_NAME usando a
+  # imagem pronta (sem `uv sync`/bind de código) e compartilha o volume de
+  # media quando precisa ler/gravar arquivos.
+  #
+  # As envs OPENROUTER_API_KEY/LLM*_MODEL/VISION_MODEL NÃO entram na fase 1 —
+  # ativam junto com este profile e a rede de egress na próxima mudança.
+
+  # Cluster pdf: extração de texto dos relatórios enviados (o web grava o PDF
+  # no volume compartilhado e enfileira; este processo lê). Ao concluir, o
+  # signal enfileira no cluster anonymization.
+  worker-pdf:
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.1}
+    profiles: ["workers"]
+    restart: unless-stopped
+    stop_grace_period: 40s
+    command: python manage.py qcluster --settings=config.settings.prod
+    volumes:
+      - media_data:/app/media
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+      Q_CLUSTER_NAME: pdf
+      INTAKE_ENABLED: "false"
+      INTAKE_RUN_TASKS_INLINE: "false"
+      ANONYMIZATION_RUN_TASKS_INLINE: "false"
+      LLM_RUN_TASKS_INLINE: "false"
+      ATTACHMENTS_RUN_TASKS_INLINE: "false"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - hospital-db-hmd
+
+  # Cluster anonymization: único processo que carrega o engine Presidio/spaCy
+  # (singleton; o modelo vive na imagem). Não sai para a rede (nenhum egress).
+  worker-anonymization:
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.1}
+    profiles: ["workers"]
+    restart: unless-stopped
+    stop_grace_period: 40s
+    command: python manage.py qcluster --settings=config.settings.prod
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+      Q_CLUSTER_NAME: anonymization
+      INTAKE_ENABLED: "false"
+      INTAKE_RUN_TASKS_INLINE: "false"
+      ANONYMIZATION_RUN_TASKS_INLINE: "false"
+      LLM_RUN_TASKS_INLINE: "false"
+      ATTACHMENTS_RUN_TASKS_INLINE: "false"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - hospital-db-hmd
+
+  # Cluster llm: pipeline LLM1/LLM2 (OpenRouter) num processo dedicado. Ao
+  # concluir a anonimização, o signal enfileira aqui (nunca inline no worker
+  # de anonimização).
+  worker-llm:
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.1}
+    profiles: ["workers"]
+    restart: unless-stopped
+    stop_grace_period: 40s
+    command: python manage.py qcluster --settings=config.settings.prod
+    volumes:
+      - media_data:/app/media
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+      Q_CLUSTER_NAME: llm
+      INTAKE_ENABLED: "false"
+      INTAKE_RUN_TASKS_INLINE: "false"
+      ANONYMIZATION_RUN_TASKS_INLINE: "false"
+      LLM_RUN_TASKS_INLINE: "false"
+      ATTACHMENTS_RUN_TASKS_INLINE: "false"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - hospital-db-hmd
+      - hospital_egress_hmd
+
+  # Cluster attachments: OCR híbrido dos anexos (extração local + transcrição
+  # externa). Dispara no CASE_ANONYMIZATION_COMPLETED, em paralelo ao cluster
+  # llm (nunca inline no worker de anonimização).
+  worker-attachments:
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.1}
+    profiles: ["workers"]
+    restart: unless-stopped
+    stop_grace_period: 40s
+    command: python manage.py qcluster --settings=config.settings.prod
+    volumes:
+      - media_data:/app/media
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+      Q_CLUSTER_NAME: attachments
+      INTAKE_ENABLED: "false"
+      INTAKE_RUN_TASKS_INLINE: "false"
+      ANONYMIZATION_RUN_TASKS_INLINE: "false"
+      LLM_RUN_TASKS_INLINE: "false"
+      ATTACHMENTS_RUN_TASKS_INLINE: "false"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - hospital-db-hmd
+      - hospital_egress_hmd
+
+# Redes EXTERNAS (geridas fora do repo — o `docker network create` e o IPAM
+# são da infra do hospital). O PostgreSQL compartilhado e seus aliases vivem
+# no compose externo; aqui apenas consumimos os nomes.
+networks:
+  hospital-db-hmd:
+    external: true
+  hospital_ingress_hmd:
+    external: true
+  hospital_egress_hmd:
+    external: true
+
+# Media compartilhada entre o web e os workers que tocam arquivos
+# (pdf/llm/attachments) — mesmo MEDIA_ROOT (/app/media) em todos.
+volumes:
+  media_data:

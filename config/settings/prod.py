@@ -35,7 +35,7 @@ if not SECRET_KEY:
 # tabela é de infraestrutura, não de domínio). Sobrescreve o LocMem do base.
 CACHES = {
     "default": {
-        "BACKEND": "django.core.cache.backends.database.DatabaseCache",
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
         "LOCATION": "hmd_cache",
     },
 }

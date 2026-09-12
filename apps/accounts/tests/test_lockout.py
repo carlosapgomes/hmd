@@ -374,7 +374,5 @@ class TestProdCacheDefault:
         monkeypatch.setenv("DATABASE_URL", "postgres://build:build@localhost/build")
         prod = importlib.reload(importlib.import_module("config.settings.prod"))
 
-        assert prod.CACHES["default"]["BACKEND"] == (
-            "django.core.cache.backends.database.DatabaseCache"
-        )
+        assert prod.CACHES["default"]["BACKEND"] == ("django.core.cache.backends.db.DatabaseCache")
         assert prod.CACHES["default"]["LOCATION"] == "hmd_cache"

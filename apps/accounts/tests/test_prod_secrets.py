@@ -37,6 +37,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.test import override_settings
 
 User = get_user_model()
 
@@ -357,3 +358,85 @@ def test_compose_web_has_phase1_limits_and_container_hardening(tmp_path: Path) -
     # P1 (review de hardening): sem esta env o wsgi.py defaulta para settings
     # de DEV no web de produção (gunicorn não aceita --settings).
     assert "DJANGO_SETTINGS_MODULE: config.settings.prod" in web
+
+
+def test_prod_cache_backend_imports(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regressão v0.1.3 (falha real de produção): o backend de cache de prod
+    precisa RESOLVER como classe — o path ``...backends.database.`` (inválido;
+    o módulo certo é ``...backends.db``) passava nos asserts de string porque
+    settings não importam o backend no load, e explodia só no
+    ``createcachetable``/runtime com ``InvalidCacheBackendError``."""
+    from django.utils.module_loading import import_string
+
+    _set_minimal_prod_env(monkeypatch)
+    monkeypatch.setenv(
+        "DJANGO_SECRET_KEY_FILE",
+        str(
+            _create_secret_dummies(__import__("pathlib").Path(__import__("tempfile").mkdtemp()))[
+                "secret_key"
+            ]
+        ),
+    )
+    prod = _import_prod()
+
+    backend_cls = import_string(prod.CACHES["default"]["BACKEND"])
+    assert backend_cls.__module__ == "django.core.cache.backends.db"
+
+
+def test_prod_settings_pass_django_check(tmp_path: Path) -> None:
+    """Regressão v0.1.3: ``manage.py check`` com settings de PROD (envs
+    dummy + secret em arquivo) precisa sair limpo — carrega o app completo
+    com a configuração real do deploy."""
+    from apps.accounts.tests.test_prod_secrets import _create_secret_dummies
+
+    dummies = _create_secret_dummies(tmp_path)
+    env = {
+        **os.environ,
+        "DJANGO_SECRET_KEY_FILE": dummies["secret_key"],
+        "DB_PASSWORD_FILE": dummies["app_db_password"],
+        "DB_HOST": "localhost",
+        "DB_NAME": "hmd",
+        "DB_USER": "hmd",
+    }
+    env.pop("DJANGO_SECRET_KEY", None)
+    env.pop("DATABASE_URL", None)
+
+    result = subprocess.run(
+        [sys.executable, "manage.py", "check", "--settings=config.settings.prod"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.django_db
+def test_database_cache_createcachetable_roundtrip() -> None:
+    """Regressão v0.1.3 (fluxo proporcional ao migrate de produção): com o
+    backend ``db.DatabaseCache`` da config de prod, ``createcachetable`` cria
+    a tabela e o cache faz set/get/delete de verdade — o mesmo caminho que o
+    serviço ``migrate`` executa (``createcachetable hmd_cache``)."""
+    from django.core.cache import caches
+    from django.core.management import call_command
+
+    table = "hmd_cache_regression"
+    with override_settings(
+        CACHES={
+            "default": {
+                "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+                "LOCATION": table,
+            }
+        }
+    ):
+        call_command("createcachetable", table)
+        cache = caches["default"]
+        cache.set("readyz-probe", "ok", 30)
+        assert cache.get("readyz-probe") == "ok"
+        cache.delete("readyz-probe")
+        assert cache.get("readyz-probe") is None
+        from django.db import connection
+
+        with connection.cursor() as cursor:
+            cursor.execute(f"DROP TABLE IF EXISTS {table}")

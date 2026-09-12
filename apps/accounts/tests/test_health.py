@@ -36,7 +36,7 @@ GUARD_SETTINGS = {
 }
 PROD_SECRET_KEY = "chave-de-teste-de-producao"
 PROD_DATABASE_URL = "postgres://build:build@localhost/build"
-DATABASE_CACHE_BACKEND = "django.core.cache.backends.database.DatabaseCache"
+DATABASE_CACHE_BACKEND = "django.core.cache.backends.db.DatabaseCache"
 
 
 class _BrokenConnection:

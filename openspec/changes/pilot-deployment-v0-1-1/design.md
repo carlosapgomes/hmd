@@ -35,7 +35,7 @@ imagem v0.1.1.
 ## D3 — Settings de produção (config/settings/prod.py)
 
 - **Cache**: `CACHES = {"default": {"BACKEND":
-  "django.core.cache.backends.database.DatabaseCache", "LOCATION":
+  "django.core.cache.backends.db.DatabaseCache" (corrigido em v0.1.3: o path original ...backends.database. era inválido e falhava no createcachetable/runtime), "LOCATION":
   "hmd_cache"}}` (default de prod; o guard anti-LocMem permanece). A tabela é
   criada pelo **migrator** no perfil one-shot: `manage.py migrate && manage.py
   createcachetable hmd_cache` (comando idempotente do Django; sem migration

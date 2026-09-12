@@ -29,7 +29,7 @@
 #   gunicorn do CMD do Dockerfile escreve em stdout/stderr.
 # - Imagem: pronta do GHCR (amd64, release v*) com o CMD de produção do
 #   Dockerfile — nenhum build acontece aqui. Fixe SEMPRE tag+digest no .env do
-#   host (`HMD_IMAGE_TAG=v0.1.2@sha256:<digest>`): a tag sozinha é mutável.
+#   host (`HMD_IMAGE_TAG=v0.1.3@sha256:<digest>`): a tag sozinha é mutável.
 
 name: hmd-prod
 
@@ -48,7 +48,7 @@ services:
     cpus: "1.0"
     pids_limit: 200
     # Risco residual ACEITO na fase 1: container como root (imagem sem USER;
-    # non-root fica p/ fase 2/v0.1.3). Mitigações ativas: rootfs read-only
+    # non-root fica p/ o próximo release (v0.1.4+)). Mitigações ativas: rootfs read-only
     # (escritas só em volume media e tmpfs /tmp), sem novos privilégios e
     # todos os caps derrubados.
     read_only: true

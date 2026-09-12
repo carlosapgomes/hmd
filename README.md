@@ -205,7 +205,7 @@ ilegível ou vazio. Consumidor por segredo: **web/workers** usam `secret_key`
 
 **Configuração (`.env` no host, fora do Git).** Nomes novos documentados em
 `.env.example`: `HMD_IMAGE_TAG` (**obrigatório pinado tag+digest**:
-`v0.1.2@sha256:<digest>`), as envs de arquivo de segredo acima, os nomes de
+`v0.1.3@sha256:<digest>`), as envs de arquivo de segredo acima, os nomes de
 banco `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER` (+ `MIGRATOR_DB_USER`, role DDL
 usada só pelo passo migrate) — o compose não usa mais URL de banco —,
 `CSRF_TRUSTED_ORIGINS`, `PROXY_SSL_HEADER` e `DJANGO_SUPERUSER_USERNAME` (env

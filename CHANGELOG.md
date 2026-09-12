@@ -4,6 +4,19 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.3] — 2026-09-12
+
+**Correção de falha real do migrate do piloto**: o backend de cache de
+produção apontava para `django.core.cache.backends.database.DatabaseCache`
+(path de import inválido — o módulo é `...backends.db`). Settings não
+importam a string no load, então os asserts antigos passavam e o erro só
+aparecia no `createcachetable`/runtime (`InvalidCacheBackendError`, rc=1
+antes de tabelas/seeds; rollback local, app greenfield — sem dado perdido).
+Regressões novas: `import_string` do backend de prod; `manage.py check`
+com settings de prod (subprocess, envs dummy + secret em arquivo); roundtrip
+`createcachetable` + set/get com `db.DatabaseCache` no banco de teste.
+Baseline 1079 testes.
+
 ## [0.1.2] — 2026-09-11
 
 **Adendos pós-release (compose/docs — sem nova imagem; a imagem v0.1.2 permanece

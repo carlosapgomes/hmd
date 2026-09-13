@@ -10,8 +10,14 @@ Cobre:
   restrito permanece bloqueado (cenário 4 da spec);
 - R5: guard registrado após o ``ActiveRoleMiddleware`` no settings;
 - R6: sem ``INTRANET_IP_RANGE`` (default de dev) não há bloqueio.
+
+O change ``intranet-blocked-logout`` enriquece o ramo de bloqueio (R1–R3): a
+resposta 403 renderiza ``accounts/intranet_blocked.html`` (mensagem + botão de
+volta ao login), a sessão é encerrada no bloqueio e o link leva de fato ao
+formulário de login (usuário já anônimo).
 """
 
+import re
 from collections.abc import Sequence
 
 import pytest
@@ -29,6 +35,9 @@ INTRANET_CIDR = "10.0.0.0/8"
 BLOCK_MESSAGE_FRAGMENT = "rede interna"
 MIDDLEWARE_GUARD = "apps.accounts.middleware.IntranetGuardMiddleware"
 MIDDLEWARE_ACTIVE_ROLE = "apps.accounts.middleware.ActiveRoleMiddleware"
+# Button-link da página de bloqueio (intranet-blocked-logout, R1/R3); tolera
+# qualquer ordem/atributo extra na tag <a>.
+LOGIN_LINK_PATTERN = re.compile(r'<a[^>]*href="([^"]+)"[^>]*>\s*Voltar ao login\s*</a>')
 GUARD_SETTINGS = {
     "INTRANET_IP_RANGE": INTRANET_CIDR,
     "INTRANET_RESTRICTED_ROLES": ["nir"],
@@ -52,20 +61,79 @@ def _login_with_active_role(client: Client, *, username: str, role: str) -> None
     session.save()
 
 
+def _login_link(body: str) -> str:
+    """Href do botão "Voltar ao login" da página de bloqueio (R1/R3)."""
+    match = LOGIN_LINK_PATTERN.search(body)
+    assert match is not None, "página de bloqueio sem link de volta ao login"
+    return match.group(1)
+
+
 @pytest.mark.django_db
 class TestIntranetGuard:
     """R1/R3/R4: guard restringe o papel ativo configurado à intranet."""
 
     @override_settings(**GUARD_SETTINGS)
     def test_nir_blocked_outside_range(self, client: Client) -> None:
-        """Cenário 1 da spec: ``nir`` externo recebe resposta de bloqueio."""
+        """Cenário 1 da spec: ``nir`` externo recebe resposta de bloqueio.
+
+        A página de bloqueio (intranet-blocked-logout, R1) mantém o 403, a
+        mensagem atual e o link para a tela de login.
+        """
         _create_user(username=USERNAME, role_names=["nir"])
         _login_with_active_role(client, username=USERNAME, role="nir")
 
         response = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP)
 
+        body = response.content.decode()
         assert response.status_code == 403
-        assert BLOCK_MESSAGE_FRAGMENT in response.content.decode()
+        assert BLOCK_MESSAGE_FRAGMENT in body
+        assert _login_link(body) == reverse("login")
+
+    @override_settings(**GUARD_SETTINGS)
+    def test_blocked_session_is_terminated(self, client: Client) -> None:
+        """R2: o bloqueio encerra a sessão (cookie) do usuário exclusivamente restrito.
+
+        Depois do 403 a sessão não guarda mais autenticação nem papel ativo e a
+        requisição seguinte é anônima — o guard não bloqueia de novo, a view
+        protegida redireciona ao login.
+        """
+        _create_user(username=USERNAME, role_names=["nir"])
+        _login_with_active_role(client, username=USERNAME, role="nir")
+        assert "_auth_user_id" in client.session
+
+        blocked = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP)
+        assert blocked.status_code == 403
+        # Cookie de sessão EXPIRADO na própria resposta (review P2: não basta a
+        # sessão estar limpa — o SessionMiddleware derruba o cookie, max-age 0).
+        session_cookie = blocked.cookies[settings.SESSION_COOKIE_NAME]
+        assert session_cookie["max-age"] == 0
+
+        session = client.session
+        assert "_auth_user_id" not in session
+        assert "active_role" not in session
+
+        retry = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP)
+        assert retry.status_code == 302
+        assert retry.headers["Location"].startswith(reverse("login"))
+
+    @override_settings(**GUARD_SETTINGS)
+    def test_blocked_page_login_link_works(self, client: Client) -> None:
+        """R3: o botão da página de bloqueio exibe o formulário de login.
+
+        O usuário já está anônimo quando a página é renderizada, então
+        ``/login/`` responde 200 com o formulário em vez de redirecionar para a
+        home bloqueada.
+        """
+        _create_user(username=USERNAME, role_names=["nir"])
+        _login_with_active_role(client, username=USERNAME, role="nir")
+
+        blocked = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP)
+        login_url = _login_link(blocked.content.decode())
+
+        login_page = client.get(login_url, REMOTE_ADDR=EXTERNAL_IP)
+
+        assert login_page.status_code == 200
+        assert 'name="password"' in login_page.content.decode()
 
     @override_settings(**GUARD_SETTINGS)
     def test_doctor_allowed_outside_range(self, client: Client) -> None:
@@ -102,7 +170,8 @@ class TestIntranetGuard:
 
         Com ``INTRANET_RESTRICTED_ROLES`` multi-valor, o usuário ``nir`` +
         ``scheduler`` é bloqueado externamente com qualquer um dos dois papéis
-        ativo — inclusive depois da troca via /switch-role/ (path isento).
+        ativo — inclusive depois da troca via /switch-role/ (path isento) — e a
+        sessão é encerrada a cada bloqueio (intranet-blocked-logout, R2/R4).
         """
         _create_user(username="regulador.agendador", role_names=["nir", "scheduler"])
         _login_with_active_role(client, username="regulador.agendador", role="nir")
@@ -110,13 +179,18 @@ class TestIntranetGuard:
         blocked_with_nir = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP)
         assert blocked_with_nir.status_code == 403
         assert BLOCK_MESSAGE_FRAGMENT in blocked_with_nir.content.decode()
+        assert "_auth_user_id" not in client.session
 
+        # O bloqueio anterior derrubou a sessão: reautentica (nir) para trocar
+        # de papel pelo path isento e exercitar o segundo papel restrito.
+        _login_with_active_role(client, username="regulador.agendador", role="nir")
         switch = client.post(reverse("switch_role"), {"role": "scheduler"}, REMOTE_ADDR=EXTERNAL_IP)
         assert switch.status_code == 302
         assert client.session["active_role"] == "scheduler"
 
         blocked_with_scheduler = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP)
         assert blocked_with_scheduler.status_code == 403
+        assert "_auth_user_id" not in client.session
 
     @override_settings(**GUARD_SETTINGS)
     def test_exempt_paths_never_blocked(self, client: Client) -> None:
@@ -171,6 +245,10 @@ class TestClientIpResolution:
             REMOTE_ADDR=EXTERNAL_IP,
         )
         assert blocked.status_code == 403
+
+        # O bloqueio encerra a sessão (intranet-blocked-logout, R2): reautentica
+        # para isolar o segundo caso, que é sobre resolução de IP.
+        _login_with_active_role(client, username=USERNAME, role="nir")
 
         # Sem header algum → REMOTE_ADDR dentro da faixa libera.
         allowed = client.get(reverse("home"), REMOTE_ADDR=INTRANET_IP)

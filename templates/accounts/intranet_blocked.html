@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}Acesso bloqueado — {{ app_display_name }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-5">
+  <div class="col-12 col-sm-8 col-md-6 col-lg-5">
+    <div class="card shadow-sm">
+      <div class="card-body p-4 text-center">
+        <h1 class="h4 mb-3">{{ message }}</h1>
+        <p class="text-muted mb-4">
+          Acesse pela rede interna do hospital; sua sessão foi encerrada.
+        </p>
+        <a class="btn btn-primary" href="{% url 'login' %}">Voltar ao login</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

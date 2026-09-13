@@ -17,8 +17,8 @@ from collections.abc import Callable
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import logout
-from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
-from django.shortcuts import redirect
+from django.http import HttpRequest, HttpResponse
+from django.shortcuts import redirect, render
 from django.urls import reverse
 
 from apps.accounts.models import User
@@ -103,6 +103,13 @@ class IntranetGuardMiddleware:
     (revisão de 2026-09-13, ADR-0002). O gatilho continua sendo o papel ativo
     restrito (regra 2) e a consulta ao conjunto só roda no ramo que bloquearia
     hoje (D2).
+
+    A regra 7 (intranet-blocked-logout) encerra a sessão com ``logout(request)``
+    antes de responder: para quem não tem nenhum papel utilizável fora da
+    intranet não existe fluxo externo válido, e o cookie de sessão deixa de
+    ficar vivo numa rede externa (D3 — o ``SessionMiddleware`` derruba o cookie
+    na volta da resposta). A resposta é HTTP 403 com a página de bloqueio
+    ``accounts/intranet_blocked.html`` (mensagem + botão "Voltar ao login").
     """
 
     def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
@@ -136,13 +143,27 @@ class IntranetGuardMiddleware:
             return self.get_response(request)
 
         logger.warning(
-            "intranet_guard_blocked user=%s role=%s ip=%s path=%s",
+            "intranet_guard_blocked user=%s role=%s ip=%s path=%s session_terminated=1",
             user.pk,
             active_role,
             client_ip,
             request.path,
         )
-        return HttpResponseForbidden(INTRANET_BLOCKED_MESSAGE)
+        # Sessão encerrada no bloqueio (intranet-blocked-logout, D1/D3): o
+        # logout ANTES do render deixa a página coerente (nav anônima) e faz
+        # ``login_view`` exibir o formulário no clique de retorno.
+        logout(request)
+        # O 403 vem no próprio render (nunca aninhado em outro HttpResponse: o
+        # ``HttpResponse.content`` setter chama ``close()`` no conteúdo iterável,
+        # que dispara ``request_finished``/``close_old_connections`` no meio da
+        # requisição).
+        response = render(
+            request,
+            "accounts/intranet_blocked.html",
+            {"message": INTRANET_BLOCKED_MESSAGE},
+        )
+        response.status_code = 403
+        return response
 
 
 class ActiveRoleMiddleware:

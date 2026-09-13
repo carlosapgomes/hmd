@@ -11,12 +11,13 @@ ficam byte-a-byte iguais.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any, cast
 
 import pytest
 from django.conf import settings
-from django.test import override_settings
+from django.test import Client, override_settings
 from django.utils import timezone
 
 from apps.accounts.models import Role, User
@@ -186,3 +187,46 @@ def test_confirm_form_default_choices_unchanged() -> None:
     """R4: sem override, as choices do campo ``unit`` seguem as atuais."""
     form = SchedulerConfirmForm()
     assert list(cast(Any, form.fields["unit"]).choices) == [(1, "Unidade 1"), (2, "Unidade 2")]
+
+
+# ── Display: detail do agendador com labels configurados (belt-and-braces) ──
+
+
+@pytest.mark.django_db
+def test_scheduler_detail_uses_configured_labels(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    scheduler_user: User,
+) -> None:
+    """Slice 002/belt-and-braces: bloco de agendamento E banner de
+    intercorrência do detail do agendador exibem os labels configurados
+    (apresentador e context processor, respectivamente)."""
+    from django.urls import reverse
+
+    case = _case_in_scheduler_requested(created_by=nir_user)
+    confirm_case_scheduling(
+        case,
+        unit=2,
+        scheduled_datetime=_future_datetime(days=2),
+        scheduled_location="Sala de hemodinâmica",
+        user=scheduler_user,
+        role=SCHEDULER_ROLE,
+    )
+    client.force_login(scheduler_user)
+    session = client.session
+    session["active_role"] = SCHEDULER_ROLE
+    session.save()
+
+    with override_settings(UNIT_LABELS=CONFIGURED_LABELS):
+        response = client.get(reverse("scheduler:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    # Bloco de agendamento + banner de intercorrência com o label CONFIGURADO.
+    assert "Unidade Satélite" in body
+    assert "confirmado na Unidade Satélite, que comunicará a Secretaria" in body
+    # Thread (histórico append-only, design D3): a resposta postada ANTES do
+    # override guarda o texto com os labels vigentes à época (canônicos) —
+    # coexiste com o label configurado da exibição atual.
+    assert "caso agendado na Unidade 2, que comunicará a Secretaria" in body

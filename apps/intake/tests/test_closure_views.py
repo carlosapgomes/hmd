@@ -22,7 +22,7 @@ from collections.abc import Callable
 from datetime import timedelta
 
 import pytest
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -483,3 +483,29 @@ def test_ack_role_guard(
     response = client.post(ack_url)
     assert response.status_code == 302
     assert "/login/" in response["Location"]
+
+
+@pytest.mark.django_db
+def test_detail_scheduling_uses_configured_unit_labels(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+) -> None:
+    """Belt-and-braces (slice 002 review): o bloco de agendamento do detail
+    do NIR exibe o label configurado da unidade (fonte única via view)."""
+    doctor = user_factory("doctor-intake-labels", DOCTOR_ROLE)
+    scheduler_user = user_factory("scheduler-intake-labels", SCHEDULER_ROLE)
+    case = _confirmed_final_case(
+        created_by=nir_user,
+        decided_by=doctor,
+        scheduler_user=scheduler_user,
+    )
+    _login(client, nir_user)
+
+    with override_settings(UNIT_LABELS={1: "Hemodinâmica HGRS", 2: "Unidade Satélite"}):
+        response = client.get(reverse("intake:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "Hemodinâmica HGRS" in body
+    assert "Unidade 1" not in body

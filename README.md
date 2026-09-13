@@ -192,6 +192,30 @@ docker compose -f docker-compose.prod.yml up -d web
 #    DESLIGADOS — só sobem com `--profile workers`, na próxima mudança.
 ```
 
+**Atualização para a v0.1.4 — volume de mídia pré-existente.** A imagem passa a
+executar como usuário dedicado não-root (uid/gid **10001**) e cria `/app/media`
+com esse ownership. Um volume **novo** herda esse ownership na primeira
+montagem; o `media_data` **já existente** (criado por um deploy anterior à
+v0.1.4) continua root-owned — o ownership do mountpoint da imagem NÃO é
+aplicado a volume que já existe. A fase 1 não escreve mídia (intake desligado),
+então o `up` da v0.1.4 funciona sem ajuste **de mídia**; antes de **ligar os uploads
+(fase 2)** rode o re-chown pontual. `--cap-add CHOWN` é obrigatório porque o
+serviço derruba TODAS as capabilities (`cap_drop: ALL`) e sem `CAP_CHOWN` o
+`chown` falha com *Operation not permitted*:
+
+```bash
+# Uma vez, antes de ativar o intake na fase 2 (idempotente; em volume novo é
+# inócuo — ele já nasce com o ownership correto):
+docker compose -f docker-compose.prod.yml run --rm --user root --cap-add CHOWN \
+  web chown -R 10001:10001 /app/media
+```
+
+A leitura dos segredos segue a mesma regra: o compose monta cada arquivo como
+bind do host (sem `mode:`/`uid:` fora de swarm), **preservando modo/owner**,
+então o uid/gid **10001** precisa poder lê-los. O modo default de `echo`/editor
+(**0644**) funciona; um arquivo `0600` root-owned aborta a inicialização como
+não-root com `ImproperlyConfigured` (*Não foi possível ler o segredo em ...*).
+
 **Segredos por arquivo.** Nenhum segredo trafega em variável de ambiente no
 compose: cada serviço monta Docker secrets read-only em `/run/secrets/` e
 aponta o `*_FILE` correspondente — o arquivo tem **precedência** sobre
@@ -201,11 +225,22 @@ ilegível ou vazio. Consumidor por segredo: **web/workers** usam `secret_key`
 `migrator_db_password` + `superuser_password`. Crie os arquivos em
 `./secrets/` (default do compose, já no `.gitignore`) ou aponte
 `APP_DB_PASSWORD_FILE`/`MIGRATOR_DB_PASSWORD_FILE`/`SECRET_KEY_FILE`/
-`SUPERUSER_PASSWORD_FILE` para outro caminho no `.env` do host.
+`SUPERUSER_PASSWORD_FILE` para outro caminho no `.env` do host. Como o bind
+preserva modo/owner do host, o uid/gid **10001** precisa ler cada arquivo —
+ajuste se o seu host criar `0600`:
+
+```bash
+# 0600 root-owned aborta a inicialização non-root (0644 é o default de echo).
+# Caminho default ./secrets/ — ajuste se você usa *_FILE customizado:
+chmod 0644 secrets/*.txt
+# Alternativa sem expor o segredo a outros usuários do host (todos os
+# consumidores de prod rodam como 10001):
+chown 10001:10001 secrets/*.txt
+```
 
 **Configuração (`.env` no host, fora do Git).** Nomes novos documentados em
 `.env.example`: `HMD_IMAGE_TAG` (**obrigatório pinado tag+digest**:
-`v0.1.3@sha256:<digest>`), as envs de arquivo de segredo acima, os nomes de
+`v0.1.4@sha256:<digest>`), as envs de arquivo de segredo acima, os nomes de
 banco `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER` (+ `MIGRATOR_DB_USER`, role DDL
 usada só pelo passo migrate) — o compose não usa mais URL de banco —,
 `CSRF_TRUSTED_ORIGINS`, `PROXY_SSL_HEADER` e `DJANGO_SUPERUSER_USERNAME` (env

@@ -4,6 +4,65 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.4] — 2026-09-13
+
+**Hardening do runtime do piloto + carregamento dos changes pós-piloto**: a
+imagem de produção passa a executar como usuário dedicado **não-root**
+(uid/gid 10001) e o entrypoint WSGI passa a assumir settings de **produção**
+por default (fail-safe). Entram também os dois changes fechados depois do
+deploy do piloto: guard de intranet decidido pelo **conjunto** de papéis e
+rótulos das unidades configuráveis por ambiente.
+
+### Runtime de produção (hardening)
+
+- **Imagem não-root** (`image-hardening-v0-1-4`, slice 002): o `Dockerfile`
+  cria o grupo/usuário `hmd` (uid/gid **10001**, sem shell) e declara
+  `USER 10001:10001` depois do `collectstatic` do build. `/app/media` nasce na
+  imagem com o ownership do usuário, de modo que o volume nomeado (web e
+  workers) o herde na primeira montagem. Nada em runtime exige root (gunicorn
+  em 8000, secrets montados legíveis pelo uid 10001 (modo 0644; 0600
+  root-owned aborta), `/tmp` em tmpfs 1777, estado no banco) e o comentário de
+  dívida "non-root fica para o próximo release" **saiu** do compose —
+  `read_only`, `tmpfs`, `no-new-privileges` e `cap_drop: ALL` seguem como
+  defesa em profundidade.
+- **WSGI fail-safe** (`image-hardening-v0-1-4`, slice 001): `config/wsgi.py`
+  sem `DJANGO_SETTINGS_MODULE` assume `config.settings.prod` (a env explícita
+  continua vencendo; `manage.py` mantém o default de dev para a CLI).
+- **Desenvolvimento**: com o `USER` da imagem o fluxo dev quebraria (venv
+  root-owned criado pelo `uv sync`); o `docker-compose.dev.yml` passa a
+  declarar **deliberadamente** `user: "0:0"` nos 5 serviços de imagem
+  (dev/teste como root, produção non-root), travado por teste estático.
+
+### Changes pós-piloto carregados
+
+- **Guard de intranet por CONJUNTO de papéis** (`intranet-any-role-egress`):
+  o bloqueio externo vale apenas quando **todos** os papéis do usuário estão
+  em `INTRANET_RESTRICTED_ROLES` — `nir` puro continua 403 fora da intranet,
+  e quem tem algum papel externo (`{nir, manager}` com papel ativo nir, por
+  exemplo) passa sem trocar de papel. ADR-0002 revisado.
+- **Rótulos das unidades configuráveis** (`unit-labels-env`): envs
+  `HMD_UNIT_1_LABEL`/`HMD_UNIT_2_LABEL` (defaults `Unidade 1`/`Unidade 2`) com
+  fonte única (`apps/cases/units.py`) em toda a superfície — form, dashboard,
+  fila/detalhes do agendador, detalhes do NIR, resposta final ao NIR (texto da
+  unidade 2 **interpolado** com o rótulo configurado) e manual. O histórico de
+  comunicações preserva o texto canônico da época da postagem.
+
+### Deploy (piloto fase 1)
+
+- **Pins/default na v0.1.4**: `${HMD_IMAGE_TAG:-v0.1.4}` no
+  `docker-compose.prod.yml` e exemplos `v0.1.4@sha256:<digest>` no `README.md`
+  e no `.env.example` (o digest é preenchido na publicação do owner).
+- **Upgrade de volume pré-existente**: o volume `media_data` criado pela
+  v0.1.3 é **root-owned** e NÃO herda o ownership do mountpoint da imagem nova
+  (só volumes novos herdam). A fase 1 não escreve mídia (intake desligado),
+  mas **antes de ligar os uploads (fase 2)** rode o re-chown pontual
+  documentado no README: `docker compose -f docker-compose.prod.yml run --rm
+  --user root --cap-add CHOWN web chown -R 10001:10001 /app/media`
+  (`--cap-add CHOWN` é necessário porque o serviço derruba todas as
+  capabilities).
+
+**Baseline**: 1099 testes · ruff/format/mypy limpos.
+
 ## [0.1.3] — 2026-09-12
 
 **Correção de falha real do migrate do piloto**: o backend de cache de

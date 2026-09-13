@@ -18,12 +18,16 @@ Python 3.13+ · Django 5.2+ · PostgreSQL 17+ · Bootstrap 5.3 · Vanilla JS · 
 
 ## Status
 
-**v0.1.0 — roadmap completo (11 changes)**. Ciclo do caso de ponta a ponta
-(`NEW→CLEANED`): upload com anexos, extração/anonimização fail-closed,
-pipeline LLM por tipo (só tokens), decisão médica consultiva, agendamento
-em 2 unidades com intercorrência, resposta final/ciência com limpeza,
-reenvio corrigido, notificações in-app, painel gerencial, PWA e manual.
-1037 testes · 13 specs promovidas (`openspec/`). Veja `CHANGELOG.md`.
+**v0.1.5 — piloto de produção em operação (fase 1)****: autenticação por AD
+(Kerberos), admin, painel, manual e navegação em `https://hmd.projetoshgrs.com`
+atrás de Cloudflare→Caddy; imagem GHCR não-root (uid 10001), segredos 100% por
+arquivo, intake/workers/egress LLM desligados (fase 1). Ciclo do caso completo
+(`NEW→CLEANED`) implementado — upload com anexos, extração/anonimização
+fail-closed, pipeline LLM por tipo (só tokens), decisão médica consultiva,
+agendamento em 2 unidades com labels configuráveis, resposta final/ciência,
+notificações, painel, PWA e manual. Guard de intranet por conjunto de papéis
+com encerramento de sessão no bloqueio externo.
+1101 testes · 14 specs (`openspec/`) · 16 changes arquivados. Veja `CHANGELOG.md`.
 
 ## Ambiente de desenvolvimento
 
@@ -114,9 +118,10 @@ pré-produção (ADR-0007).
 
 ## Primeiros testes (implantação interna)
 
-Release `v0.1.0` destina-se a testes internos na intranet do HGRS. O caminho
-mais rápido é o compose de desenvolvimento em um servidor interno (runserver +
-workers), enquanto o serviço web de produção (gunicorn) não é adicionado.
+O servidor de testes internos usa o compose de desenvolvimento (runserver +
+workers). A produção do piloto (fase 1) roda o compose `docker-compose.prod.yml`
+(gunicorn não-root + migrate/seeds one-shot), implantado por tag@digest do GHCR
+— veja a seção de implantação abaixo.
 
 ```bash
 # 1. Código + imagem (workers/pdf/anonymization/llm/attachments usam a
@@ -240,7 +245,7 @@ chown 10001:10001 secrets/*.txt
 
 **Configuração (`.env` no host, fora do Git).** Nomes novos documentados em
 `.env.example`: `HMD_IMAGE_TAG` (**obrigatório pinado tag+digest**:
-`v0.1.4@sha256:<digest>`), as envs de arquivo de segredo acima, os nomes de
+`v0.1.5@sha256:<digest>`), as envs de arquivo de segredo acima, os nomes de
 banco `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER` (+ `MIGRATOR_DB_USER`, role DDL
 usada só pelo passo migrate) — o compose não usa mais URL de banco —,
 `CSRF_TRUSTED_ORIGINS`, `PROXY_SSL_HEADER` e `DJANGO_SUPERUSER_USERNAME` (env

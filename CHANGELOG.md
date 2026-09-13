@@ -4,6 +4,20 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.5] — 2026-09-13
+
+**UX de segurança do guard de intranet** (change `intranet-blocked-logout`,
+de uso real do piloto): usuário exclusivamente restrito (`nir` puro)
+bloqueado de fora da intranet tinha a sessão mantida e ficava preso — a
+página de bloqueio era texto puro (sem navbar/logout) e `/login/`
+redirecionava autenticados de volta à home bloqueada. Agora o guard **encerra
+a sessão** no bloqueio e responde 403 com página própria e botão "Voltar ao
+login" (funciona: anônimo → form). Cookie expirado na própria resposta
+(max-age 0, assertado); log de auditoria `session_terminated=1`; multi-role
+com papel externo segue acessando normalmente (regra de conjunto).
+Housekeeping: README atualizado do "v0.1.0" para o estado real do piloto;
+comentário stale do workflow. Baseline 1101 testes.
+
 ## [0.1.4] — 2026-09-13
 
 **Hardening do runtime do piloto + carregamento dos changes pós-piloto**: a

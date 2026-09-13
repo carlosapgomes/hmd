@@ -23,13 +23,12 @@ from apps.anonymization.reidentify import reidentify_text
 from apps.cases.models import Case, CaseStatus, DoctorDisposition, SchedulingUnit
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.procedures import get_declared_procedure_types
+from apps.cases.units import unit_label
 
 # Perfil do catálogo por tipo (label/subtipo dos cards).
 _PROFILE_BY_TYPE = {profile.procedure_type: profile for profile in PROCEDURE_PROFILES}
 # Rótulo legível da disposição médica atual da row (DoctorDisposition).
 _DISPOSITION_LABELS = dict(DoctorDisposition.choices)
-# Rótulo legível da unidade de destino do agendamento (SchedulingUnit).
-_UNIT_LABELS = dict(SchedulingUnit.choices)
 
 # Formato de exibição de data/hora (fuso local da aplicação).
 _DATETIME_DISPLAY_FORMAT = "%d/%m/%Y %H:%M"
@@ -96,13 +95,14 @@ def build_scheduler_case_detail_context(case: Case) -> dict[str, object]:
         )
 
     scheduled_by = case.scheduled_by
-    unit_label = _UNIT_LABELS.get(case.scheduled_unit, "") if case.scheduled_unit else ""
+    scheduled_unit = case.scheduled_unit
+    unit_label_text = unit_label(scheduled_unit) if scheduled_unit else ""
     denial_reason = case.scheduling_denial_reason.strip()
     reopen_reason = case.scheduling_reopen_reason.strip()
     scheduled_at = _format_datetime(case.scheduled_datetime)
     decided_at = _format_datetime(case.scheduled_decided_at)
     scheduling = {
-        "unit_label": unit_label,
+        "unit_label": unit_label_text,
         "scheduled_at": scheduled_at,
         "location": case.scheduled_location,
         "decided_by": scheduled_by.display_name if scheduled_by is not None else "",

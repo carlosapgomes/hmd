@@ -14,6 +14,7 @@ from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
 
 from apps.cases.models import SchedulingUnit
+from apps.cases.units import unit_label
 
 from .metrics import (
     DEFAULT_PERIOD,
@@ -53,11 +54,12 @@ def home(request: HttpRequest) -> HttpResponse:
         "summary": compute_summary(period),
         "by_type": compute_by_procedure_type(period),
         "by_unit": compute_by_unit(period),
-        # Labels de unidade derivados do modelo (P2 review: sem rótulo
-        # hardcoded — renomear em SchedulingUnit.choices reflete no painel).
+        # Rótulos de unidade da fonte única (change unit-labels-env, D2/D4):
+        # derivados de ``settings.UNIT_LABELS`` — renomear um rótulo não exige
+        # editar este arquivo nem o template do painel.
         "unit_labels": {
-            "unit_1": SchedulingUnit.UNIT_1.label,
-            "unit_2": SchedulingUnit.UNIT_2.label,
+            "unit_1": unit_label(SchedulingUnit.UNIT_1),
+            "unit_2": unit_label(SchedulingUnit.UNIT_2),
         },
         "avg_time": format_duration(compute_avg_time_to_decision(period)),
     }

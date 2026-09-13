@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 
 import pytest
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 
 from apps.accounts.models import Role, User
@@ -29,6 +29,9 @@ from apps.cases.models import CaseStatus
 
 PASSWORD = "senha-teste"
 MANUAL_PATH = "/manual/"
+
+# Rótulos configurados do cenário de override (change unit-labels-env, R5).
+CONFIGURED_UNIT_LABELS = {1: "Hemodinâmica HGRS", 2: "Unidade Satélite"}
 
 # Marcos por papel/seção (R2/R4): strings que o template DEVE conter.
 NIR_MARKERS = ("Enviar relatório", "anexos", "Meus casos", "ciência", "reenvio")
@@ -154,6 +157,24 @@ class TestManualContent:
         body = _manual_body(client, nir_user)
 
         assert "@media print" in body
+
+
+@pytest.mark.django_db
+class TestManualUnitLabels:
+    """R5: o manual usa os rótulos de unidade configurados (context processor)."""
+
+    def test_manual_uses_configured_unit_labels(self, client: Client, nir_user: User) -> None:
+        client.force_login(nir_user)
+
+        with override_settings(UNIT_LABELS=CONFIGURED_UNIT_LABELS):
+            response = client.get(MANUAL_PATH)
+
+        body = response.content.decode()
+        assert response.status_code == 200
+        assert "Hemodinâmica HGRS" in body
+        assert "Unidade Satélite" in body
+        assert "Unidade 1" not in body
+        assert "Unidade 2" not in body
 
 
 @pytest.mark.django_db

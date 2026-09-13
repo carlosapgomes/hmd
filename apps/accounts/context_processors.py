@@ -2,8 +2,9 @@
 
 Expoem a todos os templates: o nome de exibição do app (``APP_DISPLAY_NAME``),
 o contexto de papel ativo da sessão (slice 005, R3) — papel ativo, lista de
-papéis do usuário e flag ``has_multiple_roles`` — e a contagem de notificações
-não lidas (slice 002 do change 11, R2).
+papéis do usuário e flag ``has_multiple_roles`` —, a contagem de notificações
+não lidas (slice 002 do change 11, R2) e os rótulos de unidade configurados
+(change unit-labels-env, D4).
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ from django.http import HttpRequest
 
 from apps.accounts.models import User
 from apps.accounts.notifications import get_unread_notification_count
+from apps.cases.models import SchedulingUnit
+from apps.cases.units import unit_label
 
 
 def app_display_name(request: HttpRequest) -> dict[str, str]:
@@ -49,3 +52,18 @@ def notification_unread_count(request: HttpRequest) -> dict[str, int]:
     if not isinstance(user, User) or not user.is_authenticated:
         return {"notification_unread_count": 0}
     return {"notification_unread_count": get_unread_notification_count(user)}
+
+
+def unit_labels(request: HttpRequest) -> dict[str, dict[str, str]]:
+    """Expõe os rótulos de unidade configurados a todos os templates (D4).
+
+    Fonte única ``apps.cases.units`` (lida por requisição — sem cache de
+    módulo): os templates consomem ``unit_labels.unit_1``/``unit_labels.unit_2``,
+    as mesmas chaves do contexto do painel.
+    """
+    return {
+        "unit_labels": {
+            "unit_1": unit_label(SchedulingUnit.UNIT_1),
+            "unit_2": unit_label(SchedulingUnit.UNIT_2),
+        }
+    }

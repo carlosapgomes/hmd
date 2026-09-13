@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -24,6 +24,9 @@ NIR_ROLE = "nir"
 
 PATIENT_NAME = "Maria da Silva"
 RECORD_NUMBER = "33345"
+
+# Rótulos configurados do cenário de override (change unit-labels-env, R5).
+CONFIGURED_UNIT_LABELS = {1: "Hemodinâmica HGRS", 2: "Unidade Satélite"}
 
 
 def _make_user(username: str) -> User:
@@ -132,6 +135,22 @@ def test_dashboard_renders_catalog_labels_and_avg_time(client: Client) -> None:
     assert "Arteriografia periférica" in content
     assert "Unidade 1" in content
     assert "3h 42m" in content
+
+
+@pytest.mark.django_db
+def test_dashboard_uses_configured_unit_labels(client: Client) -> None:
+    """R2/R5: o painel exibe os rótulos de ``settings.UNIT_LABELS`` (fonte única)."""
+    client.force_login(_make_user("nir-labels"))
+
+    with override_settings(UNIT_LABELS=CONFIGURED_UNIT_LABELS):
+        response = client.get(reverse("dashboard:home"))
+
+    content = response.content.decode()
+    assert response.status_code == 200
+    assert "Hemodinâmica HGRS" in content
+    assert "Unidade Satélite" in content
+    assert "Unidade 1" not in content
+    assert "Unidade 2" not in content
 
 
 # ── R4: link da navbar ─────────────────────────────────────────────────────

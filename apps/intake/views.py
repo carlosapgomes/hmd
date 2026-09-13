@@ -48,8 +48,9 @@ from apps.accounts.models import User
 from apps.cases.closure import acknowledge_case_receipt
 from apps.cases.events import CaseEventType
 from apps.cases.locks import CaseLockConflictError
-from apps.cases.models import Case, CaseDocument, CaseStatus, DoctorDisposition, SchedulingUnit
+from apps.cases.models import Case, CaseDocument, CaseStatus, DoctorDisposition
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
+from apps.cases.units import unit_label
 
 from .forms import CorrectedResubmissionForm, IntakeUploadForm
 from .services import (
@@ -80,10 +81,9 @@ _PROCEDURE_LABELS_BY_TYPE: dict[str, str] = {
 # Disposições que configuram decisão médica registrada (R1): a seção de
 # resultado existe quando há rows decididas (approved/denied).
 _DECIDED_DISPOSITIONS = frozenset({DoctorDisposition.APPROVED, DoctorDisposition.DENIED})
-# Rótulo legível por disposição/unidade (dados de ``DoctorDisposition`` e
-# ``SchedulingUnit``, mesmas choices dos demais apresentadores).
+# Rótulo legível por disposição (dados de ``DoctorDisposition``, mesmas choices
+# dos demais apresentadores).
 _DISPOSITION_LABELS: dict[str, str] = dict(DoctorDisposition.choices)
-_UNIT_LABELS: dict[int, str] = dict(SchedulingUnit.choices)
 # Estados em que a resposta final do fechamento/agendamento já foi publicada
 # na thread (R1): o destaque é a última comunicação autoral.
 _FINAL_REPLY_STATES = frozenset(
@@ -181,12 +181,11 @@ def _scheduling_context(case: Case) -> dict[str, object]:
     scheduled_at = ""
     if case.scheduled_datetime is not None:
         scheduled_at = timezone.localtime(case.scheduled_datetime).strftime(_SCHEDULED_AT_FORMAT)
-    unit_label = (
-        _UNIT_LABELS.get(case.scheduled_unit, "") if case.scheduled_unit is not None else ""
-    )
+    unit = case.scheduled_unit
+    unit_label_text = unit_label(unit) if unit is not None else ""
     denial_reason = case.scheduling_denial_reason
     return {
-        "unit_label": unit_label,
+        "unit_label": unit_label_text,
         "scheduled_at": scheduled_at,
         "location": case.scheduled_location,
         "denial_reason": denial_reason,

@@ -49,8 +49,9 @@ from django_fsm import TransitionNotAllowed
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
-from apps.cases.models import Case, CaseDocument, CaseStatus, SchedulingUnit
+from apps.cases.models import Case, CaseDocument, CaseStatus
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
+from apps.cases.units import unit_label
 
 from .forms import (
     DENY_REASON_REQUIRED_MESSAGE,
@@ -109,7 +110,6 @@ _PROFILE_BY_TYPE = {profile.procedure_type: profile for profile in PROCEDURE_PRO
 _CATALOG_INDEX: dict[str, int] = {
     profile.procedure_type: index for index, profile in enumerate(PROCEDURE_PROFILES)
 }
-_UNIT_LABELS: dict[int, str] = dict(SchedulingUnit.choices)
 
 
 def _require_user(request: HttpRequest) -> User:
@@ -148,14 +148,15 @@ def _queue_item(case: Case) -> dict[str, object]:
     """
     rows = [row for row in case.procedures.all() if row.declared_by_nir]
     rows.sort(key=lambda row: _CATALOG_INDEX[row.procedure_type])
-    unit_label = _UNIT_LABELS.get(case.scheduled_unit, "") if case.scheduled_unit else ""
+    scheduled_unit = case.scheduled_unit
+    unit_label_text = unit_label(scheduled_unit) if scheduled_unit else ""
     return {
         "case_id": str(case.case_id),
         "status_label": case.get_status_display(),
         "patient_name": case.patient_name or "—",
         "agency_record_number": case.agency_record_number or "—",
         "created_at": case.created_at,
-        "unit_label": unit_label,
+        "unit_label": unit_label_text,
         "procedures": [
             {
                 "label": _PROFILE_BY_TYPE[row.procedure_type].label,

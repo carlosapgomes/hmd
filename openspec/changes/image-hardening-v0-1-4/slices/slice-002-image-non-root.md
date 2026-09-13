@@ -64,6 +64,12 @@ expected_files:
   - Dockerfile
   - docker-compose.prod.yml        # apenas o comentário do adiamento (nenhuma mudança funcional)
   - apps/accounts/tests/test_prod_secrets.py
+  # DESVIO AUTORIZADO pelo dono (review rodada 1, P1; opção A): o USER 10001
+  # quebrava o fluxo dev (uv sync em venv root-owned + cache + media).
+  # docker-compose.dev.yml entrou NO FIX CYCLE com `user: "0:0"` deliberado
+  # nos 5 serviços de imagem (dev/teste-server root; prod segue non-root) +
+  # teste estático travando (test_dev_compose_runs_as_root_deliberately).
+  - docker-compose.dev.yml
 
 allowed_incidental_files: []
 

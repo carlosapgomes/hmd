@@ -12,9 +12,15 @@ Cobre:
   segredo por consumidor, sem ``DATABASE_URL``/``MIGRATOR_DATABASE_URL``;
 - Hardening de container (diretiva blueprint/Eon): limites PLANEJADOS de
   fase 1 do web (512m/1.0/200) + rootfs read-only/no-new-privileges/
-  cap_drop ALL (risco residual de root aceito na fase 1) e a env
-  ``DJANGO_SETTINGS_MODULE=prod`` do web (P1: o wsgi.py defaulta p/ dev e
-  o gunicorn não aceita --settings).
+  cap_drop ALL (mitigações mantidas como defesa em profundidade) e a env
+  ``DJANGO_SETTINGS_MODULE=prod`` do web (P1: o gunicorn não aceita
+  --settings; o wsgi.py defaulta p/ prod desde o slice 001 do change
+  image-hardening-v0-1-4).
+- Checks estáticos do hardening da imagem (change image-hardening-v0-1-4,
+  slice 001: entrypoint WSGI sem env cai em prod; slice 002): o Dockerfile
+  cria o usuário dedicado não-root 10001 com ``/app/media`` próprio e declara
+  ``USER`` depois do ``collectstatic``, e a dívida do adiamento do compose
+  foi quitada.
 
 O import de ``config.settings.prod`` segue o padrão de ``test_health.py``:
 ``importlib`` com envs dummy e ``sys.modules.pop`` a cada teste — nenhum
@@ -26,6 +32,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -43,6 +50,7 @@ User = get_user_model()
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = "docker-compose.prod.yml"
+DOCKERFILE = "Dockerfile"
 PROD_SECRET_KEY = "chave-de-teste-de-producao"
 PROD_DATABASE_URL = "postgres://build:build@localhost/build"
 SECRET_FILE_NAMES = (
@@ -495,3 +503,145 @@ def test_database_cache_createcachetable_roundtrip() -> None:
 
         with connection.cursor() as cursor:
             cursor.execute(f"DROP TABLE IF EXISTS {table}")
+
+
+# ── Slice 002 (image-hardening-v0-1-4): imagem roda como não-root ───────────
+
+_USER_DIRECTIVE = re.compile(r"USER\s+(\S+)\s*$", re.IGNORECASE)
+_RUN_OR_COPY_DIRECTIVE = re.compile(r"(RUN|COPY)\s", re.IGNORECASE)
+
+
+def _deploy_artifact(relative_path: str) -> str:
+    """Conteúdo cru de um artefato de deploy (checks estáticos de conteúdo)."""
+    return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def _dockerfile_instructions() -> list[str]:
+    """Instruções do Dockerfile, sem comentários nem linhas em branco."""
+    return [
+        line.strip()
+        for line in _deploy_artifact(DOCKERFILE).splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+def _user_directives(instructions: list[str]) -> list[str]:
+    """Valores das diretivas ``USER`` do Dockerfile, na ordem do arquivo."""
+    return [
+        match.group(1)
+        for line in instructions
+        if (match := _USER_DIRECTIVE.match(line)) is not None
+    ]
+
+
+def test_dockerfile_runs_as_non_root() -> None:
+    """R1/R3: a imagem cria o usuário dedicado 10001 e roda como ele.
+
+    O BUILD segue como root (useradd, mídia, collectstatic) — a ordem exigida
+    é que o ``collectstatic`` venha ANTES do ``USER`` (R3), e o processo de
+    RUNTIME (gunicorn/one-shots) seja o não-root, sem re-elevação posterior.
+    """
+    instructions = _dockerfile_instructions()
+
+    assert any("groupadd -g 10001 hmd" in line for line in instructions)
+    assert any(
+        "useradd -u 10001 -g hmd -M -s /usr/sbin/nologin hmd" in line for line in instructions
+    )
+    # /app/media nasce na imagem com o ownership do usuário: o volume nomeado
+    # vazio (web e workers) o herda na primeira montagem (design D1).
+    assert any("mkdir -p /app/media" in line for line in instructions)
+    assert any("chown hmd:hmd /app/media" in line for line in instructions)
+
+    # Única diretiva USER, com uid:gid fixos — nada de USER root/USER 0 no
+    # arquivo nem re-elevação depois dele.
+    assert _user_directives(instructions) == ["10001:10001"]
+    assert not any("chown -R" in line for line in instructions)
+
+    user_index = instructions.index("USER 10001:10001")
+    expose_index = next(i for i, line in enumerate(instructions) if line.startswith("EXPOSE"))
+    assert user_index < expose_index
+    collectstatic_index = next(i for i, line in enumerate(instructions) if "collectstatic" in line)
+    assert collectstatic_index < user_index
+
+
+DEV_COMPOSE_FILE = "docker-compose.dev.yml"
+DEV_IMAGE = "hmd-dev:app"
+
+
+def _compose_service_blocks(relative_path: str) -> dict[str, list[str]]:
+    """Serviços de um compose (nome → linhas do bloco), por indentação.
+
+    Parsing leve no mesmo estilo dos demais checks estáticos (a suíte não usa
+    parser de YAML): cada chave de serviço mora em exatamente 2 espaços.
+    """
+    blocks: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in _deploy_artifact(relative_path).splitlines():
+        match = re.match(r"^  (\S+):\s*$", line)
+        if match is not None:
+            current = match.group(1)
+            blocks[current] = []
+        elif current is not None:
+            blocks[current].append(line)
+    return blocks
+
+
+def test_dev_compose_runs_as_root_deliberately() -> None:
+    """P1 do review do slice 002: o overlay de DEV volta a root EXPLICITAMENTE.
+
+    O ``docker-compose.dev.yml`` builda o MESMO Dockerfile endurecido (uid
+    10001), mas o fluxo de desenvolvimento (``uv sync --frozen`` escrevendo no
+    ``/app/.venv`` do volume root-owned, cache do uv e workers gravando em
+    media root-owned) quebra como não-root. Decisão do dono (opção A): todos
+    os serviços que usam a imagem ``hmd-dev:app`` declaram ``user: "0:0"`` — o
+    endurecimento non-root vale para a imagem de PRODUÇÃO (usuário 10001 do
+    Dockerfile), não para o servidor de teste.
+    """
+    blocks = _compose_service_blocks(DEV_COMPOSE_FILE)
+    image_services = {
+        name: lines
+        for name, lines in blocks.items()
+        if any(f"image: {DEV_IMAGE}" in line for line in lines)
+    }
+
+    assert len(image_services) == 5, sorted(image_services)
+    for name, lines in image_services.items():
+        assert any(re.match(r'^\s+user: "0:0"\s*$', line) for line in lines), name
+
+
+def test_dockerfile_nonroot_regression() -> None:
+    """R2: regressões estáticas do hardening não-root.
+
+    (a) o ``USER 10001:10001`` vem APÓS a última instrução de build que
+    escreve em ``/app`` (deps, COPY do código, collectstatic) — quem escreve
+    na imagem é o root do BUILD; (b) a mídia tem ownership do usuário; (c) a
+    dívida do adiamento foi quitada no compose: o comentário stale sumiu e
+    ``read_only``/``cap_drop ALL``/``no-new-privileges`` seguem ativos como
+    defesa em profundidade.
+    """
+    # Guard espelhado (review 2, P2): o prod compose NUNCA pode sobrescrever
+    # o usuário da imagem — `user:` no overlay dev é válido; no prod
+    # reintroduziria root silenciosamente.
+    assert not re.search(r"^\s+user:", _deploy_artifact("docker-compose.prod.yml"), re.M)
+
+    instructions = _dockerfile_instructions()
+    user_index = instructions.index("USER 10001:10001")
+
+    last_build_write = max(
+        i for i, line in enumerate(instructions) if _RUN_OR_COPY_DIRECTIVE.match(line)
+    )
+    assert user_index > last_build_write
+    assert any("chown hmd:hmd /app/media" in line for line in instructions)
+
+    compose = _deploy_artifact(COMPOSE_FILE)
+    assert "non-root fica p/ o próximo release" not in compose
+    # O comentário stale do wsgi (P2 do review do slice 001) também sai: o
+    # default de produção agora mora no config/wsgi.py e o compose não
+    # referencia mais settings de DEV.
+    assert "config.settings.dev" not in compose
+    # A env explícita do settings segue no web (P1) — nada funcional mudou.
+    assert "DJANGO_SETTINGS_MODULE: config.settings.prod" in compose
+    # Mitigações mantidas (defesa em profundidade, não substituídas).
+    assert "read_only: true" in compose
+    assert "no-new-privileges:true" in compose
+    assert "cap_drop:" in compose and "- ALL" in compose

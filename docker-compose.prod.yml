@@ -47,10 +47,12 @@ services:
     mem_limit: 512m
     cpus: "1.0"
     pids_limit: 200
-    # Risco residual ACEITO na fase 1: container como root (imagem sem USER;
-    # non-root fica p/ o próximo release (v0.1.4+)). Mitigações ativas: rootfs read-only
-    # (escritas só em volume media e tmpfs /tmp), sem novos privilégios e
-    # todos os caps derrubados.
+    # Não-root ATIVO (change image-hardening-v0-1-4, slice 002): o Dockerfile
+    # declara o usuário dedicado uid/gid 10001 e `/app/media` com o ownership
+    # dele — nenhum processo deste serviço tem privilégio de root. As
+    # mitigações seguem como DEFESA EM PROFUNDIDADE: rootfs read-only (escritas
+    # só no volume media e no tmpfs /tmp), sem novos privilégios e todos os
+    # caps derrubados.
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -63,9 +65,10 @@ services:
     expose:
       - "8000"
     environment:
-      # P1 (review de hardening, 2026-09-11): o config/wsgi.py defaulta para
-      # config.settings.dev e o gunicorn NÃO aceita --settings — sem esta
-      # env, o web de produção boota com settings de DEV (DEBUG=True).
+      # Env EXPLÍCITA (defesa em profundidade): o config/wsgi.py passou a
+      # defaultar para config.settings.prod no slice 001 do change
+      # image-hardening-v0-1-4, mas o gunicorn NÃO aceita --settings — o
+      # deploy declara o settings aqui em vez de depender do default.
       DJANGO_SETTINGS_MODULE: config.settings.prod
       # Banco por componentes (slice 005/R1): credencial da APLICAÇÃO (DML) lida
       # do arquivo do secret — a de migrator fica só no serviço `migrate`.

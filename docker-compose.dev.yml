@@ -22,6 +22,12 @@ services:
       context: .
       dockerfile: Dockerfile
     image: hmd-dev:app
+    # Dev/servidor de teste roda DELIBERADAMENTE como root (uid 0): o fluxo
+    # uv sync --frozen escreve no venv do volume app_venv (root-owned), usa o
+    # cache do uv e os workers gravam em media root-owned. O endurecimento
+    # non-root vale para a imagem de PRODUÇÃO (USER 10001:10001 no Dockerfile,
+    # change image-hardening-v0-1-4, slice 002).
+    user: "0:0"
     command: >
       sh -c "uv sync --frozen &&
              uv run python manage.py runserver 0.0.0.0:8000 --settings=config.settings.dev"
@@ -63,6 +69,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: hmd-dev:app
+    user: "0:0"
     command: python manage.py qcluster --settings=config.settings.dev
     volumes:
       - media_data:/app/media
@@ -88,6 +95,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: hmd-dev:app
+    user: "0:0"
     command: python manage.py qcluster --settings=config.settings.dev
     environment:
       DATABASE_URL: postgres://hmd:hmd_dev@db:5432/hmd_dev
@@ -114,6 +122,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: hmd-dev:app
+    user: "0:0"
     command: python manage.py qcluster --settings=config.settings.dev
     volumes:
       - media_data:/app/media
@@ -143,6 +152,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: hmd-dev:app
+    user: "0:0"
     command: python manage.py qcluster --settings=config.settings.dev
     volumes:
       - media_data:/app/media

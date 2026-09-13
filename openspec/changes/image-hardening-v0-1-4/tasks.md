@@ -7,7 +7,7 @@
 ## Implementação
 
 - [x] Slice 001 — WSGI fail-safe: default `config.settings.prod` — `slices/slice-001-wsgi-default-prod.md`
-- [ ] Slice 002 — Imagem não-root: usuário 10001 + mídia com ownership — `slices/slice-002-image-non-root.md`
+- [x] Slice 002 — Imagem não-root: usuário 10001 + mídia com ownership — `slices/slice-002-image-non-root.md`
 - [ ] Slice 003 — Release v0.1.4: bump, CHANGELOG, compose default, pins do README — `slices/slice-003-release-v0-1-4.md`
 
 ## Gate final

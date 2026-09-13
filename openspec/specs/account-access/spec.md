@@ -54,28 +54,33 @@ Views marcadas com a proteção por papel SHALL negar acesso (HTTP 403) a usuár
 - **WHEN** acessa uma view que exige papel ativo `manager`
 - **THEN** recebe HTTP 403
 
-### Requirement: NIR restrito à rede interna
+### Requirement: Acesso externo restrito a conjuntos exclusivamente restritos
 
-O acesso de usuários com papel ativo `nir` SHALL ser bloqueado quando o IP de origem estiver fora da faixa de intranet configurada. Os demais papéis podem acessar de qualquer rede. Os caminhos de autenticação (login, logout, seleção de papel) são isentos da restrição. Quando o middleware usa proxy reverso, o IP de origem SHALL ser lido do cabeçalho confiável configurado.
+O acesso externo (IP de origem fora da faixa de intranet configurada) SHALL ser bloqueado apenas para usuários cujo conjunto de papéis contém exclusivamente papéis listados em `INTRANET_RESTRICTED_ROLES` (ex.: um usuário apenas `nir`). Usuários com ao menos um papel fora desse conjunto SHALL acessar de qualquer rede, inclusive com papel ativo restrito, sem necessidade de trocar de papel. Os caminhos de autenticação (login, logout, seleção de papel) são isentos da restrição. Quando o middleware usa proxy reverso, o IP de origem SHALL ser lido do cabeçalho confiável configurado.
 
-#### Scenario: NIR fora da faixa é bloqueado
+#### Scenario: NIR puro fora da faixa é bloqueado
 
-- **GIVEN** um usuário com papel ativo `nir` e uma requisição originada de IP fora da faixa configurada
+- **GIVEN** um usuário cujo conjunto de papéis é apenas `nir`, com papel ativo `nir`, e uma requisição originada de IP fora da faixa configurada
 - **WHEN** acessa qualquer view não isenta
 - **THEN** recebe resposta de acesso bloqueado por restrição de rede
 
-#### Scenario: Doctor fora da faixa acessa normalmente
+#### Scenario: Papel não restrito fora da faixa acessa normalmente
 
 - **GIVEN** um usuário com papel ativo `doctor` e uma requisição originada de IP fora da faixa configurada
 - **WHEN** acessa uma view protegida qualquer
 - **THEN** a requisição prossegue normalmente
 
-#### Scenario: Multi-role bloqueado como NIR pode trocar de papel de fora da rede
+#### Scenario: Multi-role com papel ativo NIR acessa externamente
 
-- **GIVEN** um usuário cujo conjunto de papéis contém `nir` e `manager`, com papel ativo `nir`, acessando de fora da faixa
-- **THEN** o acesso é bloqueado enquanto o papel ativo for `nir`
-- **WHEN** o usuário troca o papel ativo para `manager` pela tela de seleção (path isento da restrição)
-- **THEN** o acesso externo passa a ser permitido
+- **GIVEN** um usuário cujo conjunto de papéis contém `nir` e `manager`, com papel ativo `nir`, e uma requisição originada de IP fora da faixa configurada
+- **WHEN** acessa uma view protegida qualquer
+- **THEN** a requisição prossegue normalmente, sem necessidade de trocar o papel ativo
+
+#### Scenario: Conjunto inteiro restrito mantém o bloqueio
+
+- **GIVEN** um usuário cujo conjunto de papéis é `{nir, scheduler}`, com `INTRANET_RESTRICTED_ROLES = [nir, scheduler]`, com papel ativo `nir`, e uma requisição originada de IP fora da faixa configurada
+- **WHEN** acessa uma view não isenta, inclusive após trocar o papel ativo para `scheduler`
+- **THEN** o acesso permanece bloqueado por restrição de rede
 
 ### Requirement: Autenticação por Active Directory com admin local por design
 

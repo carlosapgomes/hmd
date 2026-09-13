@@ -254,10 +254,15 @@ def test_nav_visible_for_scheduler(
     user = user_factory(f"usuario-nav-{role}", (role,))
     login_user(user, role)
 
-    response = client.get(reverse("home"))
+    # follow=True: a home despacha o papel ativo à sua fila (change
+    # painel-gerencial-e-home, slice 002); a navbar da página final segue
+    # decidindo o link pelo papel ativo.
+    response = client.get(reverse("home"), follow=True)
 
     assert response.status_code == 200
-    assert reverse("scheduler:queue") in response.content.decode()
+    assert (
+        f'href="{reverse("scheduler:queue")}">Fila de agendamento</a>' in response.content.decode()
+    )
 
 
 @pytest.mark.django_db
@@ -272,7 +277,7 @@ def test_nav_hidden_for_other_roles(
     user = user_factory(f"usuario-nav-{role}", (role,))
     login_user(user, role)
 
-    response = client.get(reverse("home"))
+    response = client.get(reverse("home"), follow=True)
 
     assert response.status_code == 200
     assert reverse("scheduler:queue") not in response.content.decode()

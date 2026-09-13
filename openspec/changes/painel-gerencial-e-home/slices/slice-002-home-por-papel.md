@@ -61,7 +61,22 @@ expected_files:
   - apps/accounts/tests/test_home_dispatch.py   # novo — ou no arquivo de auth flow existente, se couber naturalmente
   - apps/accounts/tests/test_active_role.py     # APENAS se testes existentes assertarem placeholder pós-login
 
-allowed_incidental_files: []
+allowed_incidental_files:
+  # DESVIO AUTORIZADO pelo supervisor (escalamento do slice; opção A):
+  # 12 arquivos de teste, edição TEST-ONLY — follow=True onde o teste asserta
+  # navbar/corpo após GET à home (o dispatcher transforma a home em 302) +
+  # retarget aprovado do teste do placeholder p/ papel fora da tabela.
+  - apps/accounts/tests/test_active_role.py
+  - apps/accounts/tests/test_auth_flow.py
+  - apps/accounts/tests/test_intranet_guard.py
+  - apps/accounts/tests/test_kerberos_backend.py
+  - apps/accounts/tests/test_manual.py
+  - apps/accounts/tests/test_notification_views.py
+  - apps/accounts/tests/test_pwa.py
+  - apps/dashboard/tests/test_views.py
+  - apps/doctor/tests/test_queue.py
+  - apps/intake/tests/test_my_cases.py
+  - apps/scheduler/tests/test_views.py
 
 out_of_scope:
   - dashboard (slice 001 encerrado), métricas, guards de rota

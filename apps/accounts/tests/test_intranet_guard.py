@@ -141,7 +141,10 @@ class TestIntranetGuard:
         _create_user(username="cardiologista.medica", role_names=["doctor"])
         _login_with_active_role(client, username="cardiologista.medica", role="doctor")
 
-        response = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP)
+        # follow=True: a home despacha o papel ativo à sua fila (change
+        # painel-gerencial-e-home, slice 002); a página final segue sendo 200 e
+        # passando pelo guard.
+        response = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP, follow=True)
 
         assert response.status_code == 200
 
@@ -156,7 +159,7 @@ class TestIntranetGuard:
         _create_user(username="regulador.gerente", role_names=["nir", "manager"])
         _login_with_active_role(client, username="regulador.gerente", role="nir")
 
-        response = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP)
+        response = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP, follow=True)
 
         assert response.status_code == 200
         assert client.session["active_role"] == "nir"
@@ -228,6 +231,7 @@ class TestClientIpResolution:
             reverse("home"),
             HTTP_CF_CONNECTING_IP=INTRANET_IP,
             REMOTE_ADDR=EXTERNAL_IP,
+            follow=True,
         )
 
         assert response.status_code == 200
@@ -251,7 +255,7 @@ class TestClientIpResolution:
         _login_with_active_role(client, username=USERNAME, role="nir")
 
         # Sem header algum → REMOTE_ADDR dentro da faixa libera.
-        allowed = client.get(reverse("home"), REMOTE_ADDR=INTRANET_IP)
+        allowed = client.get(reverse("home"), REMOTE_ADDR=INTRANET_IP, follow=True)
         assert allowed.status_code == 200
 
 
@@ -265,7 +269,7 @@ class TestIntranetGuardDefaults:
         _create_user(username=USERNAME, role_names=["nir"])
         _login_with_active_role(client, username=USERNAME, role="nir")
 
-        response = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP)
+        response = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP, follow=True)
 
         assert response.status_code == 200
 

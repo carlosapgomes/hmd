@@ -187,10 +187,13 @@ def test_nav_visible_for_doctor(
     user = user_factory(f"usuario-{role}", (role,))
     login_user(user, role)
 
-    response = client.get(reverse("home"))
+    # follow=True: a home despacha o papel ativo à sua fila (change
+    # painel-gerencial-e-home, slice 002); a navbar da página final segue
+    # decidindo o link pelo papel ativo.
+    response = client.get(reverse("home"), follow=True)
 
     assert response.status_code == 200
-    assert reverse("doctor:queue") in response.content.decode()
+    assert f'href="{reverse("doctor:queue")}">Fila médica</a>' in response.content.decode()
 
 
 @pytest.mark.django_db
@@ -203,7 +206,7 @@ def test_nav_hidden_for_nir(
     user = user_factory("regulador-nir", (NIR_ROLE,))
     login_user(user, NIR_ROLE)
 
-    response = client.get(reverse("home"))
+    response = client.get(reverse("home"), follow=True)
 
     assert response.status_code == 200
     assert reverse("doctor:queue") not in response.content.decode()

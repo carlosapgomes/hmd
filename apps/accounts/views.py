@@ -42,6 +42,17 @@ SERVICE_UNAVAILABLE_MESSAGE = (
     "Não foi possível falar com o serviço de autenticação. Tente novamente."
 )
 
+# Área de trabalho de cada papel ativo (D2): a home despacha por aqui e só cai
+# no placeholder quando o papel ativo não está na tabela. Rotas de destino já
+# protegidas por si (guard próprio por papel), então o dispatcher não revalida.
+_HOME_ROUTES: dict[str, str] = {
+    "nir": "intake:home",
+    "doctor": "doctor:queue",
+    "scheduler": "scheduler:queue",
+    "manager": "dashboard:home",
+    "admin": "dashboard:home",
+}
+
 
 def _require_user(request: HttpRequest) -> User:
     """Usuário autenticado de uma view protegida por ``@login_required``."""
@@ -141,7 +152,7 @@ def switch_role_view(request: HttpRequest) -> HttpResponse:
 
     GET lista os papéis do usuário; POST valida que o papel escolhido
     pertence ao usuário, grava ``session["active_role"]`` e redireciona para a
-    home. As homes por papel continuam placeholders neste change.
+    home (que despacha o papel ativo à sua área de trabalho).
 
     Usuário sem nenhum papel (``/switch-role/`` é path isento do
     ``ActiveRoleMiddleware``, que faria esse logout em paths não isentos):
@@ -169,12 +180,18 @@ def switch_role_view(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def home_view(request: HttpRequest) -> HttpResponse:
-    """Home autenticada placeholder (R4): boas-vindas com nome e papéis.
+    """Home por papel ativo (R1/R2): despacha cada papel à sua área de trabalho.
 
-    Os changes posteriores substituem este conteúdo pelas filas reais de
-    trabalho de cada papel.
+    O papel ativo da sessão decide o destino (``_HOME_ROUTES``); o redirect é
+    302 simples, sem flash de conteúdo. Sem papel ativo na tabela a home cai no
+    placeholder ``accounts/home.html`` (fallback), que orienta trocar de papel
+    ou sair (D5). O ``ActiveRoleMiddleware`` garante que ``active_role`` é um
+    papel do usuário, então o dispatcher não revalida papéis (D2).
     """
     user = _require_user(request)
+    target = _HOME_ROUTES.get(request.session.get("active_role", ""))
+    if target is not None:
+        return redirect(reverse(target))
     role_names = list(user.roles.order_by("name").values_list("name", flat=True))
     return render(request, "accounts/home.html", {"role_names": role_names})
 

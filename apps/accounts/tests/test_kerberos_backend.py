@@ -323,8 +323,10 @@ class TestADLoginFlow:
         assert response.headers["Location"] == reverse("home")
         assert int(client.session["_auth_user_id"]) == user.pk
         assert factory.calls[0][0] == AD_UPN
-        # Sessão válida: a home autenticada renderiza (papel ativo definido).
-        assert client.get(reverse("home")).status_code == 200
+        # Sessão válida: a área de trabalho do papel renderiza (papel ativo
+        # definido); follow=True porque a home despacha por papel ativo (change
+        # painel-gerencial-e-home, slice 002).
+        assert client.get(reverse("home"), follow=True).status_code == 200
 
     def test_wrong_password_denied_no_failover(self, client: Client) -> None:
         """Senha errada (24) → mensagem genérica de credenciais; sem 2º DC."""

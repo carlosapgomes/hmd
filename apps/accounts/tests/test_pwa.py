@@ -166,7 +166,10 @@ def test_base_declares_pwa(client: Client) -> None:
     user.roles.add(role)
     client.force_login(user)
 
-    content = client.get(reverse("home")).content.decode()
+    # follow=True: a home despacha o papel ativo à sua fila (change
+    # painel-gerencial-e-home, slice 002); a página final também renderiza
+    # base.html.
+    content = client.get(reverse("home"), follow=True).content.decode()
 
     assert 'rel="manifest"' in content
     assert 'href="/static/manifest.json"' in content

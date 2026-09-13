@@ -23,10 +23,11 @@
       <span class="app-header__title">{{ app_display_name }}</span>
     </a>
     {% if active_role == 'nir' %}
-    <!-- Links do intake NIR (slice 004, R4): visíveis só com papel ativo nir -->
+    <!-- Links do intake NIR (slice 004, R4; ordem do painel-gerencial-e-home,
+         slice 002/D4): "Enviar relatório" (caso de uso mais comum) primeiro. -->
     <nav class="navbar-nav flex-row align-items-center gap-2 ms-3" aria-label="Intake NIR">
-      <a class="nav-link px-2" href="{% url 'intake:my_cases' %}">Meus casos</a>
       <a class="nav-link px-2" href="{% url 'intake:home' %}">Enviar relatório</a>
+      <a class="nav-link px-2" href="{% url 'intake:my_cases' %}">Meus casos</a>
     </nav>
     {% endif %}
     {% if active_role == 'doctor' or active_role == 'admin' %}

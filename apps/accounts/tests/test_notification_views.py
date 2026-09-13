@@ -189,14 +189,17 @@ class TestNavbarBell:
             _create_notification(recipient=nir_user, case=case)
         _login(client, nir_user, NIR_ROLE)
 
-        body = client.get(reverse("home")).content.decode()
+        # follow=True: a home despacha o papel ativo à sua fila (change
+        # painel-gerencial-e-home, slice 002); o sino vive na navbar de toda
+        # página autenticada.
+        body = client.get(reverse("home"), follow=True).content.decode()
 
         assert reverse("notifications") in body
         assert f"Notificações: {UNREAD_NOTIFS} não lidas" in body
 
         # Marcar todas zera o badge na navegação seguinte (SSR, sem polling).
         client.post(reverse("notifications_mark_all_read"))
-        body = client.get(reverse("home")).content.decode()
+        body = client.get(reverse("home"), follow=True).content.decode()
 
         assert "Notificações: 0 não lidas" in body
 

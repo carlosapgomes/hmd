@@ -184,7 +184,10 @@ class TestNavbarManualLink:
     def test_navbar_manual_link(self, client: Client, nir_user: User) -> None:
         client.force_login(nir_user)
 
-        body = client.get(reverse("home")).content.decode()
+        # follow=True: a home despacha o papel ativo à sua fila (change
+        # painel-gerencial-e-home, slice 002); a navbar da página final segue
+        # trazendo o link do manual.
+        body = client.get(reverse("home"), follow=True).content.decode()
 
         assert reverse("manual") in body
         assert 'target="_blank"' in body

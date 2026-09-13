@@ -75,7 +75,10 @@ class TestLoginFlow:
         response = client.post(reverse("login"), {"username": USERNAME, "password": PASSWORD})
         assert response.status_code == 302
         assert response.headers["Location"] == reverse("home")
-        response = client.get(reverse("home"))
+        # follow=True: a home despacha o papel ativo à sua fila (change
+        # painel-gerencial-e-home, slice 002); a navbar da página final segue
+        # exibindo o nome do usuário.
+        response = client.get(reverse("home"), follow=True)
         assert response.status_code == 200
         assert DISPLAY_NAME in response.content.decode()
 
@@ -168,8 +171,13 @@ class TestHomePlaceholder:
         assert response.headers["Location"].startswith(reverse("login"))
 
     def test_home_renders_app_name(self, client: Client) -> None:
-        """Home autenticada renderiza nome do app e papéis do usuário (R3/R4)."""
-        _create_user(first_name="Maria", last_name="Silva")
+        """Home autenticada (fallback) renderiza nome do app e papéis do usuário (R3/R4).
+
+        Usa um papel fora do dispatcher (change painel-gerencial-e-home, slice
+        002): papéis com fila são redirecionados à sua área de trabalho, então
+        o placeholder só é alcançável para papel sem destino na tabela.
+        """
+        _create_user(first_name="Maria", last_name="Silva", role_names=("nurse",))
         client.post(reverse("login"), {"username": USERNAME, "password": PASSWORD})
 
         response = client.get(reverse("home"))
@@ -177,7 +185,7 @@ class TestHomePlaceholder:
         body = response.content.decode()
         assert settings.APP_DISPLAY_NAME in body
         assert DISPLAY_NAME in body
-        assert "doctor" in body
+        assert "nurse" in body
 
 
 @pytest.mark.django_db

@@ -65,7 +65,10 @@ class TestActiveRoleMiddleware:
         _create_user(username=USERNAME, role_names=["doctor"])
         client.force_login(_user := User.objects.get(username=USERNAME))
 
-        response = client.get(reverse("home"))
+        # follow=True: a home agora despacha por papel ativo (change
+        # painel-gerencial-e-home, slice 002) — a página final (fila médica)
+        # segue sendo 200.
+        response = client.get(reverse("home"), follow=True)
 
         assert response.status_code == 200
         assert client.session["active_role"] == "doctor"
@@ -191,8 +194,9 @@ class TestSwitchRoleView:
         assert response.headers["Location"] == reverse("home")
         assert client.session["active_role"] == "manager"
 
-        # A home do papel renderiza com o papel trocado na navbar.
-        home = client.get(reverse("home"))
+        # A página final do papel trocado (painel) renderiza com o papel ativo
+        # na navbar; follow=True porque a home despacha por papel (slice 002).
+        home = client.get(reverse("home"), follow=True)
         assert home.status_code == 200
         assert "manager" in home.content.decode()
 
@@ -312,7 +316,7 @@ class TestNavbarActiveRole:
         response = client.post(reverse("switch_role"), {"role": "manager"})
         assert response.status_code == 302
 
-        home = client.get(reverse("home"))
+        home = client.get(reverse("home"), follow=True)
         assert home.status_code == 200
         body = home.content.decode()
         assert "Papel ativo" in body

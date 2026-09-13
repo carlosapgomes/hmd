@@ -263,16 +263,19 @@ def test_navbar_links_for_nir(
     user_factory: Callable[[str, str], User],
 ) -> None:
     """R4: navbar mostra links do intake quando o papel ativo é nir (e não para outro)."""
+    # follow=True: a home despacha o papel ativo à sua fila (change
+    # painel-gerencial-e-home, slice 002); a navbar da página final segue
+    # decidindo os links pelo papel ativo.
     client.force_login(nir_user)
-    response = client.get(reverse("home"))
+    response = client.get(reverse("home"), follow=True)
     assert response.status_code == 200
     body = response.content.decode()
     assert reverse("intake:my_cases") in body
-    assert reverse("intake:home") in body
+    assert f'href="{reverse("intake:home")}">Enviar relatório</a>' in body
 
     doctor = user_factory("doctor-fora", DOCTOR_ROLE)
     client.force_login(doctor)
-    response = client.get(reverse("home"))
+    response = client.get(reverse("home"), follow=True)
     assert response.status_code == 200
     assert reverse("intake:my_cases") not in response.content.decode()
     assert reverse("intake:home") not in response.content.decode()

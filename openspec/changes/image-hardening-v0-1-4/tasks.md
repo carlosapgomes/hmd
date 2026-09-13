@@ -2,11 +2,11 @@
 
 ## Preflight
 
-- [ ] Baseline: confirmar árvore limpa em `main`, registrar `BASE_REF` e rodar a suíte completa uma vez (`TEST_DB_PORT=55435 uv run pytest -q`)
+- [x] Baseline: confirmar árvore limpa em `main`, registrar `BASE_REF` e rodar a suíte completa uma vez (`TEST_DB_PORT=55435 uv run pytest -q`)
 
 ## Implementação
 
-- [ ] Slice 001 — WSGI fail-safe: default `config.settings.prod` — `slices/slice-001-wsgi-default-prod.md`
+- [x] Slice 001 — WSGI fail-safe: default `config.settings.prod` — `slices/slice-001-wsgi-default-prod.md`
 - [ ] Slice 002 — Imagem não-root: usuário 10001 + mídia com ownership — `slices/slice-002-image-non-root.md`
 - [ ] Slice 003 — Release v0.1.4: bump, CHANGELOG, compose default, pins do README — `slices/slice-003-release-v0-1-4.md`
 

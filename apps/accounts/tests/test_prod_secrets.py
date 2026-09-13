@@ -360,6 +360,60 @@ def test_compose_web_has_phase1_limits_and_container_hardening(tmp_path: Path) -
     assert "DJANGO_SETTINGS_MODULE: config.settings.prod" in web
 
 
+# ── Slice 001 (image-hardening-v0-1-4): wsgi fail-safe → PROD ─────────────
+
+
+def _run_wsgi_settings_probe(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Importa ``config.wsgi`` num subprocess e imprime o settings efetivo."""
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import config.wsgi; import django.conf; print(django.conf.settings.SETTINGS_MODULE)",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_wsgi_defaults_to_prod_settings_without_env(tmp_path: Path) -> None:
+    """R1/R2: sem ``DJANGO_SETTINGS_MODULE`` no ambiente, o entrypoint WSGI
+    carrega os settings de PRODUÇÃO — esquecer a env nunca mais ergue o site
+    com a configuração de desenvolvimento (envs mínimas de prod: secret dummy
+    em arquivo + banco por ``DB_*``)."""
+    dummies = _create_secret_dummies(tmp_path)
+    env = {
+        **os.environ,
+        "DJANGO_SECRET_KEY_FILE": dummies["secret_key"],
+        "DB_PASSWORD_FILE": dummies["app_db_password"],
+        "DB_HOST": "localhost",
+        "DB_NAME": "hmd",
+        "DB_USER": "hmd",
+    }
+    env.pop("DJANGO_SETTINGS_MODULE", None)
+    env.pop("DJANGO_SECRET_KEY", None)
+    env.pop("DATABASE_URL", None)
+
+    result = _run_wsgi_settings_probe(env)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "config.settings.prod"
+
+
+def test_wsgi_env_overrides_default() -> None:
+    """R2: com ``DJANGO_SETTINGS_MODULE`` setada, a env continua vencendo o
+    default do wsgi (compose/CI seguem idênticos)."""
+    env = {**os.environ, "DJANGO_SETTINGS_MODULE": "config.settings.test"}
+
+    result = _run_wsgi_settings_probe(env)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "config.settings.test"
+
+
 def test_prod_cache_backend_imports(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Regressão v0.1.3 (falha real de produção): o backend de cache de prod
     precisa RESOLVER como classe — o path ``...backends.database.`` (inválido;

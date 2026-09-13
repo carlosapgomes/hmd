@@ -51,6 +51,12 @@ SESSION_COOKIE_SECURE = False
 # Determinístico independente de .env local.
 APP_DISPLAY_NAME = "HMD — Hemodinâmica"
 
+# Labels de unidade canônicos na suíte (change unit-labels-env, review P2):
+# sem o pin, HMD_UNIT_*_LABEL no host/.env tornaria os testes de default
+# não-determinísticos. O caminho env→settings continua coberto pelos testes
+# diretos de _parse_unit_labels.
+UNIT_LABELS = {1: "Unidade 1", 2: "Unidade 2"}
+
 # Processamento do intake roda inline na suíte (design D2/R4): as tasks são
 # chamadas direto, sem cluster real — determinístico independente de um .env
 # local com INTAKE_RUN_TASKS_INLINE=false.

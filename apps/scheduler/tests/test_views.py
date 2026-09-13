@@ -53,9 +53,9 @@ from apps.scheduler.services import (
     REPLY_DENY_TEMPLATE,
     REPLY_REOPEN_TEMPLATE,
     REPLY_UNIT_1_TEMPLATE,
-    REPLY_UNIT_2_TEXT,
     confirm_case_scheduling,
     reopen_scheduling_after_incident,
+    reply_unit_2_text,
 )
 
 SCHEDULER_ROLE = "scheduler"
@@ -849,10 +849,10 @@ def test_confirm_unit_2_exact_reply(
     detail = client.get(detail_url)
     assert detail.status_code == 200
     body = detail.content.decode()
-    assert REPLY_UNIT_2_TEXT in body
+    assert reply_unit_2_text() in body
     # A resposta exata é a única user message da thread.
     messages_body = [m.body for m in _user_messages(case)]
-    assert messages_body == [REPLY_UNIT_2_TEXT]
+    assert messages_body == [reply_unit_2_text()]
 
 
 @pytest.mark.django_db

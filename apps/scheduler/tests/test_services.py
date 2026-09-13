@@ -30,9 +30,9 @@ from apps.cases.models import Case, CaseStatus, MessageType
 from apps.scheduler.services import (
     REPLY_DENY_TEMPLATE,
     REPLY_UNIT_1_TEMPLATE,
-    REPLY_UNIT_2_TEXT,
     confirm_case_scheduling,
     deny_case_scheduling,
+    reply_unit_2_text,
 )
 
 SCHEDULER_ROLE = "scheduler"
@@ -205,11 +205,11 @@ def test_confirm_unit_1_from_scheduler_requested(scheduler_user: User) -> None:
 def test_confirm_unit_2_exact_text(scheduler_user: User) -> None:
     """R2/R6: confirmar unidade 2 → resposta final é o texto EXATO do plano §4
     (sem ponto final), com campos persistidos e 3 eventos na ordem."""
-    # A constante é o próprio contrato: texto exato do plano §4, sem ponto.
-    assert REPLY_UNIT_2_TEXT == (
+    # A função é o próprio contrato (label configurável): texto exato do plano §4, sem ponto.
+    assert reply_unit_2_text() == (
         "Recusar o relatório — caso agendado na Unidade 2, que comunicará a Secretaria"
     )
-    assert not REPLY_UNIT_2_TEXT.endswith(".")
+    assert not reply_unit_2_text().endswith(".")
 
     case = _case_in_state("SCHEDULER_REQUESTED", created_by=scheduler_user)
     events_before = case.events.count()
@@ -242,7 +242,7 @@ def test_confirm_unit_2_exact_text(scheduler_user: User) -> None:
 
     messages = _user_messages(case)
     assert len(messages) == 1
-    assert cast(Any, messages[0]).body == REPLY_UNIT_2_TEXT
+    assert cast(Any, messages[0]).body == reply_unit_2_text()
 
 
 @pytest.mark.django_db

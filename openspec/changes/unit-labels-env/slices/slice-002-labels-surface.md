@@ -17,6 +17,11 @@ e o manual via context processor global `unit_labels`.
   presenters:99).
 - `apps/dashboard/views.py:54-62` — dict inline `"unit_labels"` no context do
   painel (comenta "derivados do modelo"; passa a derivar do helper).
+- `apps/intake/views.py:86` — TERCEIRA tabela duplicada
+  `_UNIT_LABELS = dict(SchedulingUnit.choices)` (consumida em :185; o
+  `templates/intake/case_detail.html:139` renderiza `scheduling.unit_label`)
+  — inclusão emendada após review do slice 001 (a spec ADDED exige TODOS os
+  pontos de exibição, incl. detail do NIR).
 - `apps/accounts/context_processors.py` — padrão dos processors existentes
   (`notification_unread_count`); registrar o novo em
   `config/settings/base.py` (TEMPLATES context_processors).
@@ -31,9 +36,10 @@ e o manual via context processor global `unit_labels`.
 
 ## Requisitos verificáveis
 
-- **R1** — `scheduler/views.py` e `scheduler/presenters.py` eliminam as
-  tabelas duplicadas e usam `unit_label(...)`/`unit_labels()` do helper; o
-  detail do agendador exibe o label configurado.
+- **R1** — `scheduler/views.py`, `scheduler/presenters.py` e
+  `intake/views.py` eliminam as tabelas duplicadas e usam
+  `unit_label(...)`/`unit_labels()` do helper; o detail do agendador E o
+  detail do NIR exibem o label configurado.
 - **R2** — `dashboard/views.py` compõe `unit_labels` do helper (chaves
   `unit_1`/`unit_2` preservadas — o template consome `unit_labels.unit_1`).
 - **R3** — context processor global `unit_labels` em
@@ -53,7 +59,7 @@ e o manual via context processor global `unit_labels`.
 
 | Requisito | Arquivo(s) esperado(s) | Teste/check |
 | --- | --- | --- |
-| R1 | `apps/scheduler/views.py`, `apps/scheduler/presenters.py` | `rg -n "_UNIT_LABELS" apps/scheduler` → 0 matches; teste existente do detail com default segue verde |
+| R1 | `apps/scheduler/views.py`, `apps/scheduler/presenters.py`, `apps/intake/views.py` | `rg -n "_UNIT_LABELS" apps/scheduler` → 0 matches; teste existente do detail com default segue verde |
 | R2 | `apps/dashboard/views.py` | `test_views.py::test_dashboard_*` existentes (default) + novo com override citando o label no content |
 | R3 | `apps/accounts/context_processors.py`, `config/settings/base.py` | `rg -n "unit_labels" config/settings/base.py` → registro no TEMPLATES; teste novo: response do manual contém label com override |
 | R4 | `templates/accounts/manual.html`, `templates/scheduler/case_detail.html` | `rg -n "Unidade 1\|Unidade 2" templates/accounts/manual.html templates/scheduler/case_detail.html` → 0 matches literais (exceto dentro de comentários, se houver) |
@@ -63,6 +69,7 @@ e o manual via context processor global `unit_labels`.
 
 ```yaml
 expected_files:
+  - apps/intake/views.py
   - apps/scheduler/views.py
   - apps/scheduler/presenters.py
   - apps/dashboard/views.py

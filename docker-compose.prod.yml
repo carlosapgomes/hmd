@@ -91,6 +91,10 @@ services:
       AD_KDC_TIMEOUT: ${AD_KDC_TIMEOUT:-3}
       INTRANET_IP_RANGE: ${INTRANET_IP_RANGE}
       INTRANET_RESTRICTED_ROLES: ${INTRANET_RESTRICTED_ROLES:-nir}
+      # Rótulos das unidades de agendamento (change unit-labels-env): exibidos
+      # no produto e na resposta final ao NIR da unidade 2.
+      HMD_UNIT_1_LABEL: ${HMD_UNIT_1_LABEL:-Unidade 1}
+      HMD_UNIT_2_LABEL: ${HMD_UNIT_2_LABEL:-Unidade 2}
       # Topologia do piloto (Cloudflared → Caddy → HMD): a borda Cloudflare
       # fixa Cf-Connecting-IP com o cliente real e o túnel o preserva até a
       # origem; o Caddy repassa headers de entrada SEM tocá-los (NÃO usar

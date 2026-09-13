@@ -2,11 +2,11 @@
 
 ## Preflight
 
-- [ ] Baseline: confirmar árvore limpa em `main`, registrar `BASE_REF` e rodar a suíte completa uma vez (`TEST_DB_PORT=55435 uv run pytest -q`)
+- [x] Baseline: confirmar árvore limpa em `main`, registrar `BASE_REF` e rodar a suíte completa uma vez (`TEST_DB_PORT=55435 uv run pytest -q`)
 
 ## Implementação
 
-- [ ] Slice 001 — núcleo: envs de labels + helper central + resposta final interpolada + choices do form — `slices/slice-001-labels-core.md`
+- [x] Slice 001 — núcleo: envs de labels + helper central + resposta final interpolada + choices do form — `slices/slice-001-labels-core.md`
 - [ ] Slice 002 — superfície de exibição: scheduler views/presenters, dashboard, context processor, templates (manual + help text) — `slices/slice-002-labels-surface.md`
 
 ## Gate final

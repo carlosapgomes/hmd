@@ -26,6 +26,7 @@ from django import forms
 from django.utils import timezone
 
 from apps.cases.models import SchedulingUnit
+from apps.cases.units import unit_label
 
 # Mensagens de validação espelhando as do serviço (R4 — o form falha antes do
 # serviço, com o mesmo critério de domínio).
@@ -34,12 +35,18 @@ FUTURE_DATETIME_MESSAGE = "Informe uma data/hora futura para o agendamento."
 DENY_REASON_REQUIRED_MESSAGE = "Informe o motivo da negação do agendamento."
 REOPEN_REASON_REQUIRED_MESSAGE = "Informe o motivo da intercorrência."
 
-# Unidades de destino aceitas (R4/plano §4): choice tipado em int para o
-# serviço receber ``unit ∈ {1, 2}`` já normalizado.
-_UNIT_CHOICES: list[tuple[int, str]] = [
-    (SchedulingUnit.UNIT_1, "Unidade 1"),
-    (SchedulingUnit.UNIT_2, "Unidade 2"),
-]
+
+def _unit_choices() -> list[tuple[int, str]]:
+    """Unidades de destino aceitas (R4/plano §4) com os rótulos vigentes.
+
+    Callable (nunca resolvido no import): o Django avalia as choices na
+    montagem do campo, então os rótulos vêm da fonte única a cada renderização
+    — ``unit ∈ {1, 2}`` segue tipado em int para o serviço receber normalizado.
+    """
+    return [
+        (SchedulingUnit.UNIT_1, unit_label(SchedulingUnit.UNIT_1)),
+        (SchedulingUnit.UNIT_2, unit_label(SchedulingUnit.UNIT_2)),
+    ]
 
 
 def _required_text(reason: str, message: str) -> str:
@@ -55,7 +62,7 @@ class SchedulerConfirmForm(forms.Form):
 
     unit = forms.TypedChoiceField(
         coerce=int,
-        choices=_UNIT_CHOICES,
+        choices=_unit_choices,
         label="Unidade de destino",
     )
     scheduled_date = forms.DateField(

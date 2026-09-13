@@ -6,6 +6,7 @@ por ambiente (``config.settings.{dev,prod,test}``); veja ``.env.example``.
 """
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -118,6 +119,23 @@ INTRANET_RESTRICTED_ROLES = [
 INTRANET_IP_RANGE = os.environ.get("INTRANET_IP_RANGE", "")
 # Header de proxy reverso com o IP real do cliente (túnel Cloudflare).
 TRUSTED_PROXY_HEADER = os.environ.get("TRUSTED_PROXY_HEADER", "HTTP_CF_CONNECTING_IP")
+
+# Rótulos das unidades de agendamento (change unit-labels-env, slice 001/D1):
+# exibição configurável por ambiente, sem outra validação além do ``strip``
+# (rótulo operacional, exibido como fornecido). A resolução fica na fonte única
+# ``apps.cases.units``; ``SchedulingUnit`` segue o canônico/default do model.
+_UNIT_LABEL_DEFAULTS: dict[int, str] = {1: "Unidade 1", 2: "Unidade 2"}
+
+
+def _parse_unit_labels(environ: Mapping[str, str]) -> dict[int, str]:
+    """Rótulos das unidades vindos das envs; vazio → default canônico."""
+    return {
+        unit: (environ.get(f"HMD_UNIT_{unit}_LABEL") or "").strip() or default
+        for unit, default in _UNIT_LABEL_DEFAULTS.items()
+    }
+
+
+UNIT_LABELS = _parse_unit_labels(os.environ)
 
 # Notificações in-app (change dashboard-notifications-pwa, slice 002, design
 # D2): janela de retenção, em horas, das notificações JÁ LIDAS na lista. As não

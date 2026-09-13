@@ -13,8 +13,9 @@ Helper novo `unit_labels() -> dict[int, str]` ({1: label1, 2: label2}) e
 `unit_label(value: int) -> str`, lendo de `django.conf.settings`
 (`UNIT_LABELS` definido no base.py a partir das envs). O app `cases` já é a
 casa de `SchedulingUnit` e é importado por scheduler/intake/dashboard — sem
-novo acoplamento. As duas tabelas duplicadas `_UNIT_LABELS` (scheduler/views
-e presenters) e o dict inline do dashboard passam a chamar o helper.
+novo acoplamento. As TRÊS tabelas duplicadas `_UNIT_LABELS` (scheduler/views,
+scheduler/presenters e intake/views — esta última achada na review do slice
+001) e o dict inline do dashboard passam a chamar o helper.
 
 ## D3 — Resposta final da unidade 2: constante → função
 

@@ -19,8 +19,10 @@ intercorrência, slice 002) o ``await`` é PULADO. A intercorrência
 agendamento confirmado na unidade 1: transição NOVA ``reopen_scheduling``
 (``FINAL_REPLY_POSTED → AWAITING_SCHEDULING``) + limpeza dos campos de
 agendamento + motivo persistido + comunicação ao NIR no mesmo atomic. Textos
-de resposta são constantes do módulo (dados, não strings espalhadas): unidade
-2 usa o texto EXATO do plano §4, sem ponto final.
+de resposta são dados do módulo (não strings espalhadas): unidade 1 e as
+demais respostas são templates; a resposta da unidade 2 vem de
+``reply_unit_2_text()``, composta a cada postagem com o rótulo de unidade
+vigente (D3 — sem ponto final).
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from django.utils import timezone
 
 from apps.cases.communications import post_user_communication
 from apps.cases.models import Case, CaseStatus, SchedulingUnit
+from apps.cases.units import unit_label
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
@@ -41,19 +44,32 @@ if TYPE_CHECKING:
 # do presenter médico do change 07: ``%d/%m/%Y %H:%M``).
 _SCHEDULED_DATETIME_FORMAT = "%d/%m/%Y %H:%M"
 
-# Respostas finais ao NIR (D2, constantes do módulo): unidade 1 interpola
-# local + data/hora local formatada; unidade 2 é o texto EXATO do plano §4
-# (sem ponto final); negação interpola o motivo obrigatório.
+# Respostas finais ao NIR (D2, dados do módulo): unidade 1 interpola local +
+# data/hora local formatada; negação interpola o motivo obrigatório; unidade 2 é
+# composta por ``reply_unit_2_text()``.
 REPLY_UNIT_1_TEMPLATE = (
     "Agendamento confirmado — {location}, {scheduled_at}. Comparecer com documentos e exames."
 )
-REPLY_UNIT_2_TEXT = "Recusar o relatório — caso agendado na Unidade 2, que comunicará a Secretaria"
 REPLY_DENY_TEMPLATE = "Agendamento negado — {reason}."
 # Intercorrência (slice 002): agendamento desmarcado com o motivo obrigatório;
 # o caso retorna à fila para novo agendamento (texto do design D2, sem ponto).
 REPLY_REOPEN_TEMPLATE = (
     "Intercorrência — agendamento desmarcado ({reason}); caso retorna à fila para novo agendamento"
 )
+
+
+def reply_unit_2_text() -> str:
+    """Resposta final ao NIR na unidade 2 (R3/D3): rótulo vigente, sem ponto.
+
+    Composta NA CHAMADA — o texto é o do momento da postagem (eventos já
+    gravados preservam o texto vigente à época); com os rótulos default o
+    resultado é o texto canônico do plano §4 com "Unidade 2" literal.
+    """
+    return (
+        "Recusar o relatório — caso agendado na "
+        f"{unit_label(SchedulingUnit.UNIT_2)}, que comunicará a Secretaria"
+    )
+
 
 # Campos persistidos na decisão do agendador (D1), salvos no mesmo atomic das
 # transições FSM.
@@ -165,7 +181,7 @@ def confirm_case_scheduling(
     (``scheduled_unit``/``scheduled_datetime``/``scheduled_location``/
     ``scheduled_by=user``/``scheduled_decided_at=now``) e posta a resposta
     final ao NIR por unidade (unidade 1 interpola local + data/hora local;
-    unidade 2 é o texto exato do plano §4, sem ponto final).
+    unidade 2 usa ``reply_unit_2_text()`` — rótulo vigente, sem ponto final).
     """
     location = scheduled_location.strip()
     with transaction.atomic():
@@ -190,7 +206,7 @@ def confirm_case_scheduling(
                 location=location, scheduled_at=_format_scheduled_datetime(scheduled_datetime)
             )
         else:
-            body = REPLY_UNIT_2_TEXT
+            body = reply_unit_2_text()
         post_user_communication(locked, user=user, role=role, body=body)
 
 

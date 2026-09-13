@@ -2,8 +2,9 @@
 
 ``ActiveRoleMiddleware`` (slice 005, R1/R6) garante que todo usuário
 autenticado tenha um papel ativo único na sessão; ``IntranetGuardMiddleware``
-(slice 006, R1–R6) bloqueia o papel ativo restrito (``nir``) fora da faixa de
-intranet configurada.
+(slice 006, R1–R6) bloqueia o acesso externo de quem só tem papéis restritos
+(``INTRANET_RESTRICTED_ROLES``, default ``["nir"]``) fora da faixa de intranet
+configurada.
 
 Referência: ats-web ``apps/accounts/middleware.py`` (padrão clonado; D4/D5). O
 papel ativo vive apenas na sessão — nunca persiste no banco.
@@ -85,7 +86,7 @@ def _is_intranet_ip(client_ip: str) -> bool:
 
 
 class IntranetGuardMiddleware:
-    """Bloqueia papel ativo restrito fora da intranet (slice 006, R1).
+    """Bloqueia acesso externo de quem só tem papéis restritos (slice 006).
 
     Regras em ordem:
     1. não autenticado → passa;
@@ -93,12 +94,15 @@ class IntranetGuardMiddleware:
     3. path isento (login/logout/switch-role + static/media) → passa (R3);
     4. ``INTRANET_IP_RANGE`` vazia (default de dev) → passa (sem restrição);
     5. IP de origem dentro da intranet → passa;
-    6. senão → HTTP 403 com mensagem clara (sem stack trace).
+    6. conjunto de papéis com algum papel fora dos restritos → passa;
+    7. senão → HTTP 403 com mensagem clara (sem stack trace).
 
-    Divergência deliberada vs ats-web (D5/ADR-0002, R4): a restrição segue o
-    **papel ativo** da sessão, nunca o conjunto de papéis do usuário. A troca
-    de papel via /switch-role/ (path isento) é a rota de fuga do usuário
-    multi-role bloqueado com papel ativo restrito.
+    O bloqueio externo vale somente para o conjunto de papéis inteiramente
+    restrito (ex.: usuário apenas ``nir``); qualquer papel fora do conjunto
+    restrito libera o acesso de qualquer rede, mesmo com papel ativo restrito
+    (revisão de 2026-09-13, ADR-0002). O gatilho continua sendo o papel ativo
+    restrito (regra 2) e a consulta ao conjunto só roda no ramo que bloquearia
+    hoje (D2).
     """
 
     def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
@@ -110,7 +114,8 @@ class IntranetGuardMiddleware:
             return self.get_response(request)
 
         active_role = request.session.get("active_role")
-        if active_role not in getattr(settings, "INTRANET_RESTRICTED_ROLES", []):
+        restricted_roles = getattr(settings, "INTRANET_RESTRICTED_ROLES", [])
+        if active_role not in restricted_roles:
             return self.get_response(request)
 
         if request.path in EXEMPT_PATHS or request.path.startswith(("/static/", "/media/")):
@@ -123,6 +128,11 @@ class IntranetGuardMiddleware:
 
         client_ip = _get_client_ip(request)
         if _is_intranet_ip(client_ip):
+            return self.get_response(request)
+
+        # Qualquer papel fora do conjunto restrito libera o acesso externo
+        # (D1): a restrição só alcança conjuntos exclusivamente restritos.
+        if user.roles.exclude(name__in=restricted_roles).exists():
             return self.get_response(request)
 
         logger.warning(

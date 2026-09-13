@@ -5,8 +5,9 @@ Cobre:
   externo bloqueado, demais papéis liberados (cenários 1 e 2 da spec);
 - R2: IP real via ``TRUSTED_PROXY_HEADER`` com fallback para ``REMOTE_ADDR``;
 - R3: paths isentos (login, logout, switch-role, static/media) nunca bloqueiam;
-- R4: multi-role bloqueado com ``nir`` ativo é liberado ao trocar para
-  ``manager`` via /switch-role/ (cenário 3 da spec, rota de fuga);
+- R4 revisado (2026-09-13): multi-role com papel ativo ``nir`` acessa
+  externamente sem trocar de papel (cenário 3 da spec); conjunto inteiramente
+  restrito permanece bloqueado (cenário 4 da spec);
 - R5: guard registrado após o ``ActiveRoleMiddleware`` no settings;
 - R6: sem ``INTRANET_IP_RANGE`` (default de dev) não há bloqueio.
 """
@@ -77,25 +78,45 @@ class TestIntranetGuard:
         assert response.status_code == 200
 
     @override_settings(**GUARD_SETTINGS)
-    def test_multi_role_blocked_on_nir_and_released_after_switch(self, client: Client) -> None:
-        """Cenário 3 da spec: bloqueio segue o papel ativo, sem bypass.
+    def test_multi_role_with_external_role_passes_with_active_nir(self, client: Client) -> None:
+        """Cenário 3 da spec: papel fora do conjunto restrito libera o acesso.
 
-        Multi-role ``nir``+``manager`` externo é bloqueado com ``nir`` ativo; a
-        troca para ``manager`` via /switch-role/ (path isento) reabilita o
-        acesso — a restrição nunca considera o conjunto de papéis.
+        Multi-role ``nir``+``manager`` externo com ``nir`` ativo prossegue sem
+        trocar de papel — o bloqueio externo só vale para conjuntos
+        exclusivamente restritos.
         """
         _create_user(username="regulador.gerente", role_names=["nir", "manager"])
         _login_with_active_role(client, username="regulador.gerente", role="nir")
 
-        blocked = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP)
-        assert blocked.status_code == 403
+        response = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP)
 
-        switch = client.post(reverse("switch_role"), {"role": "manager"}, REMOTE_ADDR=EXTERNAL_IP)
+        assert response.status_code == 200
+        assert client.session["active_role"] == "nir"
+
+    @override_settings(
+        INTRANET_IP_RANGE=INTRANET_CIDR,
+        INTRANET_RESTRICTED_ROLES=["nir", "scheduler"],
+    )
+    def test_all_roles_restricted_stays_blocked(self, client: Client) -> None:
+        """Cenário 4 da spec: conjunto todo restrito permanece bloqueado.
+
+        Com ``INTRANET_RESTRICTED_ROLES`` multi-valor, o usuário ``nir`` +
+        ``scheduler`` é bloqueado externamente com qualquer um dos dois papéis
+        ativo — inclusive depois da troca via /switch-role/ (path isento).
+        """
+        _create_user(username="regulador.agendador", role_names=["nir", "scheduler"])
+        _login_with_active_role(client, username="regulador.agendador", role="nir")
+
+        blocked_with_nir = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP)
+        assert blocked_with_nir.status_code == 403
+        assert BLOCK_MESSAGE_FRAGMENT in blocked_with_nir.content.decode()
+
+        switch = client.post(reverse("switch_role"), {"role": "scheduler"}, REMOTE_ADDR=EXTERNAL_IP)
         assert switch.status_code == 302
-        assert client.session["active_role"] == "manager"
+        assert client.session["active_role"] == "scheduler"
 
-        allowed = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP)
-        assert allowed.status_code == 200
+        blocked_with_scheduler = client.get(reverse("home"), REMOTE_ADDR=EXTERNAL_IP)
+        assert blocked_with_scheduler.status_code == 403
 
     @override_settings(**GUARD_SETTINGS)
     def test_exempt_paths_never_blocked(self, client: Client) -> None:

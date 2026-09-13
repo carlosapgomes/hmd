@@ -18,5 +18,5 @@
 
 ## Pós-gate (parent)
 
-- [ ] Atualizar `PROJECT_CONTEXT.md` com o estado do change
+- [x] Atualizar `PROJECT_CONTEXT.md` com o estado do change
 - [ ] (Owner-gated) tag `v0.1.4` + push + publicação GHCR + registro do digest; re-pin do deploy

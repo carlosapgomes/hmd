@@ -4,6 +4,19 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.6] — 2026-09-13
+
+**Painel gerencial e home por papel** (change `painel-gerencial-e-home`): o
+painel passa a ser exclusivo dos papéis `manager`/`admin` — link da navbar
+visível apenas para esses papéis E rota protegida por `role_required` (403
+para nir/doctor/scheduler; anônimo ao login). A home pós-login deixa de ser
+um placeholder universal e direciona cada papel à sua área de trabalho:
+`nir` → **Enviar relatório** (o caso de uso mais comum), `doctor` → fila
+médica, `scheduler` → fila de agendamento, `manager`/`admin` → painel (com
+fallback para sessões sem papel ativo válido). Menu do NIR reordenado:
+`[Enviar relatório] [Meus casos]`. Notificações seguem coerentes
+(manager/admin aterrisam no painel via home). Baseline 1118 testes.
+
 ## [0.1.5] — 2026-09-13
 
 **UX de segurança do guard de intranet** (change `intranet-blocked-logout`,

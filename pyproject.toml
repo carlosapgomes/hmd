@@ -1,6 +1,6 @@
 [project]
 name = "hmd"
-version = "0.1.5"
+version = "0.1.6"
 description = "Sistema de apoio à regulação de pacientes do serviço de hemodinâmica (HGRS)."
 requires-python = ">=3.13,<3.15"  # Presidio declara <3.15 (pesquisa §3) — trava o salto acidental
 dependencies = [

@@ -43,9 +43,10 @@
       <a class="nav-link px-2" href="{% url 'scheduler:queue' %}">Fila de agendamento</a>
     </nav>
     {% endif %}
-    {% if user.is_authenticated %}
-    <!-- Painel gerencial (dashboard-notifications-pwa, slice 003, R4): link
-         transversal, visível a TODO autenticado (sem gate de papel). -->
+    {% if active_role == 'manager' or active_role == 'admin' %}
+    <!-- Painel gerencial (painel-gerencial-e-home, slice 001, R2/D1): visível
+         só com papel ativo manager/admin — MESMA condição do gate da rota
+         dashboard:home (o painel deixou de ser transversal). -->
     <nav class="navbar-nav flex-row align-items-center gap-2 ms-3" aria-label="Painel">
       <a class="nav-link px-2" href="{% url 'dashboard:home' %}">Painel</a>
     </nav>

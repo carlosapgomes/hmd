@@ -6,8 +6,8 @@
 de `apps/accounts/decorators.py`, mesmo padrão das filas doctor/scheduler:
 papel ativo fora da lista → 403). O link da navbar usa a MESMA condição
 (`active_role == 'manager' or 'admin'`) — UI e rota não divergem. Anônimo
-segue para o login (`login_required` já cobre; `role_required` assume
-autenticado — composição igual às filas).
+segue para o login (o próprio `role_required` encaminha — as filas usam o
+decorador sozinho, sem composição com `login_required`).
 
 ## D2 — Home por papel: dispatcher de redirects, placeholder como fallback
 

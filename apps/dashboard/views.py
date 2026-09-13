@@ -1,18 +1,26 @@
 """Views do painel gerencial (change dashboard-notifications-pwa, slice 003, D3).
 
-View ``dashboard:home`` (login-required, **sem** role_required — o painel é
-transversal e zero-PHI; D3): resolve o período de ``GET ?period=`` contra o
-conjunto aceito (ausente/inválido → ``hoje``) e monta o contexto com as
-métricas do período + o tempo médio humanizado. Toda a lógica de negócio vive
-em ``apps/dashboard/metrics.py`` (serviços puros) — a view apenas orquestra.
+View ``dashboard:home`` (login-required + role_required manager/admin):
+resolve o período de ``GET ?period=`` contra o conjunto aceito
+(ausente/inválido → ``hoje``) e monta o contexto com as métricas do período +
+o tempo médio humanizado. Toda a lógica de negócio vive em
+``apps/dashboard/metrics.py`` (serviços puros) — a view apenas orquestra.
+
+Gate por papel ativo (painel-gerencial-e-home, slice 001, R1/D1): o painel
+DEIXOU de ser transversal — é exclusivo dos papéis ``manager``/``admin``, na
+ROTA (papel ativo fora → 403), não só no link da navbar; a composição
+``@login_required`` + ``@role_required(...)`` é a mesma das filas
+doctor/scheduler. Anônimo segue redirecionado ao login. A condição do link da
+navbar (``templates/base.html``) é a MESMA desta rota — UI e rota não divergem.
+O conteúdo continua zero-PHI.
 """
 
 from __future__ import annotations
 
-from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
 
+from apps.accounts.decorators import role_required
 from apps.cases.models import SchedulingUnit
 from apps.cases.units import unit_label
 
@@ -35,9 +43,12 @@ _PERIOD_LABELS: dict[str, str] = {
 }
 
 
-@login_required
+@role_required("manager", "admin")
 def home(request: HttpRequest) -> HttpResponse:
-    """Painel gerencial do período selecionado (R2).
+    """Painel gerencial do período selecionado (R2) — exclusivo manager/admin (R1).
+
+    Papel ativo fora de ``manager``/``admin`` → 403 (``role_required``);
+    anônimo → redirect ao login (``login_required``).
 
     GET ``?period=hoje|7d|30d|tudo`` — valor ausente/inválido resolve para
     ``hoje``. O contexto expõe as métricas puras e o tempo médio humanizado

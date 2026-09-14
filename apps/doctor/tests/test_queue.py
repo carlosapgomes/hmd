@@ -216,6 +216,26 @@ def test_nav_hidden_for_nir(
 
 
 @pytest.mark.django_db
+def test_queue_items_link_to_case_detail(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """Fila → detalhe: cada item da fila leva ao card do paciente (resumo,
+    recomendação e registro da opinião vivem no detalhe)."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    login_user(user_factory("medico-link", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:queue"))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    href = reverse("doctor:case_detail", args=[case.case_id])
+    assert f'href="{href}"' in body
+
+
+@pytest.mark.django_db
 def test_queue_awaiting_default(
     client: Client,
     nir_user: User,

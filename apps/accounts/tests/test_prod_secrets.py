@@ -752,8 +752,18 @@ class TestOpenrouterApiKeyFile:
 
         assert base.OPENROUTER_API_KEY == "chave-da-env"
 
-    def test_openrouter_api_key_sem_fonte_vazia(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Sem nenhuma fonte a setting fica vazia (fail-fast no USO, não no import)."""
+    def test_openrouter_api_key_sem_fonte_vazia(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Sem nenhuma fonte a setting fica vazia (fail-fast no USO, não no import).
+
+        Isola do ``.env`` do repo (``load_dotenv`` roda no import de base e um
+        ``.env`` local de dev com a chave tornaria o cenário "sem fonte"
+        irrealizável — descoberto na fase 2 do piloto, em dev)."""
+        # O base carrega ``BASE_DIR/.env`` por caminho ABSOLUTO a cada import —
+        # chdir não isola; neutralizar o load_dotenv no reload (fase 2: .env
+        # local de dev com a chave tornava o cenário "sem fonte" irrealizável).
+        monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: False)
         monkeypatch.delenv("OPENROUTER_API_KEY_FILE", raising=False)
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 

@@ -11,9 +11,17 @@ Uso:
 
 import os
 
-from config.settings.db import database_config
+# Imunidade REAL a env hostil (review F2 do slice phase2-workers-secrets): a
+# resolução do segredo acontece NO IMPORT de base — precisamos limpar as
+# chaves ANTES do `from .base import *`, senão um .env do host com
+# OPENROUTER_API_KEY_FILE inválido aborta a importação da suíte inteira
+# (fail-closed alto, mas quebra a coleção de testes).
+os.environ.pop("OPENROUTER_API_KEY_FILE", None)
+os.environ.pop("OPENROUTER_API_KEY", None)
 
-from .base import *  # noqa: F401,F403
+from config.settings.db import database_config  # noqa: E402
+
+from .base import *  # noqa: F401,F403,E402
 
 DEBUG = False
 SECRET_KEY = "test-secret-key-not-for-production"
@@ -56,6 +64,13 @@ APP_DISPLAY_NAME = "HMD — Hemodinâmica"
 # não-determinísticos. O caminho env→settings continua coberto pelos testes
 # diretos de _parse_unit_labels.
 UNIT_LABELS = {1: "Unidade 1", 2: "Unidade 2"}
+
+# Chave da OpenRouter (change phase2-workers-secrets, slice 001/D3): sem o pin,
+# um .env do host com OPENROUTER_API_KEY/OPENROUTER_API_KEY_FILE tornaria a
+# suíte não-determinística (precedente UNIT_LABELS). A chave real entra por
+# ARQUIVO só nos workers de produção; a suíte nunca chama a OpenRouter.
+OPENROUTER_API_KEY_FILE = ""
+OPENROUTER_API_KEY = ""
 
 # Processamento do intake roda inline na suíte (design D2/R4): as tasks são
 # chamadas direto, sem cluster real — determinístico independente de um .env

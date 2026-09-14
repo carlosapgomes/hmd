@@ -23,8 +23,11 @@
 # - Segredos (slice 005/R3): SEMPRE por ARQUIVO read-only (top-level `secrets`),
 #   um segredo por consumidor — web/workers montam `secret_key` +
 #   `app_db_password`; migrate monta `secret_key` + `migrator_db_password` +
-#   `superuser_password`. Nenhum valor de segredo entra em env/Git; os
-#   arquivos do host ficam fora do Git (`.gitignore`: `secrets/`).
+#   `superuser_password`. Fase 2 (slice 001 do phase2-workers-secrets):
+#   SOMENTE os workers que chamam a OpenRouter (worker-llm/worker-attachments)
+#   montam `openrouter_api_key` — o web usa a rede de egress apenas para
+#   AD/DNS/Kerberos e não recebe chave. Nenhum valor de segredo entra em
+#   env/Git; os arquivos do host ficam fora do Git (`.gitignore`: `secrets/`).
 # - Logs: json-file rotacionado por serviço (max-size 10m, max-file 3); o
 #   gunicorn do CMD do Dockerfile escreve em stdout/stderr.
 # - Imagem: pronta do GHCR (amd64, release v*) com o CMD de produção do
@@ -42,8 +45,9 @@ services:
     stop_grace_period: 40s
     # Limites de recurso — PLANEJADOS/INICIAIS da fase 1 (blueprint/Eon,
     # 2026-09-11): gunicorn 3×2 sem spaCy no processo web. A revisar por
-    # observação em produção; workers (fase 2) exigirão faixas PRÓPRIAS
-    # (worker-anonymization carrega spaCy lg: sugerir 1536m–2048m lá).
+    # observação em produção; os workers da fase 2 têm faixas PRÓPRIAS
+    # (`mem_limit` no bloco de workers abaixo — o worker-anonymization orça 2
+    # processos do engine spaCy lg).
     mem_limit: 512m
     cpus: "1.0"
     pids_limit: 200
@@ -200,8 +204,11 @@ services:
   # imagem pronta (sem `uv sync`/bind de código) e compartilha o volume de
   # media quando precisa ler/gravar arquivos.
   #
-  # As envs OPENROUTER_API_KEY/LLM*_MODEL/VISION_MODEL NÃO entram na fase 1 —
-  # ativam junto com este profile e a rede de egress na próxima mudança.
+  # Fase 2 (slice 001 do phase2-workers-secrets): a chave da OpenRouter entra
+  # SÓ nos workers que a chamam (worker-llm/worker-attachments) e SÓ por
+  # arquivo (secret `openrouter_api_key` montado em /run/secrets); os modelos
+  # e a base URL vêm do `.env` do host por passthrough. Nada ativa sozinho — a
+  # ativação segue sendo `INTAKE_ENABLED=true` no web + este profile.
 
   # Cluster pdf: extração de texto dos relatórios enviados (o web grava o PDF
   # no volume compartilhado e enfileira; este processo lê). Ao concluir, o
@@ -211,6 +218,9 @@ services:
     profiles: ["workers"]
     restart: unless-stopped
     stop_grace_period: 40s
+    # Limite de memória (fase 2, D3): extração de PDF (cluster com 2
+    # processos), env-tunável no host.
+    mem_limit: ${WORKER_PDF_MEM_LIMIT:-512m}
     command: python manage.py qcluster --settings=config.settings.prod
     volumes:
       - media_data:/app/media
@@ -245,6 +255,12 @@ services:
     profiles: ["workers"]
     restart: unless-stopped
     stop_grace_period: 40s
+    # Limite de memória (fase 2, D3): o cluster roda `workers: 2` e o engine
+    # spaCy/Presidio é singleton POR PROCESSO — o orçamento cobre DUAS cópias
+    # do modelo lg (~541 MB) + monitor/pusher; calibrar no host pelo pico de
+    # RSS do `anonymization_benchmark --corpus real` × 2. Se apertar: subir
+    # este env ou usar ANONYMIZATION_SPACY_MODEL=pt_core_news_md.
+    mem_limit: ${WORKER_ANONYMIZATION_MEM_LIMIT:-2560m}
     command: python manage.py qcluster --settings=config.settings.prod
     environment:
       DB_HOST: ${DB_HOST}
@@ -254,6 +270,10 @@ services:
       DB_PASSWORD_FILE: /run/secrets/app_db_password
       DJANGO_SECRET_KEY_FILE: /run/secrets/secret_key
       Q_CLUSTER_NAME: anonymization
+      # Modelo spaCy tunável (D2/D3): default lg na setting; o fallback md é a
+      # válvula de memória do host enxuto. Nada da OpenRouter aqui — este
+      # worker não sai para a rede.
+      ANONYMIZATION_SPACY_MODEL: ${ANONYMIZATION_SPACY_MODEL:-pt_core_news_lg}
       INTAKE_ENABLED: "false"
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
@@ -278,6 +298,9 @@ services:
     profiles: ["workers"]
     restart: unless-stopped
     stop_grace_period: 40s
+    # Limite de memória (fase 2, D3): pipeline LLM1/LLM2 (1 worker no
+    # cluster), env-tunável no host.
+    mem_limit: ${WORKER_LLM_MEM_LIMIT:-512m}
     command: python manage.py qcluster --settings=config.settings.prod
     volumes:
       - media_data:/app/media
@@ -289,6 +312,15 @@ services:
       DB_PASSWORD_FILE: /run/secrets/app_db_password
       DJANGO_SECRET_KEY_FILE: /run/secrets/secret_key
       Q_CLUSTER_NAME: llm
+      # Chave SÓ por ARQUIVO (D2): o secret vai montado read-only e a setting
+      # OPENROUTER_API_KEY_FILE o lê com PRECEDÊNCIA (ilegível/vazio → aborta).
+      OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
+      # Modelos consumidos por ESTE cluster, passados adiante do `.env` do
+      # host (${VAR:-}: vazio = fail-fast no uso, reportado pelo llm_check).
+      LLM1_MODEL: ${LLM1_MODEL:-}
+      LLM2_MODEL: ${LLM2_MODEL:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-120}
       INTAKE_ENABLED: "false"
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
@@ -297,6 +329,7 @@ services:
     secrets:
       - secret_key
       - app_db_password
+      - openrouter_api_key
     logging:
       driver: json-file
       options:
@@ -314,6 +347,9 @@ services:
     profiles: ["workers"]
     restart: unless-stopped
     stop_grace_period: 40s
+    # Limite de memória (fase 2, D3): OCR externo por página (cluster com 2
+    # processos), env-tunável no host.
+    mem_limit: ${WORKER_ATTACHMENTS_MEM_LIMIT:-512m}
     command: python manage.py qcluster --settings=config.settings.prod
     volumes:
       - media_data:/app/media
@@ -325,6 +361,14 @@ services:
       DB_PASSWORD_FILE: /run/secrets/app_db_password
       DJANGO_SECRET_KEY_FILE: /run/secrets/secret_key
       Q_CLUSTER_NAME: attachments
+      # Chave SÓ por ARQUIVO (D2), como no worker-llm.
+      OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
+      # Consumidores deste cluster: LLM1 no verification + VISION_MODEL no
+      # OCR (LLM2 não é usado aqui).
+      LLM1_MODEL: ${LLM1_MODEL:-}
+      VISION_MODEL: ${VISION_MODEL:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-120}
       INTAKE_ENABLED: "false"
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
@@ -333,6 +377,7 @@ services:
     secrets:
       - secret_key
       - app_db_password
+      - openrouter_api_key
     logging:
       driver: json-file
       options:
@@ -350,6 +395,10 @@ secrets:
     file: ${APP_DB_PASSWORD_FILE:-./secrets/app_db_password.txt}
   migrator_db_password:
     file: ${MIGRATOR_DB_PASSWORD_FILE:-./secrets/migrator_db_password.txt}
+  # Chave da OpenRouter da fase 2 — montada APENAS em worker-llm/
+  # worker-attachments (um arquivo, uma linha, legível pelo uid/gid 10001).
+  openrouter_api_key:
+    file: ${OPENROUTER_API_KEY_FILE:-./secrets/openrouter_api_key.txt}
   secret_key:
     file: ${SECRET_KEY_FILE:-./secrets/secret_key.txt}
   superuser_password:

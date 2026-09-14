@@ -21,6 +21,11 @@ Cobre:
   cria o usuário dedicado não-root 10001 com ``/app/media`` próprio e declara
   ``USER`` depois do ``collectstatic``, e a dívida do adiamento do compose
   foi quitada.
+- Fase 2 (change phase2-workers-secrets, slice 001): ``OPENROUTER_API_KEY``
+  por ARQUIVO nas settings (primitiva ``_secrets._read_secret`` re-exportada
+  por ``db.py``), pin da suíte contra env hostil e guards do compose — chave/
+  modelos SÓ nos workers que chamam a OpenRouter, ``ANONYMIZATION_SPACY_MODEL``
+  tunável e ``mem_limit`` nos 4 workers.
 
 O import de ``config.settings.prod`` segue o padrão de ``test_health.py``:
 ``importlib`` com envs dummy e ``sys.modules.pop`` a cada teste — nenhum
@@ -56,6 +61,7 @@ PROD_DATABASE_URL = "postgres://build:build@localhost/build"
 SECRET_FILE_NAMES = (
     "app_db_password",
     "migrator_db_password",
+    "openrouter_api_key",
     "secret_key",
     "superuser_password",
 )
@@ -270,12 +276,15 @@ def _compose_env(dummies: dict[str, str]) -> dict[str, str]:
         **os.environ,
         "APP_DB_PASSWORD_FILE": dummies["app_db_password"],
         "MIGRATOR_DB_PASSWORD_FILE": dummies["migrator_db_password"],
+        "OPENROUTER_API_KEY_FILE": dummies["openrouter_api_key"],
         "SECRET_KEY_FILE": dummies["secret_key"],
         "SUPERUSER_PASSWORD_FILE": dummies["superuser_password"],
     }
 
 
-def _run_compose(config_env: dict[str, str], *, quiet: bool) -> subprocess.CompletedProcess[str]:
+def _run_compose(
+    config_env: dict[str, str], *, quiet: bool, compose_file: str = COMPOSE_FILE
+) -> subprocess.CompletedProcess[str]:
     command = [
         "docker",
         "compose",
@@ -284,7 +293,7 @@ def _run_compose(config_env: dict[str, str], *, quiet: bool) -> subprocess.Compl
         "--profile",
         "workers",
         "-f",
-        COMPOSE_FILE,
+        compose_file,
         "--env-file",
         ".env.example",
         "config",
@@ -325,10 +334,12 @@ def test_compose_config_uses_secret_files(tmp_path: Path) -> None:
     assert f"file: {dummies['app_db_password']}" in rendered
     assert f"file: {dummies['migrator_db_password']}" in rendered
     assert f"file: {dummies['superuser_password']}" in rendered
+    assert f"file: {dummies['openrouter_api_key']}" in rendered
     assert "/run/secrets/secret_key" in rendered
     assert "/run/secrets/app_db_password" in rendered
     assert "/run/secrets/migrator_db_password" in rendered
     assert "/run/secrets/superuser_password" in rendered
+    assert "/run/secrets/openrouter_api_key" in rendered
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker compose indisponível")
@@ -568,15 +579,15 @@ DEV_COMPOSE_FILE = "docker-compose.dev.yml"
 DEV_IMAGE = "hmd-dev:app"
 
 
-def _compose_service_blocks(relative_path: str) -> dict[str, list[str]]:
-    """Serviços de um compose (nome → linhas do bloco), por indentação.
+def _service_blocks_from_text(text: str) -> dict[str, list[str]]:
+    """Blocos de um compose (chave de 2 espaços → linhas do bloco).
 
     Parsing leve no mesmo estilo dos demais checks estáticos (a suíte não usa
-    parser de YAML): cada chave de serviço mora em exatamente 2 espaços.
+    parser de YAML): cada chave de topo/serviço mora em exatamente 2 espaços.
     """
     blocks: dict[str, list[str]] = {}
     current: str | None = None
-    for line in _deploy_artifact(relative_path).splitlines():
+    for line in text.splitlines():
         match = re.match(r"^  (\S+):\s*$", line)
         if match is not None:
             current = match.group(1)
@@ -584,6 +595,11 @@ def _compose_service_blocks(relative_path: str) -> dict[str, list[str]]:
         elif current is not None:
             blocks[current].append(line)
     return blocks
+
+
+def _compose_service_blocks(relative_path: str) -> dict[str, list[str]]:
+    """Serviços de um compose do repo (nome → linhas do bloco), por indentação."""
+    return _service_blocks_from_text(_deploy_artifact(relative_path))
 
 
 def test_dev_compose_runs_as_root_deliberately() -> None:
@@ -645,3 +661,311 @@ def test_dockerfile_nonroot_regression() -> None:
     assert "read_only: true" in compose
     assert "no-new-privileges:true" in compose
     assert "cap_drop:" in compose and "- ALL" in compose
+
+
+# ── Slice 001 (phase2-workers-secrets): chave OpenRouter por arquivo ────────
+
+# Envs da OpenRouter (chave/modelos) que NÃO podem vazar para serviços que não
+# chamam a API; ``ANONYMIZATION_SPACY_MODEL`` é legítima e fica de fora.
+_OPENROUTER_ENV_RE = re.compile(r"\b(OPENROUTER[A-Z0-9_]*|LLM[12]_MODEL|VISION_MODEL):")
+WORKER_MEM_LIMIT_ENV = {
+    "worker-pdf": "WORKER_PDF_MEM_LIMIT",
+    "worker-anonymization": "WORKER_ANONYMIZATION_MEM_LIMIT",
+    "worker-llm": "WORKER_LLM_MEM_LIMIT",
+    "worker-attachments": "WORKER_ATTACHMENTS_MEM_LIMIT",
+}
+
+
+def _reload_module(name: str) -> ModuleType:
+    """Importa um módulo de settings de novo (resolução da env no import)."""
+    sys.modules.pop(name, None)
+    return importlib.import_module(name)
+
+
+def _import_base() -> ModuleType:
+    """Importa ``config.settings.base`` de novo (OPENROUTER_API_KEY por env)."""
+    return _reload_module("config.settings.base")
+
+
+def _render_service_blocks(compose_env: dict[str, str]) -> dict[str, list[str]]:
+    """Resolve o compose (migrate+workers) e devolve os blocos renderizados."""
+    result = _run_compose(compose_env, quiet=False)
+    assert result.returncode == 0, result.stderr
+    return _service_blocks_from_text(result.stdout)
+
+
+def _env_value(lines: list[str], key: str) -> str | None:
+    """Valor de uma env do bloco (``key: valor``), sem as aspas do render."""
+    prefix = f"{key}:"
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped.removeprefix(prefix).strip().strip('"')
+    return None
+
+
+def _openrouter_env_names(lines: list[str]) -> list[str]:
+    """Envs da OpenRouter (chave/modelos) declaradas num bloco de serviço."""
+    return [
+        match.group(1) for line in lines if (match := _OPENROUTER_ENV_RE.search(line)) is not None
+    ]
+
+
+def test_read_secret_reexported_from_settings_db() -> None:
+    """R1: ``db.py`` SEGUE re-exportando a primitiva.
+
+    ``config/settings/prod.py`` e ``seed_admin`` importam ``_read_secret`` de
+    ``config.settings.db`` — a extração para ``_secrets.py`` não pode quebrar
+    esse caminho (consumidores intocados).
+    """
+    from config.settings import _secrets
+    from config.settings.db import _read_secret
+
+    assert _read_secret is _secrets._read_secret
+    # Semântica da primitiva preservada (distinção None × "" p/ os callers).
+    assert _read_secret({}, "X_FILE") is None
+    assert _read_secret({"X_FILE": ""}, "X_FILE") is None
+
+
+class TestOpenrouterApiKeyFile:
+    """R2: ``OPENROUTER_API_KEY`` por arquivo (espelha a SECRET_KEY)."""
+
+    def test_openrouter_api_key_file_precedence(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Com arquivo E env presentes, o ARQUIVO vence."""
+        secret_file = tmp_path / "openrouter_api_key"
+        secret_file.write_text("chave-do-arquivo\n")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "chave-da-env")
+        monkeypatch.setenv("OPENROUTER_API_KEY_FILE", str(secret_file))
+
+        base = _import_base()
+
+        assert base.OPENROUTER_API_KEY == "chave-do-arquivo"
+
+    def test_openrouter_api_key_env_sem_arquivo(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Sem arquivo (dev), a env plana ``OPENROUTER_API_KEY`` continua valendo."""
+        monkeypatch.delenv("OPENROUTER_API_KEY_FILE", raising=False)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "chave-da-env")
+
+        base = _import_base()
+
+        assert base.OPENROUTER_API_KEY == "chave-da-env"
+
+    def test_openrouter_api_key_sem_fonte_vazia(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Sem nenhuma fonte a setting fica vazia (fail-fast no USO, não no import)."""
+        monkeypatch.delenv("OPENROUTER_API_KEY_FILE", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+        base = _import_base()
+
+        assert base.OPENROUTER_API_KEY == ""
+
+    def test_openrouter_api_key_arquivo_vazio_fail_closed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Arquivo apontado mas vazio → ``ImproperlyConfigured`` (não cai na env)."""
+        secret_file = tmp_path / "openrouter_api_key_vazio"
+        secret_file.write_text("")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "chave-da-env")
+        monkeypatch.setenv("OPENROUTER_API_KEY_FILE", str(secret_file))
+
+        with pytest.raises(ImproperlyConfigured) as excinfo:
+            _import_base()
+
+        message = str(excinfo.value)
+        # O erro nomeia a SETTING que falhou (wrapper ``secret_from_env``) e o
+        # arquivo apontado — o operador sabe onde olhar.
+        assert message.startswith("OPENROUTER_API_KEY:")
+        assert "OPENROUTER_API_KEY_FILE" in message
+
+    def test_openrouter_api_key_arquivo_ilegivel_fail_closed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Arquivo apontado mas inexistente → ``ImproperlyConfigured``."""
+        monkeypatch.setenv("OPENROUTER_API_KEY", "chave-da-env")
+        monkeypatch.setenv("OPENROUTER_API_KEY_FILE", str(tmp_path / "nao-existe"))
+
+        with pytest.raises(ImproperlyConfigured):
+            _import_base()
+
+    def test_test_settings_pin_openrouter_key(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """R2 (imunidade a env hostil, precedente ``UNIT_LABELS``): com chave e
+        arquivo REAIS no ambiente, os settings de teste seguem vazios."""
+        secret_file = tmp_path / "openrouter_api_key"
+        secret_file.write_text("chave-real-do-host\n")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "chave-do-host")
+        monkeypatch.setenv("OPENROUTER_API_KEY_FILE", str(secret_file))
+
+        test_module = _reload_module("config.settings.test")
+
+        assert test_module.OPENROUTER_API_KEY == ""
+        assert test_module.OPENROUTER_API_KEY_FILE == ""
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker compose indisponível")
+def test_compose_worker_llm_gets_key_by_file_and_its_models(tmp_path: Path) -> None:
+    """R3: só o ``worker-llm`` (que chama a OpenRouter) monta o secret e recebe
+    a chave por arquivo + os modelos que consome (LLM1/LLM2), com passthrough
+    do ``.env`` do host."""
+    env = _compose_env(_create_secret_dummies(tmp_path))
+    env.update(
+        {
+            "LLM1_MODEL": "modelo-llm1-teste",
+            "LLM2_MODEL": "modelo-llm2-teste",
+            "OPENROUTER_BASE_URL": "https://openrouter.test/api/v1",
+            "LLM_TIMEOUT_SECONDS": "99",
+        }
+    )
+
+    llm = _render_service_blocks(env)["worker-llm"]
+
+    assert _env_value(llm, "OPENROUTER_API_KEY_FILE") == "/run/secrets/openrouter_api_key"
+    assert "/run/secrets/openrouter_api_key" in "\n".join(llm)  # secret montado
+    assert _env_value(llm, "OPENROUTER_API_KEY") is None  # nunca a chave plana
+    assert _env_value(llm, "LLM1_MODEL") == "modelo-llm1-teste"
+    assert _env_value(llm, "LLM2_MODEL") == "modelo-llm2-teste"
+    assert _env_value(llm, "VISION_MODEL") is None
+    assert _env_value(llm, "OPENROUTER_BASE_URL") == "https://openrouter.test/api/v1"
+    assert _env_value(llm, "LLM_TIMEOUT_SECONDS") == "99"
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker compose indisponível")
+def test_compose_worker_attachments_gets_key_by_file_llm1_and_vision(tmp_path: Path) -> None:
+    """R3: o ``worker-attachments`` (OCR externo) monta o secret e recebe a
+    chave por arquivo + LLM1 (verification) + VISION_MODEL, com passthrough."""
+    env = _compose_env(_create_secret_dummies(tmp_path))
+    env.update(
+        {
+            "LLM1_MODEL": "modelo-llm1-teste",
+            "VISION_MODEL": "modelo-vision-teste",
+            "OPENROUTER_BASE_URL": "https://openrouter.test/api/v1",
+            "LLM_TIMEOUT_SECONDS": "99",
+        }
+    )
+
+    attachments = _render_service_blocks(env)["worker-attachments"]
+
+    assert _env_value(attachments, "OPENROUTER_API_KEY_FILE") == "/run/secrets/openrouter_api_key"
+    assert "/run/secrets/openrouter_api_key" in "\n".join(attachments)
+    assert _env_value(attachments, "OPENROUTER_API_KEY") is None
+    assert _env_value(attachments, "LLM1_MODEL") == "modelo-llm1-teste"
+    assert _env_value(attachments, "VISION_MODEL") == "modelo-vision-teste"
+    assert _env_value(attachments, "LLM2_MODEL") is None
+    assert _env_value(attachments, "OPENROUTER_BASE_URL") == "https://openrouter.test/api/v1"
+    assert _env_value(attachments, "LLM_TIMEOUT_SECONDS") == "99"
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker compose indisponível")
+def test_compose_services_without_openrouter_env(tmp_path: Path) -> None:
+    """Guard anti-vazamento (R3): quem NÃO chama a OpenRouter não recebe nem a
+    chave nem os modelos — inclusive o ``web``, que está na rede de egress só
+    para AD/DNS/Kerberos."""
+    blocks = _render_service_blocks(_compose_env(_create_secret_dummies(tmp_path)))
+
+    for name in ("web", "worker-pdf", "worker-anonymization", "migrate"):
+        block = blocks[name]
+        # Não-vacuidade: o bloco foi extraído de verdade (contém a env de banco).
+        assert "DB_PASSWORD_FILE" in "\n".join(block), name
+        assert _openrouter_env_names(block) == [], name
+        assert "/run/secrets/openrouter_api_key" not in "\n".join(block), name
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker compose indisponível")
+def test_openrouter_leak_guard_is_not_vacuous(tmp_path: Path) -> None:
+    """Não-vacuidade do guard anti-vazamento (mutação TEMPORÁRIA do fonte):
+    um ``OPENROUTER_API_KEY`` injetado no bloco do ``web`` é DETECTADO pela
+    MESMA checagem do guard (render + extração de bloco + regex) — o guard não
+    passa por bloco vazio ou mal-extraído."""
+    source = _deploy_artifact(COMPOSE_FILE)
+    injected = source.replace(
+        "      INTAKE_ENABLED: ${INTAKE_ENABLED:-false}\n",
+        "      INTAKE_ENABLED: ${INTAKE_ENABLED:-false}\n      OPENROUTER_API_KEY: vazada\n",
+    )
+    assert injected != source
+
+    mutated = tmp_path / COMPOSE_FILE
+    mutated.write_text(injected, encoding="utf-8")
+
+    result = _run_compose(
+        _compose_env(_create_secret_dummies(tmp_path)),
+        quiet=False,
+        compose_file=str(mutated),
+    )
+
+    assert result.returncode == 0, result.stderr
+    blocks = _service_blocks_from_text(result.stdout)
+
+    assert _openrouter_env_names(blocks["web"]) == ["OPENROUTER_API_KEY"]
+    # O bloco legítimo do worker de anonimização segue limpo (o guard discrimina).
+    assert _openrouter_env_names(blocks["worker-anonymization"]) == []
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker compose indisponível")
+def test_compose_worker_anonymization_spacy_model_tunable(tmp_path: Path) -> None:
+    """R3: o modelo spaCy do worker de anonimização é tunável por env (default
+    lg no FONTE) e o serviço não recebe NADA da OpenRouter."""
+    env = _compose_env(_create_secret_dummies(tmp_path))
+    env["ANONYMIZATION_SPACY_MODEL"] = "pt_core_news_md"
+
+    anonymization = _render_service_blocks(env)["worker-anonymization"]
+
+    assert _env_value(anonymization, "ANONYMIZATION_SPACY_MODEL") == "pt_core_news_md"
+    assert _openrouter_env_names(anonymization) == []
+    assert "${ANONYMIZATION_SPACY_MODEL:-pt_core_news_lg}" in _deploy_artifact(COMPOSE_FILE)
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker compose indisponível")
+def test_compose_workers_have_mem_limits(tmp_path: Path) -> None:
+    """D3: os 4 workers declaram ``mem_limit`` próprio (o render normaliza
+    para BYTES; defaults conferidos no FONTE), orçado por processos do
+    cluster — anonymization cobre 2 engines spaCy lg."""
+    env = _compose_env(_create_secret_dummies(tmp_path))
+    for env_key in WORKER_MEM_LIMIT_ENV.values():
+        env.pop(env_key, None)
+
+    blocks = _render_service_blocks(env)
+
+    assert _env_value(blocks["worker-pdf"], "mem_limit") == str(512 * 1024 * 1024)
+    assert _env_value(blocks["worker-anonymization"], "mem_limit") == str(2560 * 1024 * 1024)
+    assert _env_value(blocks["worker-llm"], "mem_limit") == str(512 * 1024 * 1024)
+    assert _env_value(blocks["worker-attachments"], "mem_limit") == str(512 * 1024 * 1024)
+
+    source = _deploy_artifact(COMPOSE_FILE)
+    for env_key, default in (
+        ("WORKER_PDF_MEM_LIMIT", "512m"),
+        ("WORKER_ANONYMIZATION_MEM_LIMIT", "2560m"),
+        ("WORKER_LLM_MEM_LIMIT", "512m"),
+        ("WORKER_ATTACHMENTS_MEM_LIMIT", "512m"),
+    ):
+        assert f"${{{env_key}:-{default}}}" in source
+    # `deploy:` seria ignorado pelo compose fora de swarm (v1) — o estilo do
+    # repo é `mem_limit:` (como no web).
+    assert not re.search(r"^\s+deploy:", source, re.M)
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker compose indisponível")
+def test_compose_workers_mem_limits_are_env_tunable(tmp_path: Path) -> None:
+    """D3: os limites são passáveis do host (calibração por benchmark)."""
+    env = _compose_env(_create_secret_dummies(tmp_path))
+    env.update({"WORKER_PDF_MEM_LIMIT": "384m", "WORKER_ANONYMIZATION_MEM_LIMIT": "3072m"})
+
+    blocks = _render_service_blocks(env)
+
+    assert _env_value(blocks["worker-pdf"], "mem_limit") == str(384 * 1024 * 1024)
+    assert _env_value(blocks["worker-anonymization"], "mem_limit") == str(3072 * 1024 * 1024)
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker compose indisponível")
+def test_compose_web_intake_enabled_stays_fail_closed(tmp_path: Path) -> None:
+    """D4: configurar os workers NÃO ativa o intake — o web segue com
+    ``INTAKE_ENABLED: ${INTAKE_ENABLED:-false}`` (chave mestra do host)."""
+    env = _compose_env(_create_secret_dummies(tmp_path))
+    env.pop("INTAKE_ENABLED", None)
+
+    web = _render_service_blocks(env)["web"]
+
+    assert _env_value(web, "INTAKE_ENABLED") == "false"
+    assert "INTAKE_ENABLED: ${INTAKE_ENABLED:-false}" in _deploy_artifact(COMPOSE_FILE)

@@ -168,4 +168,15 @@ APP_DB_PASSWORD_FILE=… docker compose --profile migrate --profile workers \
 
 ## Deviations / learnings
 
-- (preenchido na execução)
+- Executado 2026-09-14. RED 10 failed → GREEN 38 (`test_prod_secrets.py`);
+  suíte 1175→1177; ruff/format/mypy limpos; compose resolve all-profiles com
+  e sem `OPENROUTER_API_KEY_FILE`.
+- Incidental aprovado pelo supervisor: `design.md` fence (ruff 0.16 formata
+  fences Python em Markdown — 1 linha).
+- Review (OK with notes) fechada pelo parent: F1 guard estático do `file:` do
+  secret novo + passthrough `${VAR:-}` dos modelos no fonte; F2 imunidade
+  real (pop das envs ANTES do `from .base import *` em test.py — o pin
+  pós-import era inerte); F3 comentário stale v0.1.6→v0.1.7 no .env.example.
+- Limitação registrada (F2 parcial): o pop cobre a SUÍTE; um `.env` real do
+  host com `OPENROUTER_API_KEY_FILE` inválido continua fail-closed no dev
+  (comportamento desejado).

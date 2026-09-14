@@ -14,33 +14,22 @@ A mesma função resolve o banco de teste quando chamada com ``prefix="TEST_"``:
 Divergência deliberada vs ats-web: configuração insuficiente (sem URL e sem
 senha disponível) levanta ``ImproperlyConfigured`` — o HMD falha fechado em
 vez de retornar ``{}`` silenciosamente.
+
+``_read_secret`` (primitiva de segredo por arquivo) mora em
+``config.settings._secrets`` e é RE-EXPORTADA daqui: ``config/settings/prod.py``
+e ``seed_admin`` seguem importando ``from config.settings.db import
+_read_secret``.
 """
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
 
-
-def _read_secret(env: Mapping[str, str], secret_file_key: str) -> str | None:
-    """Lê o segredo do arquivo indicado por ``{nome}_FILE``, se apontado.
-
-    O arquivo tem precedência sobre a variável de ambiente correspondente.
-    Arquivo inexistente/ilegível ou vazio levanta ``ImproperlyConfigured``
-    (falha fechada — nunca cair silenciosamente para outro valor).
-    """
-    secret_file = env.get(secret_file_key)
-    if secret_file:
-        try:
-            secret = Path(secret_file).read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise ImproperlyConfigured(f"Não foi possível ler o segredo em {secret_file}.") from exc
-        if not secret:
-            raise ImproperlyConfigured(f"O arquivo indicado por {secret_file_key} está vazio.")
-        return secret
-    return None
+# Re-export EXPLÍCITO (mypy strict, no_implicit_reexport): ``prod.py`` e
+# ``seed_admin`` importam ``_read_secret`` DESTE módulo.
+from config.settings._secrets import _read_secret as _read_secret
 
 
 def database_config(

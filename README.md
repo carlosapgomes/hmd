@@ -132,7 +132,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml build
 # 2. Ambiente (.env na raiz — modelo em .env.example):
 #    - DJANGO_SECRET_KEY (obrigatório; gere um segredo real)
 #    - credenciais do Postgres (ver .env.example)
-#    - OPENROUTER_API_KEY + LLM_MODEL_LLM1/LLM2 (pipeline; sem elas os
+#    - OPENROUTER_API_KEY + LLM1_MODEL/LLM2_MODEL (pipeline; sem elas os
 #      casos ficam retidos fail-closed)
 #    - VISION_MODEL (OCR externo de anexos; sem ela anexos de imagem
 #      falham nomeados — extração local de PDFs segue)
@@ -157,9 +157,11 @@ especialidades aos médicos, e conferir o sino de notificações/painel/manual
 na navbar. Os 13 tipos de procedimento vêm do catálogo; especialidades médicas
 vêm da migration `0003` (idempotente).
 
-Limitações conhecidas deste release: workers exigem `VISION_MODEL` para OCR
-externo; benchmark com corpus real e revisão dos prompts são aceite
-pré-produção (`CHANGELOG.md` → pendências).
+Limitações conhecidas deste release: o OCR externo exige `VISION_MODEL` e o
+pipeline exige `LLM1_MODEL`/`LLM2_MODEL` + a chave da OpenRouter (a seção
+"Ativação da fase 2", abaixo, cobre a configuração de produção); benchmark
+com corpus real e revisão dos prompts são aceite pré-produção (`CHANGELOG.md`
+→ pendências).
 
 ## Piloto (fase 1)
 
@@ -194,7 +196,8 @@ docker compose -f docker-compose.prod.yml --profile migrate run --rm migrate
 docker compose -f docker-compose.prod.yml up -d web
 
 # 3. Workers do django-q2 (pdf/anonymization/llm/attachments) ficam
-#    DESLIGADOS — só sobem com `--profile workers`, na próxima mudança.
+#    DESLIGADOS por default — só sobem com `--profile workers` (a ativação da
+#    fase 2 tem checklist próprio abaixo).
 ```
 
 **Atualização para a v0.1.4 — volume de mídia pré-existente.** A imagem passa a
@@ -303,3 +306,45 @@ casos criados e os arquivos rejeitados.
 `hospital_ingress_hmd` (declarado em `networks.hospital_ingress_hmd.aliases`
 do serviço `web` — não use o nome gerado pelo compose, que muda junto com o
 projeto) e o healthcheck do próprio compose em `/readyz/`.
+
+### Ativação da fase 2 (checklist)
+
+A configuração dos workers (change `phase2-workers-secrets`) **não ativa nada
+sozinha**: com `INTAKE_ENABLED=false` (default) e o profile `workers` fora do
+ar, o web segue recusando envios. A ativação é explícita, nesta ordem:
+
+1. **Imagem nova primeiro.** Faça o pin de `HMD_IMAGE_TAG` na release nova
+   (tag+digest) e rode os passos 1–2 da fase 1 (migrate + web) com ela. O
+   suporte a `OPENROUTER_API_KEY_FILE` viaja **na imagem**: worker subindo com
+   imagem antiga falha fechado com erro de `auth` ao chamar a OpenRouter.
+2. **Segredo no arquivo.** Crie `./secrets/openrouter_api_key.txt` (uma linha,
+   a chave) legível pelo uid/gid **10001** — modo `0644` (default de `echo`) ou
+   `chown 10001:10001`; fora do Git. O arquivo vence qualquer env plana e falha
+   fechado se ilegível/vazio.
+3. **Modelos no `.env` do host.** `LLM1_MODEL`/`LLM2_MODEL` (pipeline) e
+   `VISION_MODEL` (OCR de anexos). Confira os modelos do pipeline com o
+   `llm_check` executado **dentro do worker**:
+
+   ```bash
+   docker compose -f docker-compose.prod.yml --profile workers run --rm \
+     worker-llm python manage.py llm_check
+   ```
+
+   `VISION_MODEL` **não tem comando de diagnóstico** — confira o valor no
+   `.env`. Modelo vazio não quebra o boot: o uso falha fechado e o caso fica
+   retido com motivo.
+4. **Sobe os workers:**
+   `docker compose -f docker-compose.prod.yml up -d --profile workers`
+   (pdf/anonymization/llm/attachments). Os limites de memória são tunáveis por
+   `WORKER_*_MEM_LIMIT`; o `worker-anonymization` cobre **2 processos** (engine
+   spaCy singleton POR PROCESSO): calibre pelo pico de RSS do
+   `anonymization_benchmark --corpus real` × 2 e, se apertar, reduza o modelo
+   (`ANONYMIZATION_SPACY_MODEL=pt_core_news_md`).
+5. **Liga o intake:** `INTAKE_ENABLED=true` no `.env` do host e
+   `docker compose -f docker-compose.prod.yml up -d web` (a chave mestra
+   continua sendo só do `web`; os workers seguem com `INTAKE_ENABLED=false`).
+
+**Rollback da fase 2:** `INTAKE_ENABLED=false` + `up -d web` (o web volta a
+recusar envios) e `docker compose -f docker-compose.prod.yml --profile workers
+stop` (ou `down` do profile) — os casos já criados permanecem íntegros, com
+seus estados, e nada processa em background.

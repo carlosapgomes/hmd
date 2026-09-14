@@ -11,6 +11,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from config.settings._secrets import secret_from_env
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # Carrega variáveis locais de .env sem sobrescrever o ambiente do processo.
@@ -332,11 +334,20 @@ ANONYMIZATION_BENCHMARK_MAX_RSS_MB = (
 
 # Cliente LLM OpenRouter (change llm-pipeline-per-type, slice 001, design
 # D1): SDK OpenAI apontando para a OpenRouter — base URL default
-# ``https://openrouter.ai/api/v1``. ``OPENROUTER_API_KEY`` e os modelos por
-# estágio (``LLM1_MODEL``/``LLM2_MODEL``) têm default vazio — fail-fast no uso:
-# ``llm_check`` reporta a ausência; o pipeline (slice 004+) exige as envs.
-# ``LLM_TIMEOUT_SECONDS`` é o timeout por chamada (default 120).
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+# ``https://openrouter.ai/api/v1``. ``OPENROUTER_API_KEY`` tem default vazio —
+# fail-fast no USO: ``llm_check`` reporta a ausência; o pipeline (slice 004+)
+# exige as envs. A chave entra por ARQUIVO (change phase2-workers-secrets,
+# slice 001/D2): ``OPENROUTER_API_KEY_FILE`` (Docker secret dos workers com
+# egress) tem PRECEDÊNCIA sobre a env plana e falha fechado se ilegível/vazio;
+# sem arquivo (dev) a env plana vale e, sem nenhuma fonte, a setting fica "".
+# Os modelos por estágio (``LLM1_MODEL``/``LLM2_MODEL``) e
+# ``LLM_TIMEOUT_SECONDS`` são passados adiante do host (default vazio/120).
+OPENROUTER_API_KEY = secret_from_env(
+    os.environ,
+    secret_file_key="OPENROUTER_API_KEY_FILE",
+    env_key="OPENROUTER_API_KEY",
+    setting_name="OPENROUTER_API_KEY",
+)
 OPENROUTER_BASE_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 LLM1_MODEL = os.environ.get("LLM1_MODEL", "")
 LLM2_MODEL = os.environ.get("LLM2_MODEL", "")

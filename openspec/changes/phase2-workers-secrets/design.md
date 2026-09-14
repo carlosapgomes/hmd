@@ -52,6 +52,7 @@ def _read_secret(env, secret_file_key) -> str | None:
     """Arquivo tem precedência; ilegível/vazio → ImproperlyConfigured;
     sem fonte → None (distinção preservada p/ callers com default)."""
 
+
 def secret_from_env(env, *, secret_file_key, env_key, setting_name) -> str:
     """Wrapper p/ settings planas: sem NENHUMA fonte → "" (fail-fast no uso)."""
 ```

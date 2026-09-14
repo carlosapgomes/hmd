@@ -4,6 +4,33 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.9] — 2026-09-14
+
+**Fix do incidente da fase 2 (mapa envenenado pelo NER)** (change
+`anonymization-deterministic-first`, decisão do dono): o caso real
+3ca56d86 falhara em `llm1_token_leak` de forma sistêmica — o NER do spaCy
+classificava vocabulário clínico como PESSOA/LOCAL ("Afebril", "DORSO",
+"PAS:100\nPAD:80", "FC:77\nFR:18", "Mot", "Prof", "Reg", "Macro"…) e esses
+termos colidem como substring com qualquer artefato de LLM. Agora a fase 2
+opera **determinística-first**: `ANONYMIZATION_USE_NER` default **False**
+(engine Presidio e modelo spaCy nem são construídos — worker mais leve);
+o mapa carrega apenas os identificadores do paciente extraídos dos rótulos
+(nome/CNS/CPF/nascimento/nº de ocorrência, em TODAS as ocorrências do
+texto), e o guard `llm1_token_leak` fica **confiável** (o incidente está
+pinnado E2E e teria passado). **Identidade do paciente tokenizada ponta a
+ponta agora também em motivos de negatura e anexos sem rótulo**: o
+`seed_map` do caso faz varredura determinística dos valores conhecidos
+(boundary-aware, sem inferência). Terceiros citados no texto seguem em
+claro — postura da referência ats-web, decisão de política registrada e
+reversível (`ANONYMIZATION_USE_NER=true` + benchmark para calibrar; env
+passada nos 3 workers que anonimizam). Relatório de anonimização truthful
+(`ner_enabled`; omite modelo/versões quando o NER não rodou). Nenhum PHI
+vazou no incidente. Baseline 1188 testes.
+
+Também inclui: diagnóstico privacy-safe no guard (loga contagem/tipos/
+comprimentos, nunca valores — d6845cc) e passthrough OpenRouter no compose
+dev (fase 2 reproduzível localmente).
+
 ## [0.1.8] — 2026-09-14
 
 **Workers prontos para a fase 2** (change `phase2-workers-secrets`): a chave

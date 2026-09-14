@@ -248,7 +248,7 @@ chown 10001:10001 secrets/*.txt
 
 **Configuração (`.env` no host, fora do Git).** Nomes novos documentados em
 `.env.example`: `HMD_IMAGE_TAG` (**obrigatório pinado tag+digest**:
-`v0.1.8@sha256:<digest>`), as envs de arquivo de segredo acima, os nomes de
+`v0.1.8@sha256:cea2456b9d4d687c24aa8537e7690dbaa9c62b49f12a83a46d80a42e9e02751b`), as envs de arquivo de segredo acima, os nomes de
 banco `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER` (+ `MIGRATOR_DB_USER`, role DDL
 usada só pelo passo migrate) — o compose não usa mais URL de banco —,
 `CSRF_TRUSTED_ORIGINS`, `PROXY_SSL_HEADER` e `DJANGO_SUPERUSER_USERNAME` (env

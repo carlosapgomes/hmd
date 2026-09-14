@@ -14,7 +14,7 @@ O sistema SHALL permitir ao NIR anexar arquivos (JPEG, PNG ou PDF) no momento da
 
 #### Scenario: Anexo fora dos limites é rejeitado sem efeito
 
-- **GIVEN** um upload com um anexo de tipo não aceito ou acima do limite de tamanho/contagem
+- **GIVEN** um upload com exatamente 1 PDF de relatório e um anexo de tipo não aceito ou acima do limite de tamanho/contagem
 - **WHEN** a criação é submetida
 - **THEN** a validação falha com erro nomeado e nada é gravado (nem caso, nem documentos)
 

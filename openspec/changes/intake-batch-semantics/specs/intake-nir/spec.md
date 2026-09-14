@@ -1,4 +1,4 @@
-# intake-nir Specification (delta)
+# intake-nir Specification (delta) — rev. 2
 
 ## REMOVED Requirements
 
@@ -14,7 +14,7 @@ lote: um PDF por caso, tipo único".
 
 ### Requirement: Envio em lote: um PDF por caso, tipo único
 
-O NIR (papel ativo `nir`) SHALL enviar de 1 a N arquivos PDF num único envio, onde cada PDF é o relatório de um paciente e vira um caso independente em `NEW` com exatamente 1 documento e o único tipo de procedimento declarado para o lote (validado contra o catálogo). O lote SHALL respeitar limites configurados de contagem de arquivos, tamanho por arquivo e tamanho total, rejeitados com erro claro antes de qualquer persistência. Falhas por arquivo (não-PDF, tamanho) SHALL rejeitar apenas aquele arquivo: os válidos viram casos e o resultado lista os casos criados e os erros por arquivo. Anexos seguem a regra da spec `attachments` (somente com exatamente 1 PDF; no lote multi-PDF com anexos enviados, os casos são criados sem anexos e o erro informa a restrição). O envio com exatamente 1 PDF e anexo inválido SHALL abortar todo o envio (nada criado).
+O NIR (papel ativo `nir`) SHALL enviar de 1 a N arquivos PDF num único envio, onde cada PDF é o relatório de um paciente e vira um caso independente. Cada caso SHALL nascer atomicamente (caso em `NEW`, exatamente 1 documento, declaração do único tipo do lote e eventos juntos ou nada). O tipo de procedimento SHALL ser único por envio/lote (validado contra o catálogo; múltiplos tipos não são permitidos). O lote SHALL respeitar limites configurados de contagem de arquivos, tamanho por arquivo e tamanho total, rejeitados com erro claro antes de qualquer persistência. Falhas por arquivo (não-PDF, tamanho) SHALL rejeitar apenas aquele arquivo: os válidos viram casos e o resultado lista os casos criados e os erros por arquivo; exceção de persistência num caso do lote SHALL resultar em erro por arquivo, preservando os casos já criados. Anexos seguem a regra da spec `attachments` (somente com exatamente 1 PDF; no lote multi-PDF com anexos enviados, os casos são criados sem anexos e o erro informa a restrição). O envio com exatamente 1 PDF e anexo inválido SHALL abortar todo o envio (nada criado).
 
 #### Scenario: Lote de dois PDFs cria dois casos independentes
 
@@ -30,7 +30,7 @@ O NIR (papel ativo `nir`) SHALL enviar de 1 a N arquivos PDF num único envio, o
 
 #### Scenario: Tipo único inválido rejeita o lote inteiro
 
-- **GIVEN** um envio com tipo fora do catálogo (ou múltiplos tipos declarados)
+- **GIVEN** um envio com tipo fora do catálogo (ou mais de um tipo)
 - **WHEN** o envio é submetido
 - **THEN** nenhum caso é criado e o erro informa a restrição de tipo único
 
@@ -51,3 +51,33 @@ O NIR (papel ativo `nir`) SHALL enviar de 1 a N arquivos PDF num único envio, o
 - **GIVEN** um envio com 2 PDFs válidos e anexos
 - **WHEN** o envio é submetido
 - **THEN** os 2 casos são criados sem anexos e o resultado informa que anexos só são permitidos com exatamente 1 relatório
+
+#### Scenario: Cada caso do lote é atomicamente criado
+
+- **GIVEN** um lote em que o 2º arquivo falha na persistência após o 1º caso já criado
+- **WHEN** o envio é processado
+- **THEN** o 1º caso permanece criado e íntegro e o resultado lista o erro do 2º arquivo
+
+## MODIFIED Requirements
+
+### Requirement: Revisão NIR do gate
+
+O NIR SHALL conseguir revisar casos retidos pelo gate na tela de detalhe, com duas ações: **liberar** (bypass — o caso avança para `ANONYMIZING` com evento de bypass registrado) e **reenviar documento** (substitui o PDF do caso por exatamente 1 novo arquivo — erro nomeado caso contrário, sem efeito — e reprocessa do início da extração, zerando a flag e o texto anterior). Ambas as ações ficam disponíveis apenas enquanto o caso estiver retido.
+
+#### Scenario: Liberar avança com evento de bypass
+
+- **GIVEN** um caso retido em `PDF_EXTRACTING` com `manual_review_required=True`
+- **WHEN** o NIR libera o caso
+- **THEN** o caso avança para `ANONYMIZING` e a trilha registra o evento de bypass com o NIR como ator
+
+#### Scenario: Reenviar documentos reprocessa do zero
+
+- **GIVEN** um caso retido com documento inválido
+- **WHEN** o NIR reenvia exatamente 1 PDF válido
+- **THEN** o documento antigo é substituído, a flag de revisão é zerada, o texto anterior é descartado e o caso é reprocessado
+
+#### Scenario: Reenvio do gate exige exatamente um PDF
+
+- **GIVEN** um caso retido
+- **WHEN** o NIR reenvia 0 ou mais de 1 arquivo
+- **THEN** nada é alterado e o erro nomeado informa que o reenvio aceita exatamente 1 PDF

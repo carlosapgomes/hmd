@@ -1,11 +1,12 @@
-# Slice 003 — Reenvio corrigido: exatamente 1 PDF + anexos + tipo único
+# Slice 003 — UI do reenvio corrigido e do gate (hints/templates)
 
 ## Objetivo
 
-O reenvio corrigido de caso recusado alinha à nova semântica (molde ats-web):
-**exatamente 1 PDF** (erro nomeado caso contrário), tipo único redeclarável
-(pode corrigir o tipo do caso) e anexos permitidos (`upload_phase="corrected"`),
-em transação atômica do caso corrigido.
+A SUPERFÍCIE do reenvio corrigido e do reenvio do gate alinha à semântica
+nova (serviço já pronto no slice 001 — rev. 2: semântica migrou p/ o slice
+001 por P0-2): templates/hints coerentes com "exatamente 1 PDF + tipo
+único + anexos", campo de documentos do gate sem `multiple`, e testes de
+view/template.
 
 ## Contexto necessário (ler antes de editar)
 
@@ -26,13 +27,15 @@ em transação atômica do caso corrigido.
 
 ## Requisitos verificáveis
 
-- **R1** — `create_corrected_resubmission` valida **exatamente 1 arquivo**
-  (0 ou >1 → erro nomeado, nada alterado) + PDF válido + `procedure_type`
-  único do catálogo; transação atômica preservada (documento novo + tipos
-  corrigidos + eventos + status, como hoje).
-- **R2** — Anexos no reenvio: permitidos, validados pela regra do
-  `pdf_count=1` (contagem/tamanho/tipo), gravados com
-  `upload_phase="corrected"`; anexo inválido aborta o reenvio inteiro.
+- **R1** — Views do reenvio corrigido (`corrected_resubmission.html` +
+  fluxo da view) renderizam hints novos: "exatamente 1 PDF do relatório
+  corrigido", tipo único (herdado do form do slice 002), anexos permitidos;
+  erros nomeados do serviço são exibidos.
+- **R2** — UI do REENVIO DO GATE (`templates/intake/case_detail.html`,
+  seção retida): input sem `multiple`, hint "exatamente 1 PDF" substitui o
+  texto de ordem/na composição (slice 002 cuida do caso geral; aqui é o
+  bloco específico do gate se não tiver sido coberto lá — confira e não
+  duplique).
 - **R3** — UI do reenvio coerente: form herda tipo único; hint do campo de
   documentos diz "exatamente 1 PDF do relatório corrigido"; campo de anexos
   segue normal (reenvio é sempre 1 paciente).

@@ -1,83 +1,98 @@
-# Design — intake-batch-semantics
+# Design — intake-batch-semantics (rev. 2, pós-review do plano)
+
+Reviewer: BLOCK → rework (2 P0, 3 P1, P2s incorporados).
 
 ## D1 — `submit_report_batch`: molde ats-web, ordem de validação
 
 Assinatura: `submit_report_batch(*, user, role, files, procedure_type,
 attachments=()) -> tuple[list[Case], list[str]]`. Ordem (igual ao ats-web):
 
-1. Gate `INTAKE_ENABLED` (fail-closed existente, no topo);
-2. Tipo único do lote: fora do catálogo → `([], [erro])` (nada criado);
+1. Gate `INTAKE_ENABLED` (fail-closed existente, no topo — entra no
+   inventário do `test_intake_lock.py`);
+2. Tipo único do lote: ausente/fora do catálogo → `([], [erro])`;
 3. Limites de lote: vazio / `INTAKE_MAX_FILES_PER_BATCH` /
    `INTAKE_MAX_UPLOAD_BYTES_PER_BATCH` → `([], [erro])`;
 4. Anexos (se houver): `validate_attachments(attachments,
-   pdf_count=len(files))` — `pdf_count != 1` registra o erro de anexos mas
-   **não bloqueia** (os casos do lote serão criados SEM anexos, erro
-   reportado no fim); com 1 PDF, anexo inválido **aborta tudo** (nada é
-   criado — transação do caso único);
+   pdf_count=len(files))` — `pdf_count != 1` registra erro NÃO-bloqueante
+   (casos serão criados sem anexos); com 1 PDF, anexo inválido ABORTA tudo;
 5. Loop por arquivo: `validate_single_document` (PDF + tamanho por arquivo)
-   → inválido: erro por arquivo (com o nome), continua; válido: cria o caso;
+   → inválido: erro com o nome do arquivo, continua; válido: cria o caso
+   (transação própria);
 6. Fim: se exatamente 1 caso criado + anexos válidos → anexos gravados na
-   transação do caso (`upload_phase="initial"`); erros de anexo pendentes
-   são anexados à lista.
+   transação do caso (`upload_phase="initial"`).
 
-Cada caso nasce em `NEW` com **1 documento**, o **tipo do lote**, evento de
-declaração e o enfileiramento existente da extração — nada do cluster/FSM
-muda (são N casos independentes entrando no fluxo que já existe).
+**Falha de persistência no meio do lote (contrato explícito, review P2)**:
+cada caso é uma transação independente; exceção inesperada na criação do
+caso k (storage/DB) é capturada no loop e virará erro por arquivo
+(nome + "erro interno"), preservando os casos já criados — mesmo contrato
+de parcialidade das validações, sem 500 silencioso.
 
-## D2 — `create_case_with_documents` vira primitiva de caso único
+**Atomicidade por caso (review P2)**: cada caso nasce atômico (caso `NEW` +
+1 documento + declaração do tipo + eventos + anexos quando couberem, juntos
+ou nada) — cláusula explícita no requisito ADDED.
 
-Refatoração interna: cria **um** caso a partir de **um** arquivo, `procedure_type`
-único e anexos opcionais, na transação atômica existente (usada pelo lote e
-pelo reenvio). Parâmetro `files`/`procedure_types` (listas) são substituídos
-por `file`/`procedure_type` — callers controlados (batch, resubmission,
-views, testes). Nada de N-documentos por caso em nenhuma entrada do sistema.
+## D2 — Primitiva de caso único vale para TODAS as entradas (P0-1)
 
-## D3 — Settings de lote (e o limite real do Cloudflare)
+"Nada de N-documentos por caso em **nenhuma** entrada" agora inclui as TRÊS
+entradas existentes: (a) envio inicial (`submit_report_batch`), (b) reenvio
+corrigido (`create_corrected_resubmission`, D5) e (c) **reenvio de
+documentos do gate** (`resubmit_case_documents`, esquecido na rev. 1) —
+este passa a exigir **exatamente 1 PDF** (erro nomeado caso contrário,
+nada alterado), substituindo os documentos do caso retido e reprocessando
+como hoje; seu limite de contagem migra de `INTAKE_MAX_DOCUMENTS`
+(obsoleto) para a validação de arquivo único (tamanho por arquivo). UI do
+gate (`case_detail` do NIR) perde o `multiple`/hint de ordem. Spec
+"Revisão NIR do gate" MODIFIED neste change.
 
-- `INTAKE_MAX_FILES_PER_BATCH` (default **30**, molde ats-web);
-- `INTAKE_MAX_UPLOAD_BYTES_PER_FILE` (default **20 MB** — igual ao
-  `INTAKE_MAX_FILE_MB` atual, que passa a derivar/migra);
-- `INTAKE_MAX_UPLOAD_BYTES_PER_BATCH` (default **100 MB**): ats-web usa
-  600 MB, mas o piloto entra por túnel Cloudflare que limita o corpo da
-  requisição (~100 MB no plano free) — 600 MB morreria na borda com erro
-  opaco. 100 MB default, env-tunable; documentar no README/.env.example.
-- `INTAKE_MAX_DOCUMENTS` (10, "documentos por caso") fica **óbsoleto** e é
-  removido (substituído pelo limite de lote); grep de usos antes de remover.
+## D3 — Settings literais + docs (P2)
 
-## D4 — Form/UI: tipo único, hints numéricos, anexos desabilitáveis
+- `INTAKE_MAX_FILES_PER_BATCH = int(os.environ.get(..., "30"))`;
+- `INTAKE_MAX_UPLOAD_BYTES_PER_FILE = int(os.environ.get(..., str(20*1024*1024)))`
+  — literal em bytes (molde ats-web); helper MB local para mensagens;
+  `INTAKE_MAX_FILE_MB` é REMOVIDO (usos em services migrados);
+- `INTAKE_MAX_UPLOAD_BYTES_PER_BATCH` default **100 MB** — recomendação
+  operacional do piloto (túnel Cloudflare limita request body ~100 MB no
+  plano free; NÃO é constante externa verificável no repo): env-tunable,
+  documentada em README/.env.example/compose com `${VAR:-default}` (nunca
+  string vazia — pitfall já documentado do compose);
+- `INTAKE_MAX_DOCUMENTS` removido com grep de usos (services/forms/env).
+- README ganha a seção dos limites (slice 002 — promessa da rev. 1 agora
+  com dono).
 
-- `procedure_type = ChoiceField` (choices do catálogo, widget radio) —
-  substitui o `MultipleChoiceField` de checkboxes; help "um tipo por envio,
-  aplicado a todos os relatórios do lote".
-- `documents`: help com os números dinâmicos dos settings ("cada PDF é um
-  relatório de um paciente e vira um caso; até N arquivos, X MB cada, Y MB
-  no total").
-- `attachments`: help acrescenta "somente quando o envio tiver exatamente 1
-  relatório".
-- JS vanilla (`static/js/intake-upload.js`, registrado no template): no
-  `change` do input de documentos, `input.files.length > 1` → desabilita o
-  input de anexos (`disabled` + classe visual) e exibe hint; 1 arquivo →
-  reabilita. Server-side continua sendo a fonte da verdade (D1.4).
-- Template de resultado: seção com "N casos criados" + lista de erros por
-  arquivo (nome + motivo) — molde do resultado `(cases, errors)`.
+## D4 — Form/UI
 
-## D5 — Reenvio corrigido: exatamente 1 PDF + anexos + tipo único
+Como rev. 1 (radio único, hints numéricos dinâmicos, JS
+`static/js/intake-upload.js` desabilitando anexos com >1 arquivo, resultado
+do lote) + (P1-3/P2): `templates/accounts/manual.html` atualizado (frase
+dos "1 a N PDFs / ao menos um tipo" → semântica nova); strings do h1/links
+da home preservadas (`test_home_dispatch.py` depende delas).
 
-`create_corrected_resubmission` (molde ats-web): valida **exatamente 1 PDF**
-(erro nomeado caso contrário), tipo único redeclarável (pode corrigir o tipo
-do caso), anexos permitidos (`upload_phase="corrected"`), transação atômica
-do caso corrigido. `CorrectedResubmissionForm` herda o form novo (tipo único
-já vem por herança; o campo de documentos já valida 1 arquivo no serviço).
+**Contrato redirect×resultado (P2)**: POST com exatamente 1 caso criado e
+ZERO erros → **redirect ao detalhe do caso** (comportamento atual,
+`test_my_cases.py:285-301` preservado); lote (N>1) e/ou erros → página de
+resultado ("N casos criados" + erros por arquivo + link Meus casos).
+
+## D5 — Reenvio corrigido (movido p/ o slice 001 — P0-2)
+
+A mudança de assinatura da primitiva atingiria `create_corrected_resubmission`
+no primeiro slice de qualquer forma (kwargs de lista) — a semântica nova do
+reenvio (**exatamente 1 PDF** + tipo único redeclarável + anexos
+`upload_phase="corrected"`, molde ats-web) entra no SLICE 001 junto com as
+reescritas de `test_corrected_resubmission.py`; o slice 003 encolhe para
+UI/hints do reenvio. Spec `case-closure` MODIFIED (reenvio: 1 PDF, tipo
+único).
 
 ## D6 — Especificação e testes
 
-- `intake-nir` REMOVED ("Criação de caso com upload multi-PDF e declaração
-  de tipos") + ADDED ("Envio em lote: um PDF por caso, tipo único") — os
-  cenários antigos ("2 PDFs → 1 caso com 2 documentos e 2 tipos") descrevem
-  comportamento que deixa de existir.
-- `attachments` MODIFIED ("Upload e listagem de anexos pelo NIR"): texto +
-  cenário 1 reescritos (anexos com exatamente 1 PDF; no lote multi-PDF os
-  casos são criados sem anexos e o erro informa a restrição).
-- Testes: serviço (lote cria N casos; parcial; anexos×pdf_count; limites;
-  tipo único inválido), form/UI (radio único, hints, JS/attrs), view
-  (resultado do lote), reenvio (1 PDF obrigatório + anexos).
+- `intake-nir` REMOVED+ADDED (rev. 1) + cláusula de atomicidade por caso +
+  cenário "casos nascem em NEW" com nota `INTAKE_RUN_TASKS_INLINE=False`
+  nos testes (inline pinado no test.py) + MODIFIED "Revisão NIR do gate"
+  (reenvio de documentos = exatamente 1 PDF).
+- `attachments` MODIFIED com cenários pinados em "exatamente 1 PDF".
+- `case-closure` MODIFIED "Reenvio corrigido cria novo caso vinculado".
+- Gate de regulação: hoje roda UMA vez por caso sobre o texto concatenado
+  dos documentos — com 1 doc/caso vira genuinamente por-relatório (relatório
+  malformado não é mais mascarado pela concatenação); sem mudança de código,
+  nota no slice 001.
+- Inventário fail-closed: `submit_report_batch` entra no
+  `test_intake_lock.py`; POSTs do reenvio do gate continuam cobertos.

@@ -41,14 +41,25 @@ selecionado, e resultado do envio listando casos criados + erros por arquivo.
   (atributo `disabled` + classe visual) e mostra hint "anexos só com
   exatamente 1 relatório"; com 1 arquivo reabilita/oculta o hint. Sem
   submissão involuntária; teclado acessível (label/aria).
-- **R4** — Resultado do lote: após POST bem-sucedido com N casos e/ou
-  erros, a página exibe "N casos criados" (link p/ Meus casos) e a lista de
-  erros por arquivo (nome + motivo) quando houver.
+- **R4** — Contrato redirect×resultado (design D4): POST com exatamente
+  1 caso criado e ZERO erros → **redirect ao detalhe do caso** (comportamento
+  atual preservado — `test_my_cases.py:285-301`); lote (N>1) e/ou erros →
+  página de resultado com "N casos criados" (link Meus casos) + erros por
+  arquivo (nome + motivo).
 - **R5** — `.env.example` + compose repassam os 3 settings novos com
-  defaults; sem referências a `INTAKE_MAX_DOCUMENTS` restantes (grep).
+  `${VAR:-default}` (nunca string vazia) e a nota operacional do limite
+  total (~100 MB recomendado no túnel Cloudflare — env-tunable);
+  `INTAKE_MAX_FILE_MB`/`INTAKE_MAX_DOCUMENTS` sem referências (grep);
+  README ganha seção curta dos limites do envio.
 - **R6** — Testes de form/view: radio único renderiza; hints contêm os
   números; attrs do input de anexos; POST de lote renderiza resultado com
-  contagem e erros; testes antigos de form migrados para o campo único.
+  contagem e erros; POST único sem erros segue redirecionando ao detalhe;
+  testes antigos de form migrados para o campo único.
+- **R7** — Manual atualizado (P1-3): a frase "de 1 a N PDFs … ao menos um
+  tipo" (`templates/accounts/manual.html:87-90`) vira a semântica nova
+  (1 PDF = 1 caso/paciente; tipo único por envio; anexos só com exatamente
+  1 relatório); strings do h1/links da home PRESERVADAS
+  (`test_home_dispatch.py` depende delas).
 
 ## Matriz requisito → arquivo → teste/check
 
@@ -68,9 +79,11 @@ expected_files:
   - apps/intake/forms.py
   - apps/intake/views.py
   - templates/intake/home.html
+  - templates/accounts/manual.html   # P1-3: frase da semântica de envio
   - static/js/intake-upload.js
   - .env.example
   - docker-compose.prod.yml
+  - README.md                        # seção dos limites (design D3)
   - apps/intake/tests/          # form/view tests migrados/novos
 
 allowed_incidental_files:

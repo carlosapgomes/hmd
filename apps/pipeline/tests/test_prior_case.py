@@ -14,11 +14,13 @@ núcleo real é coberto pela suíte da anonimização); e o wrapper
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
+from django.test import override_settings
 from django.utils import timezone
 
 from apps.accounts.models import User
@@ -35,14 +37,20 @@ class _FakeAnonymizeResult:
 
 
 class _FakeAnonymizer:
-    """Stub de ``anonymize_text``: registra as chamadas e devolve um token."""
+    """Stub de ``anonymize_text``: registra as chamadas/seed e devolve um token."""
 
     def __init__(self, replacement: str) -> None:
         self.replacement = replacement
         self.calls: list[str] = []
+        self.seeds: list[Mapping[str, Mapping[str, str]] | None] = []
 
-    def __call__(self, text: str) -> _FakeAnonymizeResult:
+    def __call__(
+        self,
+        text: str,
+        seed_map: Mapping[str, Mapping[str, str]] | None = None,
+    ) -> _FakeAnonymizeResult:
         self.calls.append(text)
+        self.seeds.append(seed_map)
         return _FakeAnonymizeResult(anonymized_text=self.replacement)
 
 
@@ -145,6 +153,53 @@ def test_match_by_number_7d(owner_user: User, fake_anonymizer: _FakeAnonymizer) 
     assert summary.reason_anonymized == "<ANONIMIZADO>"
     assert fake_anonymizer.calls and "INR elevado" in fake_anonymizer.calls[0]
     assert "José" not in summary.reason_anonymized
+
+
+# ── R2/D3: motivo anonimizado no espaço de tokens do caso (seed) ───────────
+
+
+@pytest.mark.django_db
+def test_reason_reuses_case_tokens_without_label(owner_user: User) -> None:
+    """R2/D3: motivo do prévio citando o nome SEM rótulo SESAB → token do CASO.
+
+    O motivo é texto livre do médico (sem "Paciente:", logo sem extração
+    determinística por rótulo); a semeadura com o ``pseudonym_map`` do caso
+    anterior faz a varredura dos valores conhecidos localizar o nome e o
+    operador reutilizar o token do caso (``<PESSOA_2>``) — com o NER desligado
+    (default da fase 2).
+    """
+    current = _make_case(
+        owner_user,
+        created_at=_decided_at(0.0),
+        agency_record_number="33345",
+    )
+    decided_at = _decided_at(3.0, reference=current.created_at)
+    prior = _make_case(
+        owner_user,
+        created_at=decided_at,
+        agency_record_number="33345",
+        patient_name="Maria da Silva",
+    )
+    prior.pseudonym_map = {
+        "<PESSOA_1>": {"value": "JOSE CARLOS DE OLIVEIRA", "entity_type": "PESSOA"},
+        "<PESSOA_2>": {"value": "Maria da Silva", "entity_type": "PESSOA"},
+    }
+    prior.save(update_fields=["pseudonym_map"])
+    _add_procedure(
+        prior,
+        "art_perif",
+        disposition=DoctorDisposition.DENIED,
+        reason="Maria da Silva apresenta INR elevado e plaquetas baixas.",
+        decided_at=decided_at,
+    )
+    _add_procedure(current, "art_perif")
+
+    with override_settings(ANONYMIZATION_USE_NER=False):
+        summary = lookup_prior_case_context(current, "art_perif")
+
+    assert summary is not None
+    assert summary.reason_anonymized == "<PESSOA_2> apresenta INR elevado e plaquetas baixas."
+    assert "Maria da Silva" not in summary.reason_anonymized
 
 
 @pytest.mark.django_db

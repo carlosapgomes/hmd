@@ -274,6 +274,10 @@ services:
       # válvula de memória do host enxuto. Nada da OpenRouter aqui — este
       # worker não sai para a rede.
       ANONYMIZATION_SPACY_MODEL: ${ANONYMIZATION_SPACY_MODEL:-pt_core_news_lg}
+      # Camada NER/Presidio OPT-IN (default false): com o NER desligado o engine
+      # nem é construído — a alavanca de reativação precisa do passthrough para
+      # alcançar o container.
+      ANONYMIZATION_USE_NER: ${ANONYMIZATION_USE_NER:-false}
       INTAKE_ENABLED: "false"
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
@@ -312,6 +316,9 @@ services:
       DB_PASSWORD_FILE: /run/secrets/app_db_password
       DJANGO_SECRET_KEY_FILE: /run/secrets/secret_key
       Q_CLUSTER_NAME: llm
+      # Reativação consistente do NER (o llm anonimiza o motivo do caso anterior
+      # via prior_case): sem isto, ligar a env deixaria posturas mistas.
+      ANONYMIZATION_USE_NER: ${ANONYMIZATION_USE_NER:-false}
       # Chave SÓ por ARQUIVO (D2): o secret vai montado read-only e a setting
       # OPENROUTER_API_KEY_FILE o lê com PRECEDÊNCIA (ilegível/vazio → aborta).
       OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
@@ -369,6 +376,9 @@ services:
       VISION_MODEL: ${VISION_MODEL:-}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-120}
+      # Camada NER/Presidio OPT-IN (default false): este worker também anonimiza
+      # anexos — a alavanca de reativação precisa do passthrough aqui.
+      ANONYMIZATION_USE_NER: ${ANONYMIZATION_USE_NER:-false}
       INTAKE_ENABLED: "false"
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"

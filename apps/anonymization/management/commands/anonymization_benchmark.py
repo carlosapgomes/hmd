@@ -22,6 +22,14 @@ pico de RSS não exceder o limite opcional
 ``ANONYMIZATION_BENCHMARK_MAX_RSS_MB`` (default desligado). Corpus sintético
 versionado roda na suíte (``apps/anonymization/tests/fixtures/benchmark_corpus.jsonl``);
 a aceitação com corpus REAL é operacional, pré-produção (fora do CI — README).
+
+Semântica do setting ``ANONYMIZATION_USE_NER`` (change
+anonymization-deterministic-first, D2): LIGADO, calibra a camada COMPLETA
+(determinística + NER) — é o modo do corpus padrão, que exige o NER no recall
+de CRM (categoria EXCLUSIVA do recognizer brasileiro); DESLIGADO (default da
+fase 2), mede o baseline determinístico-only (a perda de recall de terceiros
+antes de reativar). O comando NÃO força o setting: o modo vem do ambiente
+(env/``override_settings`` na suíte) e a reativação segue o README.
 """
 
 from __future__ import annotations
@@ -131,7 +139,9 @@ class Command(BaseCommand):
         "Benchmark de anonimização sobre um corpus JSONL: recall por tipo, "
         "contagens, latência p50/p95, varredura zero-PII, RSS e documentos "
         "bloqueados. Exit != 0 abaixo do recall mínimo, com vestígio de PII, "
-        "documento bloqueado ou RSS acima do limite."
+        "documento bloqueado ou RSS acima do limite. Mede a camada ativa: com "
+        "ANONYMIZATION_USE_NER ligado calibra o NER (corpus padrão exige NER "
+        "para o CRM); desligado (default) mede o baseline determinístico-only."
     )
 
     def add_arguments(self, parser: CommandParser) -> None:

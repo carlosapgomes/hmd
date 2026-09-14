@@ -480,7 +480,7 @@ def test_payload_rejects_real_values_from_prior_case_map(
     monkeypatch.setattr(
         prior_case_module,
         "anonymize_text",
-        lambda text: _IdentityResult(anonymized_text=text),
+        lambda text, seed_map=None: _IdentityResult(anonymized_text=text),
     )
     current = _make_llm_summarizing_case(
         owner=owner_user,

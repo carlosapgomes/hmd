@@ -450,8 +450,10 @@ class TestBuildCaseDetailContext:
         ``prior_case_id`` — D3.
         """
 
-        def _fake_anonymize(text: str) -> SimpleNamespace:
-            del text
+        def _fake_anonymize(
+            text: str, seed_map: dict[str, dict[str, str]] | None = None
+        ) -> SimpleNamespace:
+            del text, seed_map
             return SimpleNamespace(anonymized_text="<ANONIMIZADO>")
 
         monkeypatch.setattr("apps.pipeline.prior_case.anonymize_text", _fake_anonymize)

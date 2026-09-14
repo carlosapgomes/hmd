@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Literal
@@ -138,11 +139,20 @@ def _fallback_rows(case: Case, rows: list[CaseProcedure], window_days: int) -> l
     return matched
 
 
-def _anonymized_reason(reason: str) -> str:
-    """Motivo anonimizado pelo núcleo do change 05; vazio → 'não informado'."""
+def _anonymized_reason(
+    reason: str,
+    seed_map: Mapping[str, Mapping[str, str]] | None = None,
+) -> str:
+    """Motivo anonimizado pelo núcleo do change 05; vazio → 'não informado'.
+
+    ``seed_map`` é o ``pseudonym_map`` do caso ANTERIOR (D3): valores conhecidos
+    do caso (o paciente) reutilizam o token do caso mesmo citados sem rótulo
+    SESAB no motivo — a semeadura fecha o residual de nome de paciente em texto
+    livre do médico.
+    """
     if not reason or not reason.strip():
         return "não informado"
-    return anonymize_text(reason.strip()).anonymized_text
+    return anonymize_text(reason.strip(), seed_map=seed_map).anonymized_text
 
 
 def _build_summary(
@@ -162,7 +172,7 @@ def _build_summary(
         procedure_type=row.procedure_type,
         decided_at=row.doctor_decided_at.isoformat(),
         decision=str(row.doctor_disposition),
-        reason_anonymized=_anonymized_reason(row.doctor_reason),
+        reason_anonymized=_anonymized_reason(row.doctor_reason, seed_map=case.pseudonym_map),
         prior_denial_count=denial_count,
         origin=origin,
     )

@@ -16,8 +16,9 @@ adicionais (`<CRM_1>`, `<LOCAL_1>`, `<ORGANIZACAO_1>`, `<TELEFONE_1>`,
 `<EMAIL_1>`) quando habilitado; com ele habilitado, a combinação das camadas
 preserva a vitória determinística em empates de offset. O texto anonimizado
 e o mapa (token → valor real + tipo) SHALL ser persistidos no caso, junto de
-relatório com contagens por tipo de entidade, modelo e versões do engine —
-e a indicação de a camada NER estava habilitada.
+relatório com contagens por tipo de entidade e a indicação de a camada NER
+estava habilitada — com modelo e versões do engine QUANDO a camada NER
+rodou (com NER desligado, o relatório omite esses campos por truthful).
 
 #### Scenario: PII substituída por tokens estáveis
 
@@ -35,7 +36,9 @@ e a indicação de a camada NER estava habilitada.
 
 - **GIVEN** uma anonimização concluída
 - **WHEN** o caso é inspecionado
-- **THEN** existe relatório com contagens por tipo de entidade, modelo NLP e versões, e evento na trilha com resumo
+- **THEN** existe relatório com contagens por tipo de entidade, indicação da
+  camada NER e — quando ela rodou — modelo NLP e versões; e evento na trilha
+  com resumo
 
 ## ADDED Requirements
 

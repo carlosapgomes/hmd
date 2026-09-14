@@ -102,6 +102,10 @@ services:
       DJANGO_SECRET_KEY: dev-secret-key-not-for-production
       DJANGO_DEBUG: "true"
       Q_CLUSTER_NAME: anonymization
+      # Camada NER/Presidio OPT-IN (default false): com o NER desligado o engine
+      # nem é construído neste worker (memória cai); a reativação
+      # (ANONYMIZATION_USE_NER=true no .env) chega por este passthrough.
+      ANONYMIZATION_USE_NER: ${ANONYMIZATION_USE_NER:-false}
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
       LLM_RUN_TASKS_INLINE: "false"
@@ -131,6 +135,9 @@ services:
       DJANGO_SECRET_KEY: dev-secret-key-not-for-production
       DJANGO_DEBUG: "true"
       Q_CLUSTER_NAME: llm
+      # Reativação consistente do NER (o llm anonimiza o motivo do caso anterior
+      # via prior_case): sem isto, ligar a env deixaria posturas mistas.
+      ANONYMIZATION_USE_NER: ${ANONYMIZATION_USE_NER:-false}
       # Fase 2 em dev (paridade com o prod, estilo dev sem secret-file): a
       # chave/modelos entram pelo .env local (gitignored) — sem eles o
       # pipeline falha fechado em auth/config no estágio LLM (esperado).
@@ -170,6 +177,9 @@ services:
       DJANGO_DEBUG: "true"
       Q_CLUSTER_NAME: attachments
       VISION_MODEL: ${VISION_MODEL:-}
+      # Camada NER/Presidio OPT-IN (default false): este worker também anonimiza
+      # anexos — a reativação chega por este passthrough.
+      ANONYMIZATION_USE_NER: ${ANONYMIZATION_USE_NER:-false}
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
       LLM_RUN_TASKS_INLINE: "false"

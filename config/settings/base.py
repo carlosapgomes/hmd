@@ -306,6 +306,20 @@ INTAKE_ENABLED = os.environ.get("INTAKE_ENABLED", "true").lower() in (
 ANONYMIZATION_SPACY_MODEL = os.environ.get("ANONYMIZATION_SPACY_MODEL", "pt_core_news_lg")
 ANONYMIZATION_SCORE_THRESHOLD = float(os.environ.get("ANONYMIZATION_SCORE_THRESHOLD", "0.45"))
 
+# Camada NER/Presidio da anonimização (change anonymization-deterministic-first,
+# design D1): OPT-IN, default DESLIGADO na fase 2. A identidade do paciente é
+# tokenizada ponta a ponta pela extração determinística (rótulos SESAB + runs de
+# identificadores + valores conhecidos do caso); com o NER desligado o engine
+# spaCy/Presidio nem é construído nos workers (a memória do worker-anonymization
+# cai). Reativação reversível por env (``ANONYMIZATION_USE_NER=true``),
+# acompanhada de calibração pelo ``anonymization_benchmark`` — o CRM do corpus é
+# exclusivo do recognizer NER.
+ANONYMIZATION_USE_NER = os.environ.get("ANONYMIZATION_USE_NER", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # Modo de execução da task de anonimização (change presidio-anonymization,
 # slice 004, design D7/R2): ``True`` (default em dev/teste) executa a task
 # sincronamente quando o signal de entrada em ANONYMIZING dispara — testes

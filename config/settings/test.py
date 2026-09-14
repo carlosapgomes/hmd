@@ -88,6 +88,14 @@ INTAKE_ENABLED = True
 # independente de um .env local com ANONYMIZATION_RUN_TASKS_INLINE=false.
 ANONYMIZATION_RUN_TASKS_INLINE = True
 
+# Camada NER/Presidio LIGADA na suíte (change anonymization-deterministic-first,
+# slice 001/D1): os testes de anonimização existentes exercitam o merge
+# determinístico+NER com stubs de analyzer e o caminho de reversibilidade
+# (override True) segue coberto; os novos testes do caminho default usam
+# ``override_settings(ANONYMIZATION_USE_NER=False)``. Sem o pin, um .env do host
+# tornaria a suíte não-determinística (precedente UNIT_LABELS/INTAKE_ENABLED).
+ANONYMIZATION_USE_NER = True
+
 # Pipeline LLM roda inline na suíte (design D9/R4): o signal de entrada em
 # LLM_EXTRACTING executa o orquestrador sincronamente — determinístico
 # independente de um .env local com LLM_RUN_TASKS_INLINE=false. Testes de

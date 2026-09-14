@@ -3,14 +3,17 @@ presidio-anonymization; design D6, R2–R5).
 
 Pipeline do núcleo puro ``anonymize_text(text) -> AnonymizationCoreResult``
 (sem DB — consumido pelo benchmark do slice 005): (1) pré-extração
-determinística (``deterministic.py``), (2) análise do Presidio, (3) merge com a
-política determinística completa — TODAS as ocorrências de cada valor
-determinístico localizadas no texto com offsets válidos (nome→PESSOA,
-nascimento→DATA, nº de ocorrência→OCORRENCIA, CPF→CPF, CNS→CNS, mesmo sem
-NER), ordenação por ``(start asc, end desc, determinístico > NER)`` e
-sobreposições resolvidas mantendo o primeiro da ordem —, (4) substituição
-própria (fallback D5) sobre os spans mesclados via ``PseudonymOperator`` e
-(5) artefatos: texto anonimizado + mapa + relatório.
+determinística (``deterministic.py``) + varredura dos valores conhecidos do caso
+(``seed_map``, quando passado), (2) análise do Presidio — camada OPT-IN
+(``ANONYMIZATION_USE_NER``, default desligado), que quando ligada soma os spans
+do analyzer, (3) merge com a política determinística completa — TODAS as
+ocorrências de cada valor determinístico localizadas no texto com offsets
+válidos (nome→PESSOA, nascimento→DATA, nº de ocorrência→OCORRENCIA, CPF→CPF,
+CNS→CNS, mesmo sem NER), ordenação por ``(start asc, end desc, determinístico >
+NER)`` e sobreposições resolvidas mantendo o primeiro da ordem —, (4)
+substituição própria (fallback D5) sobre os spans mesclados via
+``PseudonymOperator`` e (5) artefatos: texto anonimizado + mapa + relatório
+(com ``ner_enabled`` truthful — engine/versões omitidos quando o NER não roda).
 
 O wrapper ``anonymize_case_text(case)`` persiste os artefatos e o linkage
 (``patient_name``/``patient_birth_date``/``agency_record_number``) no ``Case``
@@ -26,7 +29,9 @@ import re
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import date
 
+from django.conf import settings
 from django.db import transaction
 
 from apps.anonymization.deterministic import (
@@ -39,8 +44,10 @@ from apps.anonymization.operators import (
     CNS,
     CPF,
     DATA,
+    LOCAL,
     NER_ENTITY_TYPE_TO_CATEGORY,
     OCORRENCIA,
+    ORGANIZACAO,
     PESSOA,
     PII,
     PseudonymOperator,
@@ -91,8 +98,17 @@ def anonymize_text(
     slice 003, D4): valores iguais aos de entidades do caso reutilizam o token
     do caso (o paciente do caso mantém o ``<PESSOA_N>`` do caso qualquer que
     seja a ordem no texto); valores novos ganham token NOVO numerado acima do
-    máximo do seed. O mapa devolvido contém apenas entradas efetivamente usadas
-    no texto (semeadas usadas + novas). O mapa do caso NÃO é alterado.
+    máximo do seed. A varredura dos valores SEMEADOS (change
+    anonymization-deterministic-first, slice 001, D3) localiza também as
+    ocorrências dos valores CONHECIDOS do caso no texto como candidatos
+    determinísticos — mesmo sem rótulo SESAB e com o NER desligado; valor do
+    seed ausente do texto não gera candidato nem entrada no mapa. O mapa
+    devolvido contém apenas entradas efetivamente usadas no texto (semeadas
+    usadas + novas). O mapa do caso NÃO é alterado.
+
+    A camada NER/Presidio é OPT-IN (``ANONYMIZATION_USE_NER``, default
+    desligado): desligada, o engine nem é construído nem consultado — restam os
+    candidatos determinísticos (extração + valores semeados).
 
     Exceção de qualquer etapa propaga (fail-closed é fechado no worker do slice
     004). Texto vazio retorna resultado com zero entidades (defensivo; o
@@ -107,20 +123,23 @@ def anonymize_text(
             extraction=extraction,
         )
 
-    engine = get_anonymization_engine()
-    analyzer_results = engine.analyzer.analyze(
-        text=text,
-        language="pt",
-        score_threshold=score_threshold(),
-    )
     candidates = _deterministic_candidates(text, extraction)
-    for result in analyzer_results:
-        start = int(result.start)
-        end = int(result.end)
-        # Offsets sempre validados contra o texto (R2/D6): span inválido some.
-        if 0 <= start < end <= len(text):
-            category = NER_ENTITY_TYPE_TO_CATEGORY.get(result.entity_type, PII)
-            candidates.append(SpanCandidate(start, end, category, deterministic=False))
+    if seed_map:
+        candidates.extend(_seeded_candidates(text, seed_map))
+    if settings.ANONYMIZATION_USE_NER:
+        engine = get_anonymization_engine()
+        analyzer_results = engine.analyzer.analyze(
+            text=text,
+            language="pt",
+            score_threshold=score_threshold(),
+        )
+        for result in analyzer_results:
+            start = int(result.start)
+            end = int(result.end)
+            # Offsets sempre validados contra o texto (R2/D6): span inválido some.
+            if 0 <= start < end <= len(text):
+                category = NER_ENTITY_TYPE_TO_CATEGORY.get(result.entity_type, PII)
+                candidates.append(SpanCandidate(start, end, category, deterministic=False))
 
     winners = merge_span_candidates(candidates)
     operator = PseudonymOperator(seed_map=seed_map)
@@ -178,18 +197,22 @@ def anonymize_case_text(case: Case) -> AnonymizationCoreResult:
             case.agency_record_number = result.extraction.record_number
         case.save()
         report = result.anonymization_report
+        payload: dict[str, object] = {
+            "counts_by_type": report["counts_by_type"],
+            "ner_enabled": report["ner_enabled"],
+        }
+        # Com o NER desligado o engine não roda: o payload omite modelo/versões
+        # em vez de descrever um engine que não existiu (relatório truthful, D6).
+        for key in ("model", "presidio_analyzer_version", "presidio_anonymizer_version"):
+            if key in report:
+                payload[key] = report[key]
         CaseEvent.objects.create(
             case=case,
             event_type=CaseEventType.CASE_ANONYMIZATION_COMPLETED,
             actor_type=ActorType.SYSTEM,
             actor=None,
             actor_role=SYSTEM_ROLE,
-            payload={
-                "counts_by_type": report["counts_by_type"],
-                "model": report["model"],
-                "presidio_analyzer_version": report["presidio_analyzer_version"],
-                "presidio_anonymizer_version": report["presidio_anonymizer_version"],
-            },
+            payload=payload,
         )
     return result
 
@@ -250,6 +273,96 @@ def _deterministic_candidates(
     return candidates
 
 
+# ── Passo 1b: valores semeados (conhecidos do caso) ───────────────────────
+
+# Categorias do seed com varredura própria (D3, design
+# anonymization-deterministic-first): espelham as chaves canônicas do operador
+# (``_canonical_value``) — dígitos normalizados para CPF/CNS/OCORRENCIA e texto
+# dobrado (casefold + whitespace) para PESSOA/LOCAL/ORGANIZACAO.
+_SEED_DIGIT_CATEGORIES = frozenset({CPF, CNS, OCORRENCIA})
+_SEED_FOLDED_CATEGORIES = frozenset({PESSOA, LOCAL, ORGANIZACAO})
+
+# Valor de data numa grafia aceita pela pré-extração (dd/mm/aaaa ou dd-mm-aaaa).
+_SEED_DATE_PATTERN = re.compile(r"\s*(\d{1,2})[/-](\d{1,2})[/-](\d{4})\s*")
+
+
+def _seeded_candidates(text: str, seed_map: Mapping[str, Mapping[str, str]]) -> list[SpanCandidate]:
+    """Ocorrências dos valores SEMEADOS (conhecidos do caso) no texto (D3).
+
+    Cada valor do mapa do caso presente no texto vira candidato determinístico
+    com a categoria do seed: a identidade já tokenizada no caso ganha o MESMO
+    token em textos novos (motivo de negatura, anexo) mesmo citada SEM rótulo
+    SESAB e com o NER desligado (determinístico-first). A varredura é por valor
+    EXATO (sem inferência), com as MESMAS bordas da pré-extração — nunca
+    substring no meio de palavra. Entradas corrompidas do JSON (sem
+    ``value``/``entity_type``) são ignoradas defensivamente; valor ausente do
+    texto não gera candidato (e não entra no mapa resultante).
+    """
+    candidates: list[SpanCandidate] = []
+    for entry in seed_map.values():
+        if not isinstance(entry, Mapping):
+            continue
+        value = entry.get("value")
+        category = entry.get("entity_type")
+        if not isinstance(value, str) or not value.strip() or not isinstance(category, str):
+            continue
+        for start, end in _seeded_value_occurrences(text, value, category):
+            candidates.append(SpanCandidate(start, end, category, deterministic=True))
+    return candidates
+
+
+def _seeded_value_occurrences(text: str, value: str, category: str) -> list[tuple[int, int]]:
+    """Offsets das ocorrências de um valor semeado, pela categoria (D3).
+
+    Espelha a varredura de ``_deterministic_candidates``: datas em qualquer
+    grafia aceita, texto dobrado para categorias textuais, dígitos normalizados
+    para CPF/CNS/OCORRENCIA e ocorrência literal (bordas de dígito) para as
+    demais (ex.: CRM).
+    """
+    if category in _SEED_DIGIT_CATEGORIES:
+        return _find_digit_occurrences(text, value)
+    if category == DATA:
+        parsed = _parse_seed_date(value)
+        if parsed is not None:
+            day, month, year = parsed
+            return _find_date_occurrences(text, day, month, year)
+        return _find_folded_occurrences(text, value)
+    if category in _SEED_FOLDED_CATEGORIES:
+        return _find_folded_occurrences(text, value)
+    return _find_literal_occurrences(text, value)
+
+
+def _parse_seed_date(value: str) -> tuple[int, int, int] | None:
+    """Valor DATA do seed em ``(dia, mês, ano)`` quando parseável; senão ``None``."""
+    match = _SEED_DATE_PATTERN.fullmatch(value)
+    if match is None:
+        return None
+    day, month, year = (int(part) for part in match.groups())
+    try:
+        date(year=year, month=month, day=day)
+    except ValueError:
+        return None
+    return day, month, year
+
+
+def _find_digit_occurrences(text: str, value: str) -> list[tuple[int, int]]:
+    """Runs de dígitos+separadores que normalizam EXATAMENTE para o valor.
+
+    Mesmo contrato de boundary da pré-extração (``_deterministic_candidates``):
+    o run completo é a unidade — um run que normaliza para outra quantidade de
+    dígitos não gera ocorrência parcial; o valor do seed é normalizado (o mapa
+    guarda a pontuação da primeira ocorrência).
+    """
+    digits = re.sub(r"[^0-9]", "", value)
+    if not digits:
+        return []
+    return [
+        match.span()
+        for match in _DIGIT_RUN_PATTERN.finditer(text)
+        if re.sub(r"[^0-9]", "", match.group(0)) == digits
+    ]
+
+
 def _find_folded_occurrences(text: str, value: str) -> list[tuple[int, int]]:
     """Ocorrências de um nome (case-insensitive, whitespace flexível).
 
@@ -301,11 +414,25 @@ def _apply_replacements(text: str, replacements: list[tuple[int, int, str]]) -> 
 
 
 def _anonymization_report(counts: Counter[str]) -> dict[str, object]:
-    """Relatório JSON: contagens por tipo + modelo + versões + threshold (R4)."""
-    return {
+    """Relatório JSON: contagens por tipo + camada NER + engine/versões (R4/D6).
+
+    Com o NER desligado (default da fase 2) o relatório NÃO descreve engine
+    nenhum: marca ``ner_enabled=False`` e omite ``model``/``score_threshold`` e
+    as versões do Presidio — o artefato de auditoria nunca descreve um engine
+    que não rodou.
+    """
+    report: dict[str, object] = {
         "counts_by_type": dict(counts),
-        "model": spacy_model_name(),
-        "score_threshold": score_threshold(),
-        "presidio_analyzer_version": importlib.metadata.version("presidio-analyzer"),
-        "presidio_anonymizer_version": importlib.metadata.version("presidio-anonymizer"),
+        "ner_enabled": bool(settings.ANONYMIZATION_USE_NER),
     }
+    if not settings.ANONYMIZATION_USE_NER:
+        return report
+    report.update(
+        {
+            "model": spacy_model_name(),
+            "score_threshold": score_threshold(),
+            "presidio_analyzer_version": importlib.metadata.version("presidio-analyzer"),
+            "presidio_anonymizer_version": importlib.metadata.version("presidio-anonymizer"),
+        }
+    )
+    return report

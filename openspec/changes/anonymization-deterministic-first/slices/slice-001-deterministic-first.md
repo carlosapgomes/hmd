@@ -147,4 +147,23 @@ existentes; NÃO reescrever os testes.
 
 ## Deviations / learnings
 
-- (preenchido na execução)
+- (execução) ESCALAMENTO aprovado pelo supervisor (opção B) — semeadura
+  determinística dos valores do caso: além de passar `seed_map`, o núcleo
+  (`anonymize_text`) passou a localizar as ocorrências dos VALORES SEMEADOS no
+  texto como candidatos determinísticos (reuso do contrato de
+  `_deterministic_candidates`: chave canônica por categoria, boundary-aware,
+  sem inferência, valor exato do seed). Motivação: a semeadura sozinha só
+  reutiliza tokens de spans JÁ detectados — com o NER desligado (default) o nome
+  do paciente citado num motivo de negatura sem rótulo SESAB iria EM CLARO à
+  OpenRouter. Fecha o residual do motivo E dos anexos que citam o paciente sem
+  rótulo (política: identidade do paciente tokenizada ponta a ponta). Limites:
+  nada além disso — guard/NER/extração por rótulos intocados; valor do seed
+  ausente do texto não gera candidato nem entra no mapa.
+- (execução) `_anonymization_report` truthful (D6) + payload do evento: com NER
+  off o relatório omite `model`/`score_threshold`/versões do Presidio e o
+  payload do `CASE_ANONYMIZATION_COMPLETED` acompanha (ganha `ner_enabled`) —
+  nunca descreve engine que não rodou (e não estoura KeyError no worker com o
+  default novo).
+- (execução) testes do seed-scan no arquivo NOVO `test_deterministic_first.py`
+  (a suíte de anexos não está no blast radius do slice — zero arquivos
+  incidentais).

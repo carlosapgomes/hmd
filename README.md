@@ -85,6 +85,40 @@ dedicado (porta 5433), isolado do banco de desenvolvimento:
 uv run pytest
 ```
 
+## Anonimização determinística-first (política da fase 2)
+
+A camada que protege o paciente é a **extração determinística** (rótulos SESAB
++ runs validados de CPF/CNS + nascimento/nº de ocorrência + valores já
+conhecidos do caso): ela tokeniza TODAS as ocorrências dos valores do paciente
+— no relatório, no motivo de negatura e nos anexos — e roda sempre. O analyzer
+Presidio/spaCy pt-BR com os recognizers brasileiros é uma camada **opt-in**
+(`ANONYMIZATION_USE_NER`, default **desligado**): o NER do incidente 3ca56d86
+classificava vocabulário clínico comum (`Afebril`, `DORSO`, `Macro`, `Reg`…)
+como PESSOA/LOCAL e envenenava o mapa de pseudônimos, derrubando o guard de
+tokens de TODO caso real.
+
+Como a camada determinística cobre a identidade do paciente e não resolve
+nomes de **terceiros** citados em texto corrido, a fase 2 mantém esses nomes em
+claro no prompt da OpenRouter — a **mesma postura da referência em produção
+(ats-web), que não anonimiza**; é uma escolha de política do dono, registrada e
+reversível. Benefício operacional: com o NER desligado o engine Presidio nem é
+construído, então a memória do `worker-anonymization` cai
+(ajuste `WORKER_ANONYMIZATION_MEM_LIMIT` para o novo piso) e não há carregamento
+do modelo spaCy nos workers.
+
+**Reativação (rollback de política) = 1 variável + `up -d`:**
+
+```bash
+# .env do host: a env já é passada adiante nos workers que anonimizam
+ANONYMIZATION_USE_NER=true
+ANONYMIZATION_SPACY_MODEL=pt_core_news_lg   # ou md em host enxuto
+docker compose -f docker-compose.prod.yml up -d --profile workers
+```
+
+Antes de reativar, **calibre pelo benchmark**: com o NER desligado o corpus
+padrão falha no recall de **CRM**, categoria exclusiva do recognizer NER (a
+semântica do comando está documentada nele).
+
 ## Benchmark de anonimização (aceite operacional)
 
 O harness `anonymization_benchmark` avalia um corpus de textos em JSONL (uma
@@ -347,4 +381,6 @@ ar, o web segue recusando envios. A ativação é explícita, nesta ordem:
 **Rollback da fase 2:** `INTAKE_ENABLED=false` + `up -d web` (o web volta a
 recusar envios) e `docker compose -f docker-compose.prod.yml --profile workers
 stop` (ou `down` do profile) — os casos já criados permanecem íntegros, com
-seus estados, e nada processa em background.
+seus estados, e nada processa em background. Para religar apenas a camada NER
+(sem parar os workers), `ANONYMIZATION_USE_NER=true` no `.env` do host +
+`up -d --profile workers` (veja a seção de anonimização determinística-first).

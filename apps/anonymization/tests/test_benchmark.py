@@ -28,6 +28,7 @@ from typing import Any
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.test import override_settings
 
 from apps.anonymization import services
 
@@ -76,11 +77,14 @@ def _identity_output(text: str) -> Any:
 # ── Spec: "Corpus sintético passa no CI" ──────────────────────────────────
 
 
+@override_settings(ANONYMIZATION_USE_NER=True)
 def test_synthetic_corpus_passes() -> None:
     """R4/cenário spec: o corpus sintético versionado passa (exit 0).
 
     Recall por tipo ≥ mínimo (0.90), zero-PII limpo e zero documentos
-    bloqueados → ``Resultado: PASS`` e nenhuma exceção do comando.
+    bloqueados → ``Resultado: PASS`` e nenhuma exceção do comando. O override
+    do setting documenta a intenção: o corpus exige o CRM, categoria EXCLUSIVA
+    do recognizer NER — o benchmark calibra a camada opt-in.
     """
     report = _run_benchmark(_CORPUS_FIXTURE)
 
@@ -95,13 +99,15 @@ def test_synthetic_corpus_passes() -> None:
 # ── Spec: "Benchmark reprova corpus abaixo do mínimo" ─────────────────────
 
 
+@override_settings(ANONYMIZATION_USE_NER=True)
 def test_adversarial_corpus_fails(tmp_path: Path) -> None:
     """R4: entidade que o pipeline não pega → exit ≠ 0 apontando o tipo.
 
     O corpus tem uma única entrada com um nome exótico FABRICADO esperado como
     PESSOA que não tem rótulo determinístico e que o NER não detecta: o valor
     permanece no output → recall de PESSOA = 0 < mínimo → o comando reprova e o
-    relatório aponta o tipo reprovado.
+    relatório aponta o tipo reprovado. O override mantém o cenário no caminho
+    NER (é a falha do NER que o teste pina) e não no determinístico-only.
     """
     corpus = _write_corpus(
         tmp_path,

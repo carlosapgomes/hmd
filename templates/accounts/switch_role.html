@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load role_labels %}
 
 {% block title %}{{ app_display_name }} — Selecionar Papel{% endblock %}
 
@@ -16,7 +17,7 @@
           <form method="post">
             {% csrf_token %}
             <input type="hidden" name="role" value="{{ role }}">
-            <button type="submit" class="btn btn-hospital w-100">{{ role }}</button>
+            <button type="submit" class="btn btn-hospital w-100">{{ role|role_label }}</button>
           </form>
           {% endfor %}
         </div>

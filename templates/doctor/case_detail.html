@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load role_labels %}
 
 {% block title %}{{ app_display_name }} — Caso {{ case_id }}{% endblock %}
 
@@ -82,7 +83,7 @@
           <strong>{{ decision_event.timestamp }}</strong>
           por <strong>{{ decision_event.actor_display }}</strong>
           {% if decision_event.actor_role %}
-          · papel {{ decision_event.actor_role }}
+          · papel {{ decision_event.actor_role|role_label }}
           {% endif %}.
         </p>
         <ul class="list-group list-group-flush">
@@ -314,7 +315,7 @@
               <strong>{{ event.label }}</strong>
               <div class="small text-muted">
                 {{ event.actor_display }}
-                {% if event.actor_role %}· papel {{ event.actor_role }}{% endif %}
+                {% if event.actor_role %}· papel {{ event.actor_role|role_label }}{% endif %}
               </div>
             </div>
             <span class="small text-muted text-nowrap">{{ event.timestamp }}</span>

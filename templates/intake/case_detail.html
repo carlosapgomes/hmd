@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load role_labels %}
 
 {% block title %}{{ app_display_name }} — Caso {{ case.case_id }}{% endblock %}
 
@@ -302,7 +303,7 @@
                 <div>
                   <strong>{{ event.label }}</strong>
                   <div class="small text-muted">
-                    {{ event.actor_display }}{% if event.actor_role %} · papel {{ event.actor_role }}{% endif %}
+                    {{ event.actor_display }}{% if event.actor_role %} · papel {{ event.actor_role|role_label }}{% endif %}
                   </div>
                 </div>
                 <span class="small text-muted text-nowrap">{{ event.timestamp|date:"d/m/Y H:i" }}</span>
@@ -338,7 +339,7 @@
                   {% else %}
                   <strong>{{ communication.author.display_name|default:"Operador" }}</strong>
                   {% if communication.author_role %}
-                  <span class="badge rounded-pill text-bg-light border">{{ communication.author_role }}</span>
+                  <span class="badge rounded-pill text-bg-light border">{{ communication.author_role|role_label }}</span>
                   {% endif %}
                   {% if final_reply and communication == final_reply %}
                   <span class="badge rounded-pill text-bg-primary">Resposta final</span>

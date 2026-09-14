@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load role_labels %}
 
 {% block title %}{{ app_display_name }} — Início{% endblock %}
 
@@ -17,7 +18,7 @@
         {% if role_names %}
         <ul class="list-unstyled d-flex flex-wrap gap-2 mb-0">
           {% for name in role_names %}
-          <li><span class="badge rounded-pill badge-role">{{ name }}</span></li>
+          <li><span class="badge rounded-pill badge-role">{{ name|role_label }}</span></li>
           {% endfor %}
         </ul>
         {% else %}

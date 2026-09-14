@@ -44,6 +44,7 @@ ROLE_LABELS = {
     "admin": "admin",
 }
 
+
 def role_label(value: str) -> str:
     return ROLE_LABELS.get(value, value)
 ```

@@ -83,12 +83,15 @@ class TestActiveRoleMiddleware:
         assert response.status_code == 302
         assert response.headers["Location"] == reverse("switch_role")
 
-        # A tela de seleção lista os papéis disponíveis do usuário.
+        # A tela de seleção lista os papéis disponíveis do usuário: botão com
+        # rótulo (badge/botão-scoped, não a chave crua) e chave no wire do form.
         page = client.get(reverse("switch_role"))
         assert page.status_code == 200
         body = page.content.decode()
-        assert "doctor" in body
-        assert "manager" in body
+        assert ">médico</button>" in body
+        assert ">supervisor</button>" in body
+        assert 'value="doctor"' in body
+        assert 'value="manager"' in body
 
     def test_zero_roles_logs_out(self, client: Client) -> None:
         """Usuário sem papéis é deslogado com mensagem explicativa."""
@@ -152,7 +155,8 @@ class TestActiveRoleMiddleware:
         page = client.get(reverse("switch_role"))
         assert page.status_code == 200
         body = page.content.decode()
-        assert "manager" in body
+        assert ">supervisor</button>" in body
+        assert 'value="manager"' in body
         assert "nurse" in body
         assert "doctor" not in body
 
@@ -198,7 +202,9 @@ class TestSwitchRoleView:
         # na navbar; follow=True porque a home despacha por papel (slice 002).
         home = client.get(reverse("home"), follow=True)
         assert home.status_code == 200
-        assert "manager" in home.content.decode()
+        # Badge-scoped: a página é a do dispatcher com ativo manager; a chave
+        # crua apareceria de graça no comentário HTML de base.html.
+        assert 'title="Papel ativo">supervisor<' in home.content.decode()
 
     def test_switch_role_rejects_foreign_role(self, client: Client) -> None:
         """Papel não atribuído ao usuário é rejeitado sem gravar na sessão."""
@@ -320,6 +326,6 @@ class TestNavbarActiveRole:
         assert home.status_code == 200
         body = home.content.decode()
         assert "Papel ativo" in body
-        assert "manager" in body
+        assert 'title="Papel ativo">supervisor<' in body
         assert "Trocar papel" in body
         assert reverse("switch_role") in body

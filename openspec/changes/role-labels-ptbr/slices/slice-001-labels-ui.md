@@ -116,7 +116,7 @@ TEST_DB_PORT=55435 uv run pytest apps/accounts/tests/test_home_dispatch.py apps/
 # GREEN total:
 TEST_DB_PORT=55435 uv run pytest -q
 uv run ruff check . && uv run ruff format --check . && uv run mypy .
-grep -rn "ROLE_LABELS" apps/ | grep -v "role_labels.py"        # → vazio (sem duplicatas)
+grep -rn "ROLE_LABELS *=" apps/ | grep -v "apps/accounts/role_labels.py"  # → vazio (sem 2ª tabela)
 ```
 
 ## Expected files

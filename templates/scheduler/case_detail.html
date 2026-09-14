@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load role_labels %}
 
 {% block title %}{{ app_display_name }} — Caso {{ case_id }}{% endblock %}
 
@@ -245,7 +246,7 @@
               {% else %}
               <strong>{{ communication.author.display_name|default:"Operador" }}</strong>
               {% if communication.author_role %}
-              <span class="badge rounded-pill text-bg-light border">{{ communication.author_role }}</span>
+              <span class="badge rounded-pill text-bg-light border">{{ communication.author_role|role_label }}</span>
               {% endif %}
               {% endif %}
             </div>

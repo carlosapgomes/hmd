@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load role_labels %}
 
 {% block title %}{{ app_display_name }} — Meu Perfil{% endblock %}
 
@@ -24,7 +25,7 @@
           <dt class="col-sm-5">Papéis</dt>
           <dd class="col-sm-7">
             {% if user_roles %}
-            {{ user_roles|join:", " }}
+            {% for role in user_roles %}{{ role|role_label }}{% if not forloop.last %}, {% endif %}{% endfor %}
             {% else %}
             <em>Nenhum papel atribuído</em>
             {% endif %}

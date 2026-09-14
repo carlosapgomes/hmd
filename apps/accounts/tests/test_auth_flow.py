@@ -16,6 +16,8 @@ change admin-local-identity). Os fluxos aqui exercitam esse caminho:
 
 from collections.abc import Sequence
 
+import re
+
 import pytest
 from django.conf import settings
 from django.test import Client
@@ -88,7 +90,10 @@ class TestLoginFlow:
         body = response.content.decode()
         assert USERNAME in body
         assert DISPLAY_NAME in body
-        assert "doctor" in body
+        # Rótulo de papel (role-labels-ptbr): lista do perfil, NÃO substring
+        # solta — o badge do base.html também imprime "médico" e mascararia
+        # uma regressão da lista.
+        assert re.search(r"Papéis</dt>\s*<dd[^>]*>\s*médico\b", body)
 
         # Logout encerra a sessão e volta ao login; profile volta a exigir login.
         response = client.post(reverse("logout"))

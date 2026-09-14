@@ -1,4 +1,4 @@
-{% load static %}<!DOCTYPE html>
+{% load static role_labels %}<!DOCTYPE html>
 <html lang="pt-br">
 <head>
   <meta charset="utf-8">
@@ -79,7 +79,7 @@
         {% endif %}
       </a>
       {% if active_role %}
-      <span class="badge rounded-pill badge-role" title="Papel ativo">{{ active_role }}</span>
+      <span class="badge rounded-pill badge-role" title="Papel ativo">{{ active_role|role_label }}</span>
       {% endif %}
       <a href="{% url 'profile' %}" class="app-session-meta text-decoration-none" title="Meu perfil">
         {{ user.display_name }}

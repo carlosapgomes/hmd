@@ -15,10 +15,13 @@ clínica e operacional — esperam os termos em português.
   `nir → nir`, `admin → admin`; chave desconhecida exibe a própria chave
   (fallback seguro).
 - Template filter `{% load role_labels %}` + `{{ valor|role_label }}` aplicado
-  às 4 superfícies: badge de papel ativo (`base.html`), badges da home
+  às 9 superfícies: badge de papel ativo (`base.html`), badges da home
   (`accounts/home.html`), botões da seleção de papel
-  (`accounts/switch_role.html` — o `value` submetido permanece a CHAVE crua) e
-  lista do perfil (`accounts/profile.html`).
+  (`accounts/switch_role.html` — o `value` submetido permanece a CHAVE crua),
+  lista do perfil (`accounts/profile.html`) e as menções a papel em trilhas de
+  eventos e comunicações dos detalhes de caso (`doctor/`, `intake/`,
+  `scheduler/case_detail.html` — `actor_role`/`author_role` continuam chaves
+  nos dados, `system` exibe a própria chave).
 - Testes migrados: asserts de HTML que esperavam os nomes crus passam a
   esperar os rótulos; asserts de sessão/valor/permissionamento continuam nas
   chaves.
@@ -36,8 +39,8 @@ clínica e operacional — esperam os termos em português.
 - Zero mudança de dados, sessão, permissionamento ou URLs: `Role.name`,
   `active_role` da sessão e todos os guards continuam usando as chaves
   inglesas; a tradução é SÓ na renderização.
-- Prefiro mudanças mínimas: 1 slice, sem migrar unidades anteriores (UI de
-  filas etc. não exibem nomes de papel além dessas 4 superfícies).
+- Prefiro mudanças mínimas: 1 slice cobrindo as 9 superfícies inventariadas
+  (badge/seleção/home/perfil + trilhas/comunicações dos case_detail).
 - Arquivos afetados: `apps/accounts/role_labels.py` (novo) +
   `apps/accounts/templatetags/__init__.py`/`role_labels.py` (novo) +
   4 templates + testes.

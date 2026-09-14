@@ -286,6 +286,19 @@ em topologia Caddy-direto (cliente → Caddy → HMD).
 `INTAKE_ENABLED` fica **false** (fase 1: nenhum relatório enviado; criação
 de casos/reenvios bloqueada no boundary do serviço).
 
+**Limites do envio de relatórios (fase 2).** Cada PDF é o relatório de **um
+paciente** e vira **um caso**; o tipo de procedimento é **único por envio** e
+anexos de evidência só valem com **exatamente 1 relatório**. Três envs
+tunam o lote (defaults entre parênteses): `INTAKE_MAX_FILES_PER_BATCH` (30
+arquivos), `INTAKE_MAX_UPLOAD_BYTES_PER_FILE` (20971520 = 20 MB por arquivo) e
+`INTAKE_MAX_UPLOAD_BYTES_PER_BATCH` (104857600 = 100 MB no total do envio).
+O total de **100 MB** é o limite prático do request body no **túnel Cloudflare**
+do piloto (~100 MB no plano free) — suba só se o caminho de entrada mudar. O
+`docker-compose.prod.yml` repassa as três com `${VAR:-default}` (nunca string
+vazia, que anularia o default das settings). No lote, arquivo inválido/acima do
+limite vira erro nomeado e os válidos seguem: a página de resultado lista os
+casos criados e os arquivos rejeitados.
+
 **Caddy.** O alvo do upstream é o **aliás estável `hmd:8000`** na rede
 `hospital_ingress_hmd` (declarado em `networks.hospital_ingress_hmd.aliases`
 do serviço `web` — não use o nome gerado pelo compose, que muda junto com o

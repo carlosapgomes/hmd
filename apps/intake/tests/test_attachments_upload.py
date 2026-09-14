@@ -421,7 +421,7 @@ def test_upload_ui_with_attachments(
         url,
         {
             "documents": [pdf_factory()],
-            "procedure_types": [ANGIO_TYPE],
+            "procedure_type": ANGIO_TYPE,
             "attachments": [
                 attachment_factory(name="foto.jpg"),
                 attachment_factory(name="exame.pdf", content_type="application/pdf"),
@@ -527,7 +527,7 @@ def test_resubmission_ui_with_attachments(
         url,
         {
             "documents": [pdf_factory()],
-            "procedure_types": [ANGIO_TYPE],
+            "procedure_type": ANGIO_TYPE,
             "correction_reason": "laudo ilegível, reenvio com foto do exame",
             "attachments": [attachment_factory(name="foto-exame.jpg", content_type="image/jpeg")],
         },

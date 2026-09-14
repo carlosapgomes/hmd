@@ -472,8 +472,9 @@ def test_upload_flow_via_view(
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """GET renderiza o form; POST de 1 PDF + 1 tipo cria o caso e redireciona
-    ao detalhe (contrato redirect×resultado preservado: 1 caso sem erros)."""
+    """GET renderiza o form (1–N PDFs + tipo único em radio); POST de 1 PDF +
+    1 tipo cria o caso e redireciona ao detalhe (contrato redirect×resultado
+    preservado: 1 caso sem erros — design D4)."""
     client.force_login(nir_user)
     url = reverse("intake:home")
 
@@ -481,6 +482,7 @@ def test_upload_flow_via_view(
     assert response.status_code == 200
     body = response.content.decode()
     assert 'name="documents"' in body
+    assert 'type="radio"' in body
     assert "Arteriografia periférica" in body
     assert 'value="cat_cardiaco"' in body
 
@@ -488,7 +490,7 @@ def test_upload_flow_via_view(
         url,
         {
             "documents": [pdf_factory()],
-            "procedure_types": [ANGIO_TYPE],
+            "procedure_type": ANGIO_TYPE,
         },
         follow=True,
     )
@@ -508,12 +510,13 @@ def test_upload_flow_via_view(
 
 
 @pytest.mark.django_db
-def test_upload_invalid_rerenders_with_error(
+def test_upload_invalid_file_shows_result_with_error(
     client: Client,
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R4: arquivo inválido re-renderiza o form com o resumo nomeando o arquivo."""
+    """R4/design D4: arquivo inválido → página de resultado com o erro
+    nomeando o arquivo (nenhum caso criado)."""
     client.force_login(nir_user)
     url = reverse("intake:home")
 
@@ -521,13 +524,14 @@ def test_upload_invalid_rerenders_with_error(
         url,
         {
             "documents": [pdf_factory(name="foto.jpg", content_type="image/jpeg")],
-            "procedure_types": [ANGIO_TYPE],
+            "procedure_type": ANGIO_TYPE,
         },
     )
 
     assert response.status_code == 200
     body = response.content.decode()
     assert "foto.jpg" in body
+    assert "0 casos criados" in body
     assert Case.objects.count() == 0
 
 

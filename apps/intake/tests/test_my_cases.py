@@ -291,7 +291,7 @@ def test_create_redirects_to_detail(
         reverse("intake:home"),
         {
             "documents": [pdf_factory(name="relatorio-sesab.pdf")],
-            "procedure_types": ["art_perif"],
+            "procedure_type": "art_perif",
         },
     )
 

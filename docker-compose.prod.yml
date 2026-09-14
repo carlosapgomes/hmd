@@ -89,6 +89,14 @@ services:
       # Fase 1 do piloto: intake DESLIGADO (fail-closed — o default de
       # config.settings.prod é false e aqui ele fica explícito).
       INTAKE_ENABLED: ${INTAKE_ENABLED:-false}
+      # Limites do envio em lote (change intake-batch-semantics): 1 PDF = 1
+      # caso; o total default de 100 MB é o limite prático do request body no
+      # túnel Cloudflare do piloto (~100 MB no plano free). Sempre com
+      # ${VAR:-default} — sem o default, o compose injetaria string vazia e
+      # anularia o valor das settings.
+      INTAKE_MAX_FILES_PER_BATCH: ${INTAKE_MAX_FILES_PER_BATCH:-30}
+      INTAKE_MAX_UPLOAD_BYTES_PER_FILE: ${INTAKE_MAX_UPLOAD_BYTES_PER_FILE:-20971520}
+      INTAKE_MAX_UPLOAD_BYTES_PER_BATCH: ${INTAKE_MAX_UPLOAD_BYTES_PER_BATCH:-104857600}
       # Login AD/Kerberos (egress restrito) + guard de intranet do papel nir.
       AD_DCS: ${AD_DCS}
       AD_KDC_TIMEOUT: ${AD_KDC_TIMEOUT:-3}

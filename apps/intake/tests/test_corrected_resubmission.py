@@ -609,7 +609,7 @@ def test_resubmit_view_flow(
     _login(client, nir_user)
     resubmit_url = reverse("intake:case_resubmit", args=[original.case_id])
 
-    # GET: form com arquivos, checkboxes do catálogo e motivo.
+    # GET: form com arquivos, radio único do catálogo e motivo.
     response = client.get(resubmit_url)
     assert response.status_code == 200
     body = response.content.decode()
@@ -625,7 +625,7 @@ def test_resubmit_view_flow(
         resubmit_url,
         {
             "documents": [pdf_factory()],
-            "procedure_types": [ANGIO_TYPE],
+            "procedure_type": ANGIO_TYPE,
             "correction_reason": REASON,
         },
     )
@@ -674,7 +674,7 @@ def test_resubmit_view_validation_errors_rerender(
         resubmit_url,
         {
             "documents": [pdf_factory()],
-            "procedure_types": [ANGIO_TYPE],
+            "procedure_type": ANGIO_TYPE,
             "correction_reason": "  ",
         },
     )
@@ -688,7 +688,7 @@ def test_resubmit_view_validation_errors_rerender(
         resubmit_url,
         {
             "documents": [pdf_factory(name="foto.jpg", content_type="image/jpeg")],
-            "procedure_types": [ANGIO_TYPE],
+            "procedure_type": ANGIO_TYPE,
             "correction_reason": REASON,
         },
     )
@@ -702,7 +702,7 @@ def test_resubmit_view_validation_errors_rerender(
         resubmit_url,
         {
             "documents": [pdf_factory(), pdf_factory()],
-            "procedure_types": [ANGIO_TYPE],
+            "procedure_type": ANGIO_TYPE,
             "correction_reason": REASON,
         },
     )

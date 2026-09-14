@@ -6,6 +6,14 @@ declaração de tipos): GET renderiza o form; POST valida tudo via
 re-renderiza o form com resumo nomeando arquivo/tipo; sucesso redireciona ao
 detalhe do caso criado (slice 004, R5).
 
+Slice 002 do change intake-batch-semantics (R1–R4/D4): ``intake_home`` envia o
+lote pelo serviço ``submit_report_batch`` (1 PDF = 1 caso, tipo único em radio
+validado pelo form antes do serviço) e despacha o contrato redirect ×
+resultado — 1 caso com ZERO erros segue redirecionando ao detalhe do caso;
+lote e/ou erros renderizam a página de resultado com a contagem de casos
+criados e os erros por arquivo (substituindo a ponte provisória que
+redirecionava o lote a ``my_cases`` e re-renderizava o alerta enganoso).
+
 Slice 004 (R1–R3): ``my_cases`` lista os casos do criador (sem filtros —
 change 11); ``case_detail`` exibe documentos/trilha/comunicações apenas do
 caso do próprio NIR (alheio → 404, sem vazamento — divergência deliberada do
@@ -195,7 +203,19 @@ def _scheduling_context(case: Case) -> dict[str, object]:
 
 @role_required("nir")
 def intake_home(request: HttpRequest) -> HttpResponse:
-    """Home do intake NIR: form de envio do relatório com tipos declarados."""
+    """Home do intake NIR: envio em lote, tipo único e resultado do envio.
+
+    GET renderiza o form (1–N PDFs, tipo único em radio, anexos com a regra do
+    relatório único). POST com o form válido chama ``submit_report_batch``
+    (contrato de lote do slice 001: ``(cases, errors)`` com falhas parciais por
+    arquivo — tipo/lote inválidos já viram erro de FORMULÁRIO em R1, sem
+    chegar ao serviço) e despacha o contrato redirect × resultado (R4/D4):
+
+    - exatamente 1 caso criado e ZERO erros → redirect ao detalhe do caso
+      (comportamento preservado desde o slice 004 do change original);
+    - lote (N>1) e/ou erros → página de resultado com "N casos criados" (link
+      Meus casos) + um item por arquivo rejeitado (nome + motivo).
+    """
     user = _require_user(request)
     active_role = request.session.get("active_role", "")
     form = IntakeUploadForm()
@@ -209,32 +229,35 @@ def intake_home(request: HttpRequest) -> HttpResponse:
             return redirect(reverse("intake:home"))
         form = IntakeUploadForm(request.POST, request.FILES)
         if form.is_valid():
-            documents = form.cleaned_data["documents"]
-            attachments = form.cleaned_data["attachments"]
-            procedure_types = form.cleaned_data["procedure_types"]
             try:
-                # Slice 002 troca o form para tipo único; aqui o serviço recebe
-                # o tipo único do lote (ausente/múltiplo vira erro do serviço).
                 cases, errors = submit_report_batch(
                     user=user,
                     role=active_role,
-                    files=documents,
-                    procedure_type=procedure_types[0] if len(procedure_types) == 1 else "",
-                    attachments=attachments,
+                    files=form.cleaned_data["documents"],
+                    procedure_type=form.cleaned_data["procedure_type"],
+                    attachments=form.cleaned_data["attachments"],
                 )
-            except ValueError as exc:
+            except IntakeValidationError as exc:
+                # Único erro levantado pelo serviço fora do contrato de lote:
+                # o guard fail-closed do intake (D1).
                 logger.warning("intake_upload_rejected user=%s motivo=%s", user.pk, exc)
                 form.add_error(None, str(exc))
             else:
-                for message in errors:
-                    form.add_error(None, message)
-                # R5 (slice 004) preservado: 1 caso sem erros → detalhe do caso.
                 if not errors and len(cases) == 1:
                     messages.success(request, f"Caso {cases[0].case_id} criado com sucesso.")
                     return redirect(reverse("intake:case_detail", args=[cases[0].case_id]))
-                if not errors and cases:
-                    messages.success(request, f"{len(cases)} casos criados com sucesso.")
-                    return redirect(reverse("intake:my_cases"))
+                return render(
+                    request,
+                    "intake/home.html",
+                    {
+                        "form": IntakeUploadForm(),
+                        "result": {
+                            "cases": cases,
+                            "errors": errors,
+                            "created_count": len(cases),
+                        },
+                    },
+                )
 
     return render(request, "intake/home.html", {"form": form})
 
@@ -430,10 +453,10 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         if form.is_valid():
             documents = form.cleaned_data["documents"]
             attachments = form.cleaned_data["attachments"]
-            procedure_types = form.cleaned_data["procedure_types"]
+            procedure_type = form.cleaned_data["procedure_type"]
             correction_reason = form.cleaned_data["correction_reason"]
-            # Slice 002 troca o form para arquivo único; até lá o serviço exige
-            # exatamente 1 PDF (o guard abaixo preserva o contrato do serviço).
+            # O reenvio corrigido aceita exatamente 1 PDF (serviço, D5); o
+            # campo de arquivos do form ainda é múltiplo até o slice 003.
             if len(documents) != 1:
                 form.add_error(None, "O reenvio corrigido aceita exatamente 1 PDF do relatório.")
             else:
@@ -443,7 +466,7 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
                         user=user,
                         role=active_role,
                         file=documents[0],
-                        procedure_type=procedure_types[0] if len(procedure_types) == 1 else "",
+                        procedure_type=procedure_type,
                         correction_reason=correction_reason,
                         attachments=attachments,
                     )

@@ -84,17 +84,22 @@
     <h2 id="nir-titulo" class="h4">NIR — envio e acompanhamento</h2>
     <ul>
       <li>
-        <strong>Enviar relatório</strong> (<em>Enviar relatório</em>): crie um caso
-        anexando de 1 a N PDFs do relatório de regulação e declarando ao menos um
-        tipo de procedimento do catálogo. Arquivo não-PDF ou acima dos limites é
-        rejeitado com erro claro, sem criar o caso.
+        <strong>Enviar relatório</strong> (<em>Enviar relatório</em>): cada PDF é o
+        relatório de <strong>um paciente</strong> e vira <strong>um caso</strong>.
+        Envie o lote de PDFs e declare <strong>um único tipo</strong> de
+        procedimento do catálogo, aplicado a todos os relatórios do envio. Arquivo
+        não-PDF ou acima dos limites é rejeitado com erro claro — os arquivos
+        válidos do lote seguem e a página de resultado informa quantos casos foram
+        criados e quais arquivos foram rejeitados (com o motivo).
       </li>
       <li>
-        <strong>Anexos de evidência</strong>: no mesmo envio (ou no reenvio
-        corrigido) você pode incluir anexos em JPEG, PNG ou PDF, respeitando os
-        limites de quantidade e tamanho. Os anexos ficam listados no detalhe do
-        caso com nome e status de processamento; um caso sem anexos segue o fluxo
-        normal.
+        <strong>Anexos de evidência</strong>: no envio (ou no reenvio corrigido)
+        você pode incluir anexos em JPEG, PNG ou PDF, respeitando os limites de
+        quantidade e tamanho — mas apenas quando o envio tiver
+        <strong>exatamente 1 relatório</strong> (1 paciente). No envio em lote, com
+        mais de 1 PDF o campo de anexos é desabilitado na tela. Os anexos ficam
+        listados no detalhe do caso com nome e status de processamento; um caso sem
+        anexos segue o fluxo normal.
       </li>
       <li>
         <strong>Gate de regulação</strong>: se os documentos estiverem fora do

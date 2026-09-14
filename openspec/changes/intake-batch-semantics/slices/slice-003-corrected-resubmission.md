@@ -27,7 +27,10 @@ view/template.
 
 ## Requisitos verificáveis
 
-- **R1** — Views do reenvio corrigido (`corrected_resubmission.html` +
+- **R1** — Hints do CAMPO no reenvio: `CorrectedResubmissionForm` sobrescreve o
+  help_text de `documents` (herdado do lote) para "exatamente 1 PDF do
+  relatório corrigido" (P2 rastreado da review do slice 002 — sem isso a
+  página do reenvio mostra o hint de LOTE). Views do reenvio corrigido (`corrected_resubmission.html` +
   fluxo da view) renderizam hints novos: "exatamente 1 PDF do relatório
   corrigido", tipo único (herdado do form do slice 002), anexos permitidos;
   erros nomeados do serviço são exibidos.
@@ -55,6 +58,7 @@ view/template.
 
 ```yaml
 expected_files:
+  - templates/accounts/manual.html       # P2 review slice 002: 'tipos declarados novamente'/'reenviar os documentos' → singular/exatamente 1 PDF
   - apps/intake/services.py
   - apps/intake/views.py          # apenas o fluxo do reenvio, se necessário
   - apps/intake/forms.py          # apenas hint/herança do reenvio

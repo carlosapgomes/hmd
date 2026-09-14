@@ -201,3 +201,9 @@ body.hospital-shell {
     display: none;
   }
 }
+
+/* Intake (intake-batch-semantics, slice 002): grupo de anexos desabilitado
+   pelo JS quando o envio tem >1 relatório — anexos só com exatamente 1. */
+.intake-attachments-disabled {
+  opacity: 0.55;
+}

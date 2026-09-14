@@ -330,7 +330,7 @@ def test_home_post_disabled_redirects_without_creating(
             reverse("intake:home"),
             {
                 "documents": [pdf_factory()],
-                "procedure_types": ["cat_cardiaco"],
+                "procedure_type": "cat_cardiaco",
             },
             follow=True,
         )
@@ -361,7 +361,7 @@ def test_resubmit_post_disabled_redirects_without_creating(
             reverse("intake:case_resubmit", args=[original.case_id]),
             {
                 "documents": [pdf_factory(name="corrigido.pdf")],
-                "procedure_types": ["cat_cardiaco"],
+                "procedure_type": "cat_cardiaco",
                 "correction_reason": CORRECTION_REASON,
             },
             follow=True,

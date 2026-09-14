@@ -1,0 +1,20 @@
+# Tasks — intake-batch-semantics
+
+## Preflight
+
+- [ ] Baseline: confirmar árvore limpa em `main`, registrar `BASE_REF` e rodar a suíte completa uma vez (`TEST_DB_PORT=55435 uv run pytest -q`)
+
+## Implementação
+
+- [ ] Slice 001 — Serviço do lote: `submit_report_batch` + primitiva de caso único + settings — `slices/slice-001-batch-service.md`
+- [ ] Slice 002 — Form/UI: tipo único, hints numéricos, anexos desabilitáveis, resultado do lote — `slices/slice-002-form-ui.md`
+- [ ] Slice 003 — Reenvio corrigido: exatamente 1 PDF + anexos + tipo único — `slices/slice-003-corrected-resubmission.md`
+
+## Gate final
+
+- [ ] `uv run ruff check . && uv run ruff format --check . && uv run mypy . && TEST_DB_PORT=55435 uv run pytest` — tudo verde, sem regressão vs. baseline
+- [ ] `openspec validate intake-batch-semantics --strict`
+
+## Pós-gate (parent)
+
+- [ ] Atualizar `PROJECT_CONTEXT.md` com o estado do change

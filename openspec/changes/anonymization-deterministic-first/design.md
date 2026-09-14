@@ -73,12 +73,36 @@ com artefato representativo contendo "profissional", "Registro",
 "Macro" (natural do vocabulário do LLM). Espelho do bug: sem este change, o
 mesmo teste falha (RED).
 
-### D5 — Compose/docs sem envs obrigatórias
+### D5 — Compose passthrough + docs
 
-Default False já é o posture; `.env.example` documenta
-`#ANONYMIZATION_USE_NER=true` (reativação + benchmark). README: decisão da
-política (terceiros em claro = postura ats-web; paciente tokenizado),
-mem do worker-anonymization com NER off, rollback de política = 1 env.
+Default False já é o posture (nenhuma env obrigatória nova). A alavanca de
+reativação PRECISA de passthrough explícito no compose (allowlist por
+serviço): `ANONYMIZATION_USE_NER: ${ANONYMIZATION_USE_NER:-false}` em
+`worker-anonymization` E `worker-attachments` (este também anonimiza —
+`apps/attachments/tasks.py:221`), nos DOIS composes (prod e dev). Sem isso o
+`.env` do host não alcança o container. `.env.example` documenta
+`#ANONYMIZATION_USE_NER=true` (reativação + benchmark p/ calibrar). README:
+decisão da política (terceiros = postura ats-web; paciente tokenizado),
+mem do worker cai com NER off, rollback de política = 1 env + `up -d`.
+
+### D6 — Report truthful (P2-3 da review)
+
+`_anonymization_report` passa a incluir `"ner_enabled":
+settings.ANONYMIZATION_USE_NER` — o relatório de auditoria nunca descreve
+engine que não rodou (com NER off, `model`/versões Presidio são omitidos ou
+marcados; implementação escolhe a forma mais simples truthful).
+
+### Correções de seam (P2-4)
+
+- Prior-case: o ponto real é `_anonymized_reason(reason: str)`
+  (`prior_case.py:141`) alimentado por `_build_summary` com `row.case`
+  (`select_related`, `:83`); o seed é `row.case.pseudonym_map`.
+- Não há factory de Case em `apps/pipeline/tests/` (conftest do
+  anonymization só tem fixtures CPF/CNS): Cases são construídos inline
+  (`Case.objects.create(created_by=…)`).
+- E2E deve usar rótulos SESAB canônicos (o extrator de nome só para no
+  próximo rótulo canônico) e manter fora do artefato os valores seed
+  (dígitos de CPF/CNS, datas).
 
 ## Risks / Trade-offs
 

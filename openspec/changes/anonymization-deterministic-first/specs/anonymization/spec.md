@@ -1,5 +1,42 @@
 # anonymization Specification (delta)
 
+## MODIFIED Requirements
+
+### Requirement: Anonimização com pseudônimos estáveis por caso
+
+A anonimização SHALL aplicar substituição por tokens estáveis por caso
+(`<PESSOA_1>`, `<CPF_1>`, `<DATA_1>`, `<OCORRENCIA_1>`), numerados por ordem
+de primeira ocorrência e consistentes no documento, tendo a extração
+determinística (rótulos do relatório e identificadores validados por
+checksum: CPF/CNS, nascimento, nº de ocorrência) como camada primária
+sempre ativa. O analyzer Presidio pt-BR (modelo spaCy português) com
+recognizers brasileiros de CPF/CNS/CRM SHALL ser uma camada OPT-IN
+(`ANONYMIZATION_USE_NER`, default desligado na fase 2), somando categorias
+adicionais (`<CRM_1>`, `<LOCAL_1>`, `<ORGANIZACAO_1>`, `<TELEFONE_1>`,
+`<EMAIL_1>`) quando habilitado; com ele habilitado, a combinação das camadas
+preserva a vitória determinística em empates de offset. O texto anonimizado
+e o mapa (token → valor real + tipo) SHALL ser persistidos no caso, junto de
+relatório com contagens por tipo de entidade, modelo e versões do engine —
+e a indicação de a camada NER estava habilitada.
+
+#### Scenario: PII substituída por tokens estáveis
+
+- **GIVEN** um texto com dois pacientes distintos citados e um CPF válido repetido
+- **WHEN** a anonimização executa
+- **THEN** cada valor distinto recebe um token único e estável, e as repetições do mesmo valor usam o mesmo token
+
+#### Scenario: Texto anonimizado sem vestígios verificáveis
+
+- **GIVEN** o texto anonimizado de um relatório com CPF/CNS válidos, nome e data
+- **WHEN** varreduras de padrões (CPF/CNS com checksum) e busca pelos valores originais são aplicadas
+- **THEN** nenhuma ocorrência é encontrada
+
+#### Scenario: Relatório de anonimização auditável
+
+- **GIVEN** uma anonimização concluída
+- **WHEN** o caso é inspecionado
+- **THEN** existe relatório com contagens por tipo de entidade, modelo NLP e versões, e evento na trilha com resumo
+
 ## ADDED Requirements
 
 ### Requirement: Anonimização determinística-first (fase 2)

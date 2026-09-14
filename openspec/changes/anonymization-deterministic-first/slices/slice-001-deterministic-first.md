@@ -11,9 +11,10 @@
   engine/analyze + loop NER.
 - `get_anonymization_engine` é singleton lru_cache (`engine.py`) — com NER
   off ele NÃO pode ser chamado (senão carrega spaCy lg à toa).
-- `pipeline/prior_case.py:145`: `anonymize_text(reason.strip())` SEM seed —
-  trocar por `anonymize_text(reason.strip(), seed_map=prior.pseudonym_map)`
-  (nome real do objeto conforme o código; conferir).
+- Prior-case: `_anonymized_reason(reason)` (`prior_case.py:141`) recebe o
+  motivo de `_build_summary` (que tem `row.case` via select_related, `:83`) —
+  passar `seed_map=row.case.pseudonym_map` (ajustar a passada do argumento
+  pelo caller).
 - Test settings: `config/settings/test.py` já pina envs (UNIT_LABELS,
   OPENROUTER_*) — adicionar `ANONYMIZATION_USE_NER = True`.
 - Fragmentos do incidente (vocabulário clínico GENÉRICO, sem dado de
@@ -41,7 +42,9 @@ E2E; reversibilidade por env documentada e testada.
   parse igual aos `*_RUN_TASKS_INLINE`).
 - `config/settings/test.py`: `ANONYMIZATION_USE_NER = True` (pin).
 - `anonymize_text`: `if settings.ANONYMIZATION_USE_NER:` envolve
-  engine/analyze/loop-NER (engine não construído quando off).
+  engine/analyze/loop-NER (engine não construído quando off);
+  `_anonymization_report` ganha `ner_enabled` truthful (D6; com NER off
+  omite `model`/versões Presidio).
 
 ### R2 — Prior-case semeado (`apps/pipeline/prior_case.py`)
 
@@ -63,17 +66,25 @@ E2E; reversibilidade por env documentada e testada.
   determinístico; artefato JSON representativo (contendo "profissional",
   "Registro", "Macro", "informado") passa em `_assert_tokens_only`; sem o
   change (RED), o mesmo teste com stub NER devolvendo os fantasmais falha.
-- Benchmark: teste de CI existente ganha `override_settings(True)` explícito
-  (já pinado em test.py — o override documenta a intenção de calibrar o
-  NER); sem outras edições.
+- Benchmark: os DOIS testes de corpus (`test_synthetic_corpus_passes` —
+  que EXIGE NER pelo CRM do corpus — e o adversarial) ganham
+  `override_settings(ANONYMIZATION_USE_NER=True)` explícito (o pin de
+  test.py já cobre; o override documenta a intenção).
 
-### R4 — Docs
+### R4 — Compose + docs
 
+- `docker-compose.prod.yml` E `docker-compose.dev.yml`:
+  `ANONYMIZATION_USE_NER: ${ANONYMIZATION_USE_NER:-false}` em
+  `worker-anonymization` E `worker-attachments` (sem isso a env do host não
+  alcança os containers que anonimizam).
 - `.env.example`: seção do setting (`#ANONYMIZATION_USE_NER=true` + nota de
-  reativação com benchmark).
+  reativação com benchmark p/ calibrar; com NER off o corpus enviado falha
+  no recall de CRM — o CRM é exclusivo do recognizer NER).
 - `README.md`: parágrafo da decisão (terceiros = postura ats-web; paciente
-  tokenizado ponta a ponta; reversível; mem do worker-anonymization cai com
-  NER off).
+  tokenizado ponta a ponta; reversível; mem do worker cai com NER off).
+- Docstring do `anonymization_benchmark.py`: registrar a semântica do
+  setting (NER on = calibra a camada completa; off = baseline
+  determinístico; corpus padrão exige NER p/ CRM).
 
 ## Out of Scope
 
@@ -108,12 +119,21 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy .
 - config/settings/test.py
 - apps/anonymization/services.py
 - apps/pipeline/prior_case.py
-- apps/pipeline/tests/test_prior_case.py (ou onde mora o teste do motivo)
-- apps/anonymization/tests/test_services.py (testes do gate/E2E — ou arquivo
-  novo test_deterministic_first.py)
-- apps/anonymization/tests/test_benchmark.py (override explícito)
+- apps/pipeline/tests/test_prior_case.py
+- apps/pipeline/tests/test_llm2.py            # fake 1-arg → aceitar seed_map (P0-2)
+- apps/doctor/tests/test_detail.py            # idem (_fake_anonymize)
+- apps/anonymization/tests/test_deterministic_first.py (novo: gate+E2E incidente)
+- apps/anonymization/tests/test_benchmark.py (override explícito nos 2 corpus)
+- apps/anonymization/management/commands/anonymization_benchmark.py (docstring)
+- docker-compose.prod.yml
+- docker-compose.dev.yml
 - .env.example
 - README.md
+
+NOTA (P0-2): os fakes de `anonymize_text` em test_llm2.py:~480 e
+doctor/test_detail.py:~455 assinam `(text)` — alargar para aceitar
+`seed_map=None` (ou `**kwargs`) mantendo os asserts posicionais
+existentes; NÃO reescrever os testes.
 
 - allowed incidental files: NENHUM
 

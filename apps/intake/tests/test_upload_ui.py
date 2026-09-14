@@ -315,9 +315,8 @@ def test_upload_single_case_with_errors_shows_result(
     assert Case.objects.count() == 1
 
 
-def test_upload_batch_success_without_errors_shows_result(
-    client: "Client", nir_user: "User"
-) -> None:
+@pytest.mark.django_db
+def test_upload_batch_success_without_errors_shows_result(client: Client, nir_user: User) -> None:
     """R4 (review slice 002, P2): lote N>1 SEM erros também renderiza a página
     de resultado com a contagem — ramo puro-sucesso sem bloco de erros."""
     from django.core.files.uploadedfile import SimpleUploadedFile

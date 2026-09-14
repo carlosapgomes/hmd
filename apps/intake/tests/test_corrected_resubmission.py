@@ -3,14 +3,14 @@
 Cobre R1 (campos do vínculo no ``Case`` — migration ``0009``: self-FK
 ``corrects_case`` SET_NULL com reverso ``corrected_by``, ``correction_reason``
 e autor ``correction_created_by``), R2 (``create_corrected_resubmission``:
-validações antes de qualquer criação, novo caso no MESMO atomic, eventos nos
-dois casos, original intacto e enqueue do processamento do novo PDF), R3
-(tipos do novo caso são EXATAMENTE os declarados — nunca herdados do
-original), R4 (UI: botão "Reenviar corrigido" apenas em ``CLEANED`` próprio,
-GET/POST do form, redirect ao detalhe do novo caso, erros re-renderizam o
-form, detalhe do original lista ``corrected_by`` ordenado) e a regressão do
-``create_case_with_documents`` puro (sem kwargs de correção → comportamento
-do change 04).
+validações antes de qualquer criação, novo caso com **exatamente 1 PDF + tipo
+único** no MESMO atomic, eventos nos dois casos, original intacto e enqueue do
+processamento do novo PDF), R3 (tipo do novo caso é EXATAMENTE o declarado —
+nunca herdado do original), R4 (UI: botão "Reenviar corrigido" apenas em
+``CLEANED`` próprio, GET/POST do form, redirect ao detalhe do novo caso, erros
+re-renderizam o form, detalhe do original lista ``corrected_by`` ordenado) e a
+regressão do ``create_case_with_documents`` puro (sem kwargs de correção →
+comportamento do change 04).
 
 Serviço testado com ``INTAKE_RUN_TASKS_INLINE=False`` + assert do enqueue
 (padrão dos testes atuais do intake — design D4); o comportamento com
@@ -118,9 +118,9 @@ def _login(client: Client, user: User) -> None:
     client.force_login(user)
 
 
-def _resubmit_files(pdf_factory: Callable[..., SimpleUploadedFile]) -> list[SimpleUploadedFile]:
-    """Lote de PDFs fake do reenvio (o slice não lê o conteúdo do PDF)."""
-    return [pdf_factory(name="reenvio-1.pdf"), pdf_factory(name="reenvio-2.pdf")]
+def _resubmit_file(pdf_factory: Callable[..., SimpleUploadedFile]) -> SimpleUploadedFile:
+    """PDF fake do reenvio (o reenvio corrigido aceita exatamente 1 PDF)."""
+    return pdf_factory(name="reenvio.pdf")
 
 
 # ── R1: campos do vínculo no Case (migration 0009) ────────────────────────
@@ -167,14 +167,14 @@ def test_resubmission_creates_linked_case(
     desde NEW."""
     doctor = user_factory("doctor-resub-link", DOCTOR_ROLE)
     original = _cleaned_case(created_by=nir_user, doctor=doctor)
-    files = _resubmit_files(pdf_factory)
+    uploaded = _resubmit_file(pdf_factory)
 
     new_case = create_corrected_resubmission(
         original_case=original,
         user=nir_user,
         role=NIR_ROLE,
-        files=files,
-        procedure_types=[ANGIO_TYPE, RADIO_TYPE],
+        file=uploaded,
+        procedure_type=ANGIO_TYPE,
         correction_reason=REASON,
     )
 
@@ -185,12 +185,10 @@ def test_resubmission_creates_linked_case(
     assert new_case.corrects_case_id == original.case_id
     assert new_case.correction_reason == REASON
     assert new_case.correction_created_by == nir_user
-    # Documentos do novo caso (mesma ordem do upload).
-    assert [document.original_filename for document in new_case.documents.all()] == [
-        files[0].name,
-        files[1].name,
-    ]
-    assert _declared_types(new_case) == {ANGIO_TYPE, RADIO_TYPE}
+    # Documento único do novo caso (1 PDF por caso).
+    assert [document.original_filename for document in new_case.documents.all()] == [uploaded.name]
+    assert new_case.documents.count() == 1
+    assert _declared_types(new_case) == {ANGIO_TYPE}
 
 
 @pytest.mark.django_db
@@ -210,8 +208,8 @@ def test_resubmission_events_both_cases(
         original_case=original,
         user=nir_user,
         role=NIR_ROLE,
-        files=_resubmit_files(pdf_factory),
-        procedure_types=[ANGIO_TYPE],
+        file=_resubmit_file(pdf_factory),
+        procedure_type=ANGIO_TYPE,
         correction_reason=REASON,
     )
 
@@ -266,8 +264,8 @@ def test_resubmission_original_untouched(
         original_case=original,
         user=nir_user,
         role=NIR_ROLE,
-        files=_resubmit_files(pdf_factory),
-        procedure_types=[ANGIO_TYPE, RADIO_TYPE],
+        file=_resubmit_file(pdf_factory),
+        procedure_type=RADIO_TYPE,
         correction_reason=REASON,
     )
 
@@ -309,8 +307,8 @@ def test_resubmission_enqueues_pdf_processing(
         original_case=original,
         user=nir_user,
         role=NIR_ROLE,
-        files=_resubmit_files(pdf_factory),
-        procedure_types=[ANGIO_TYPE],
+        file=_resubmit_file(pdf_factory),
+        procedure_type=ANGIO_TYPE,
         correction_reason=REASON,
     )
 
@@ -337,8 +335,8 @@ def test_resubmission_reason_required(
             original_case=original,
             user=nir_user,
             role=NIR_ROLE,
-            files=_resubmit_files(pdf_factory),
-            procedure_types=[ANGIO_TYPE],
+            file=_resubmit_file(pdf_factory),
+            procedure_type=ANGIO_TYPE,
             correction_reason=reason,
         )
 
@@ -360,8 +358,8 @@ def test_resubmission_original_not_cleaned(
             original_case=active,
             user=nir_user,
             role=NIR_ROLE,
-            files=_resubmit_files(pdf_factory),
-            procedure_types=[ANGIO_TYPE],
+            file=_resubmit_file(pdf_factory),
+            procedure_type=ANGIO_TYPE,
             correction_reason=REASON,
         )
 
@@ -388,8 +386,8 @@ def test_resubmission_non_creator_rejected(
             original_case=foreign,
             user=nir_user,
             role=NIR_ROLE,
-            files=_resubmit_files(pdf_factory),
-            procedure_types=[ANGIO_TYPE],
+            file=_resubmit_file(pdf_factory),
+            procedure_type=ANGIO_TYPE,
             correction_reason=REASON,
         )
 
@@ -414,8 +412,8 @@ def test_resubmission_invalid_batch_rejected(
             original_case=original,
             user=nir_user,
             role=NIR_ROLE,
-            files=[pdf_factory(name="foto.jpg", content_type="image/jpeg")],
-            procedure_types=[ANGIO_TYPE],
+            file=pdf_factory(name="foto.jpg", content_type="image/jpeg"),
+            procedure_type=ANGIO_TYPE,
             correction_reason=REASON,
         )
 
@@ -429,7 +427,7 @@ def test_resubmission_types_validated(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R2: tipo fora do catálogo rejeita nomeando o tipo; conjunto vazio
+    """R2: tipo fora do catálogo rejeita nomeando o tipo; tipo ausente
     também é rejeitado — ambos sem efeito."""
     doctor = user_factory("doctor-resub-types", DOCTOR_ROLE)
     original = _cleaned_case(created_by=nir_user, doctor=doctor)
@@ -440,17 +438,17 @@ def test_resubmission_types_validated(
             original_case=original,
             user=nir_user,
             role=NIR_ROLE,
-            files=_resubmit_files(pdf_factory),
-            procedure_types=["procedimento_inexistente"],
+            file=_resubmit_file(pdf_factory),
+            procedure_type="procedimento_inexistente",
             correction_reason=REASON,
         )
-    with pytest.raises(ValueError, match="ao menos um tipo"):
+    with pytest.raises(ValueError, match="único tipo"):
         create_corrected_resubmission(
             original_case=original,
             user=nir_user,
             role=NIR_ROLE,
-            files=_resubmit_files(pdf_factory),
-            procedure_types=[],
+            file=_resubmit_file(pdf_factory),
+            procedure_type="",
             correction_reason=REASON,
         )
 
@@ -467,21 +465,19 @@ def test_resubmission_types_explicit(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R3: o novo caso declara EXATAMENTE os tipos da chamada — conjuntos
-    distintos do original provam que nada é herdado."""
+    """R3: o novo caso declara EXATAMENTE o tipo da chamada — conjunto
+    distinto do original prova que nada é herdado."""
     doctor = user_factory("doctor-resub-explicit", DOCTOR_ROLE)
     original = _cleaned_case(created_by=nir_user, doctor=doctor)
     _declare(original, ANGIO_TYPE, CARDIO_TYPE)
     # Conjuntos disjuntos: o original declara angio/cateterismo; o reenvio
     # escolhe apenas nefrostomia — nunca herda os dois do original.
-    resubmit_types = [RADIO_TYPE]
-
     new_case = create_corrected_resubmission(
         original_case=original,
         user=nir_user,
         role=NIR_ROLE,
-        files=_resubmit_files(pdf_factory),
-        procedure_types=resubmit_types,
+        file=_resubmit_file(pdf_factory),
+        procedure_type=RADIO_TYPE,
         correction_reason=REASON,
     )
 
@@ -503,8 +499,8 @@ def test_create_case_with_documents_pure_no_correction(
     case = create_case_with_documents(
         user=nir_user,
         role=NIR_ROLE,
-        files=_resubmit_files(pdf_factory),
-        procedure_types=[ANGIO_TYPE],
+        file=_resubmit_file(pdf_factory),
+        procedure_type=ANGIO_TYPE,
     )
 
     assert case.corrects_case_id is None
@@ -623,13 +619,13 @@ def test_resubmit_view_flow(
     assert 'name="correction_reason"' in body
     assert 'enctype="multipart/form-data"' in body
 
-    # POST válido: novo caso + redirect ao detalhe dele.
+    # POST válido: novo caso (1 PDF + 1 tipo) + redirect ao detalhe dele.
     events_before = original.events.count()
     response = client.post(
         resubmit_url,
         {
-            "documents": [pdf_factory(), pdf_factory()],
-            "procedure_types": [ANGIO_TYPE, RADIO_TYPE],
+            "documents": [pdf_factory()],
+            "procedure_types": [ANGIO_TYPE],
             "correction_reason": REASON,
         },
     )
@@ -647,8 +643,8 @@ def test_resubmit_view_flow(
     assert new_case.status == CaseStatus.NEW
     assert new_case.corrects_case_id == original.case_id
     assert new_case.correction_reason == REASON
-    assert new_case.documents.count() == 2
-    assert _declared_types(new_case) == {ANGIO_TYPE, RADIO_TYPE}
+    assert new_case.documents.count() == 1
+    assert _declared_types(new_case) == {ANGIO_TYPE}
 
     original.refresh_from_db()
     assert original.status == CaseStatus.CLEANED
@@ -664,7 +660,8 @@ def test_resubmit_view_validation_errors_rerender(
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
     """R4: erros de validação re-renderizam o form com o resumo — motivo
-    vazio e arquivo inválido nomeiam o problema e nada é criado."""
+    vazio, arquivo inválido e mais de 1 arquivo nomeiam o problema e nada é
+    criado."""
     doctor = user_factory("doctor-resub-invalid", DOCTOR_ROLE)
     original = _cleaned_case(created_by=nir_user, doctor=doctor)
     _login(client, nir_user)
@@ -700,6 +697,20 @@ def test_resubmit_view_validation_errors_rerender(
     assert Case.objects.count() == cases_before
     assert original.events.count() == events_before
 
+    # Mais de 1 arquivo → o reenvio corrigido aceita exatamente 1 PDF.
+    response = client.post(
+        resubmit_url,
+        {
+            "documents": [pdf_factory(), pdf_factory()],
+            "procedure_types": [ANGIO_TYPE],
+            "correction_reason": REASON,
+        },
+    )
+    assert response.status_code == 200
+    assert "exatamente 1" in response.content.decode()
+    assert Case.objects.count() == cases_before
+    assert original.events.count() == events_before
+
 
 @pytest.mark.django_db
 def test_original_lists_corrections(
@@ -718,16 +729,16 @@ def test_original_lists_corrections(
         original_case=original,
         user=nir_user,
         role=NIR_ROLE,
-        files=_resubmit_files(pdf_factory),
-        procedure_types=[ANGIO_TYPE],
+        file=_resubmit_file(pdf_factory),
+        procedure_type=ANGIO_TYPE,
         correction_reason=first_reason,
     )
     second = create_corrected_resubmission(
         original_case=original,
         user=nir_user,
         role=NIR_ROLE,
-        files=_resubmit_files(pdf_factory),
-        procedure_types=[RADIO_TYPE],
+        file=_resubmit_file(pdf_factory),
+        procedure_type=RADIO_TYPE,
         correction_reason=second_reason,
     )
     _login(client, nir_user)

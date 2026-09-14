@@ -2,11 +2,11 @@
 
 ## Preflight
 
-- [ ] Baseline: confirmar árvore limpa em `main`, registrar `BASE_REF` e rodar a suíte completa uma vez (`TEST_DB_PORT=55435 uv run pytest -q`)
+- [x] Baseline: confirmar árvore limpa em `main`, registrar `BASE_REF` e rodar a suíte completa uma vez (`TEST_DB_PORT=55435 uv run pytest -q`)
 
 ## Implementação
 
-- [ ] Slice 001 — Serviços: lote + primitiva única + gate resubmit 1-PDF + reenvio corrigido + settings (rev. 2 pós-review: P0-1/P0-2) — `slices/slice-001-batch-service.md`
+- [x] Slice 001 — Serviços: lote + primitiva única + gate resubmit 1-PDF + reenvio corrigido + settings (rev. 2 pós-review: P0-1/P0-2) — `slices/slice-001-batch-service.md`
 - [ ] Slice 002 — Form/UI: tipo único, hints numéricos, anexos desabilitáveis, resultado do lote — `slices/slice-002-form-ui.md`
 - [ ] Slice 003 — UI do reenvio corrigido e do gate (hints/templates) — `slices/slice-003-corrected-resubmission.md`
 

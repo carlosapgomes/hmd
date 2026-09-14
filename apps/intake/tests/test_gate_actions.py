@@ -2,17 +2,17 @@
 
 Cobre R1 (``gate_release``: liberar retido → ANONYMIZING com
 ``CASE_GATE_BYPASSED`` na trilha e o NIR como ator; não-retido → 400 sem
-efeito), R2 (``gate_resubmit``: documentos substituídos + flag/texto/nº
-zerados + reprocessamento sem novo start; arquivo inválido → 400 nomeando o
-arquivo, nada muda), R3 (ações restritas a caso retido do próprio criador) e
+efeito), R2 (``gate_resubmit``: **exatamente 1 PDF** substitui o documento +
+flag/texto/nº zerados + reprocessamento sem novo start; 0/>1 arquivo → erro
+nomeado, nada muda), R3 (ações restritas a caso retido do próprio criador) e
 R4 (concorrência real release×resubmit — exatamente um vence; lock ativo de
 worker conflita; botões apenas quando retido; caso alheio → 404 nas duas
-ações). Cobre os 2 cenários da spec "Revisão NIR do gate".
+ações). Cobre os 3 cenários da spec "Revisão NIR do gate".
 
 As ações rodam em serviço transacional (``select_for_update`` + re-check DENTRO
-da transação); o serviço de reenvio reutiliza a validação de PDFs do slice 001
-(``_validate_batch``) e limpa best-effort os arquivos novos em exceção
-pós-gravação (D7).
+da transação); o serviço de reenvio exige 1 PDF
+(``_validate_single_document``) e limpa best-effort os arquivos novos em
+exceção pós-gravação (D7).
 
 Cobre também os findings de review do slice: o escopo por criador é re-checado
 nos serviços sob o row lock (usuário não-criador → not-found ``Http404`` sem
@@ -129,13 +129,18 @@ def _create_case(
     pdf_factory: Callable[..., SimpleUploadedFile],
     *names: str,
 ) -> Case:
-    """Cria um caso NEW com 1–N PDFs (nomes opcionais) e dois tipos declarados."""
-    files = [pdf_factory(name=name) if name else pdf_factory() for name in (names or ("",))]
+    """Cria um caso NEW com 1 PDF (o primeiro nome, se informado) e 1 tipo.
+
+    Semântica do lote (change intake-batch-semantics): cada PDF é um caso — não
+    existe mais caso com N documentos. O primeiro nome de ``names`` nomeia o
+    arquivo; os demais são ignorados (mantém a assinatura dos callers).
+    """
+    name = names[0] if names else ""
     return create_case_with_documents(
         user=user,
         role=NIR_ROLE,
-        files=files,
-        procedure_types=["art_perif", "cat_cardiaco"],
+        file=pdf_factory(name=name) if name else pdf_factory(),
+        procedure_type="art_perif",
     )
 
 
@@ -233,9 +238,9 @@ def test_resubmit_replaces_and_reprocesses(
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R2/cenário spec: reenviar PDFs válidos substitui os documentos, zera
-    flag/texto/nº e reprocessa até ANONYMIZING sem novo start."""
-    case = _retain_for_review(_create_case(nir_user, pdf_factory, "antigo-1.pdf", "antigo-2.pdf"))
+    """R2/cenário spec: reenviar exatamente 1 PDF válido substitui o documento,
+    zera flag/texto/nº e reprocessa até ANONYMIZING sem novo start."""
+    case = _retain_for_review(_create_case(nir_user, pdf_factory, "antigo.pdf"))
     case.extracted_text = "texto antigo fora do padrão"
     case.agency_record_number = "antigo"
     case.save(update_fields=["extracted_text", "agency_record_number"])
@@ -246,12 +251,7 @@ def test_resubmit_replaces_and_reprocesses(
     with override_settings(INTAKE_RUN_TASKS_INLINE=True):
         response = client.post(
             reverse("intake:gate_resubmit", args=[case.case_id]),
-            {
-                "documents": [
-                    _valid_pdf("novo-1.pdf"),
-                    _valid_pdf("novo-2.pdf"),
-                ]
-            },
+            {"documents": [_valid_pdf("novo.pdf")]},
             follow=True,
         )
 
@@ -259,11 +259,11 @@ def test_resubmit_replaces_and_reprocesses(
     assert "documentos substituídos" in response.content.decode()
 
     case.refresh_from_db()
-    # Documentos substituídos (novos nomes, posições recomeçam em 1).
+    # Documento substituído (novo nome, posição 1).
     documents = list(case.documents.all())
-    assert [document.original_filename for document in documents] == ["novo-1.pdf", "novo-2.pdf"]
-    assert [document.position for document in documents] == [1, 2]
-    assert "antigo-1.pdf" not in [document.original_filename for document in documents]
+    assert [document.original_filename for document in documents] == ["novo.pdf"]
+    assert [document.position for document in documents] == [1]
+    assert "antigo.pdf" not in [document.original_filename for document in documents]
     # Reprocessado do zero até ANONYMIZING com o novo conteúdo.
     assert case.status == CaseStatus.ANONYMIZING
     assert case.manual_review_required is False
@@ -276,6 +276,58 @@ def test_resubmit_replaces_and_reprocesses(
     assert event_types.count(CaseEventType.CASE_STATUS_PDF_EXTRACTING.value) == starts_before
     assert event_types.count(CaseEventType.CASE_STATUS_ANONYMIZING.value) == 1
     assert CaseEventType.CASE_EXTRACTION_COMPLETED.value in event_types
+
+
+@pytest.mark.django_db
+def test_gate_resubmit_requires_exactly_one_pdf(
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R3/cenário spec: reenvio do gate aceita exatamente 1 PDF — 0 ou >1
+    arquivo → erro nomeado sem efeito (documentos/flag/trilha intactos)."""
+    case = _create_retained_case(nir_user, pdf_factory, "retido.pdf")
+    documents_before = list(case.documents.values_list("original_filename", flat=True))
+    events_before = case.events.count()
+
+    with pytest.raises(ValueError, match="exatamente 1"):
+        resubmit_case_documents(case=case, user=nir_user, role=NIR_ROLE, files=[])
+    with pytest.raises(ValueError, match="exatamente 1"):
+        resubmit_case_documents(
+            case=case,
+            user=nir_user,
+            role=NIR_ROLE,
+            files=[_valid_pdf("a.pdf"), _valid_pdf("b.pdf")],
+        )
+
+    case.refresh_from_db()
+    assert case.status == CaseStatus.PDF_EXTRACTING
+    assert case.manual_review_required is True
+    assert case.manual_review_reason == RETENTION_REASON
+    assert case.events.count() == events_before
+    assert list(case.documents.values_list("original_filename", flat=True)) == documents_before
+
+
+@pytest.mark.django_db
+def test_gate_resubmit_view_rejects_multiple_files(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R3: POST do reenvio do gate com >1 arquivo responsde 400 nomeando a
+    restrição de exatamente 1 PDF, sem efeito."""
+    case = _create_retained_case(nir_user, pdf_factory, "retido.pdf")
+    documents_before = list(case.documents.values_list("original_filename", flat=True))
+    client.force_login(nir_user)
+
+    response = client.post(
+        reverse("intake:gate_resubmit", args=[case.case_id]),
+        {"documents": [_valid_pdf("a.pdf"), _valid_pdf("b.pdf")]},
+    )
+
+    assert response.status_code == 400
+    assert "exatamente 1" in response.content.decode()
+    case.refresh_from_db()
+    assert list(case.documents.values_list("original_filename", flat=True)) == documents_before
 
 
 @pytest.mark.django_db

@@ -219,11 +219,20 @@ AUTH_PASSWORD_VALIDATORS = [
 # alinhado ao ats-web). Sem variantes por papel/contexto no HMD.
 CASE_LOCK_LEASE_SECONDS = int(os.environ.get("CASE_LOCK_LEASE_SECONDS", "300"))
 
-# Intake do relatório NIR (change intake-nir-upload, slice 001, design D1/R3):
-# limites de upload por caso — quantidade máxima de PDFs do relatório e tamanho
-# máximo por arquivo em MB (defaults 10/20; mesmo padrão de defaults por env).
-INTAKE_MAX_DOCUMENTS = int(os.environ.get("INTAKE_MAX_DOCUMENTS", "10"))
-INTAKE_MAX_FILE_MB = int(os.environ.get("INTAKE_MAX_FILE_MB", "20"))
+# Intake do relatório NIR (change intake-batch-semantics, slice 001, design D3):
+# limites do ENVIO EM LOTE — cada PDF é o relatório de um paciente (um caso por
+# PDF), então os limites são por arquivo e por lote. Quantidade máxima de
+# arquivos por lote (30), tamanho máximo por arquivo em BYTES (20 MB literal,
+# molde ats-web) e tamanho total do lote em bytes (100 MB — recomendação
+# operacional do piloto: o túnel Cloudflare limita o request body a ~100 MB no
+# plano free; env-tunable). Defaults por env, mesmo padrão dos demais.
+INTAKE_MAX_FILES_PER_BATCH = int(os.environ.get("INTAKE_MAX_FILES_PER_BATCH", "30"))
+INTAKE_MAX_UPLOAD_BYTES_PER_FILE = int(
+    os.environ.get("INTAKE_MAX_UPLOAD_BYTES_PER_FILE", str(20 * 1024 * 1024))
+)
+INTAKE_MAX_UPLOAD_BYTES_PER_BATCH = int(
+    os.environ.get("INTAKE_MAX_UPLOAD_BYTES_PER_BATCH", str(100 * 1024 * 1024))
+)
 
 # Gate de regulação (change intake-nir-upload, slice 002, design D4/R5):
 # thresholds do padrão SESAB do relatório — tamanho mínimo do texto extraído

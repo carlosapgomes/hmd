@@ -483,8 +483,8 @@ def test_inline_full_chain_to_awaiting_doctor(
     monkeypatch.setattr("apps.anonymization.services.get_anonymization_engine", lambda: fake_engine)
     fake = ScriptedLlmClient(
         [
-            json.dumps(_artifact(["art_perif", "cat_cardiaco"])),
-            json.dumps(_llm2_response(["art_perif", "cat_cardiaco"])),
+            json.dumps(_artifact(["art_perif"])),
+            json.dumps(_llm2_response(["art_perif"])),
         ]
     )
 
@@ -500,8 +500,8 @@ def test_inline_full_chain_to_awaiting_doctor(
         case = create_case_with_documents(
             user=user,
             role=SYSTEM_ROLE,
-            files=[_chain_report_pdf()],
-            procedure_types=["art_perif", "cat_cardiaco"],
+            file=_chain_report_pdf(),
+            procedure_type="art_perif",
         )
 
     case.refresh_from_db()
@@ -543,8 +543,8 @@ def test_inline_full_chain_divergence_retains(monkeypatch: pytest.MonkeyPatch) -
         case = create_case_with_documents(
             user=user,
             role=SYSTEM_ROLE,
-            files=[_chain_report_pdf()],
-            procedure_types=["art_perif", "cat_cardiaco"],
+            file=_chain_report_pdf(),
+            procedure_type="art_perif",
         )
 
     case.refresh_from_db()

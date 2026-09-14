@@ -3,10 +3,10 @@
 R1: ``CaseAttachment`` nasce com os campos de D1 (FK ``case`` PROTECT com
 reverso ``attachments``, ``file`` com upload path seguro por UUID no callable,
 identificadores do upload e campos de processamento/verificação vazios/null,
-``status=pending``). R2: ``validate_attachments`` rejeita contagem/tamanho/MIME
-fora dos limites com erro nomeado (``AttachmentValidationError``, subclasse de
-``ValueError``) — sem efeito colateral (validação pura, antes de qualquer
-gravação).
+``status=pending``). R2: ``validate_attachments`` exige **exatamente 1 PDF** de
+relatório (``pdf_count != 1``) e rejeita contagem/tamanho/MIME fora dos limites
+com erro nomeado (``AttachmentValidationError``, subclasse de ``ValueError``) —
+sem efeito colateral (validação pura, antes de qualquer gravação).
 """
 
 from __future__ import annotations
@@ -167,20 +167,34 @@ def test_validate_attachments_error_is_named_value_error() -> None:
 
 
 def test_validate_attachments_empty_batch_is_valid() -> None:
-    """R2: lista vazia é válida — anexos são opcionais (default ``()``)."""
-    validate_attachments([])
+    """R2: lista vazia é válida — anexos são opcionais (default ``()``),
+    independente do número de PDFs do envio."""
+    validate_attachments([], pdf_count=1)
+    validate_attachments([], pdf_count=3)
+
+
+def test_validate_attachments_requires_exactly_one_pdf(
+    attachment_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R2/cenário spec attachments: com 2 (ou mais) PDFs os anexos são
+    rejeitados ANTES da contagem/tamanho — só há vínculo seguro com 1 relatório."""
+    batch = [attachment_factory(content_type="image/jpeg")]
+
+    with pytest.raises(AttachmentValidationError, match="exatamente 1"):
+        validate_attachments(batch, pdf_count=2)
 
 
 def test_validate_attachments_accepts_allowed_types(
     attachment_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R2: jpeg/png/pdf passam sem erro (mesmo lote)."""
+    """R2: jpeg/png/pdf passam sem erro com exatamente 1 PDF de relatório."""
     validate_attachments(
         [
             attachment_factory(content_type="image/jpeg"),
             attachment_factory(content_type="image/png"),
             attachment_factory(content_type="application/pdf"),
-        ]
+        ],
+        pdf_count=1,
     )
 
 
@@ -193,7 +207,7 @@ def test_validate_attachments_rejects_type(
     uploaded = attachment_factory(name="arquivo-estranho", content_type=content_type)
 
     with pytest.raises(AttachmentValidationError, match="arquivo-estranho"):
-        validate_attachments([uploaded])
+        validate_attachments([uploaded], pdf_count=1)
 
 
 def test_validate_attachments_rejects_oversize(
@@ -209,7 +223,7 @@ def test_validate_attachments_rejects_oversize(
 
     with override_settings(ATTACHMENTS_MAX_SIZE_MB=1):
         with pytest.raises(AttachmentValidationError, match="grande.jpg"):
-            validate_attachments([oversized])
+            validate_attachments([oversized], pdf_count=1)
 
 
 def test_validate_attachments_rejects_over_count(
@@ -224,4 +238,4 @@ def test_validate_attachments_rejects_over_count(
 
     with override_settings(ATTACHMENTS_MAX_COUNT=2):
         with pytest.raises(AttachmentValidationError, match="Máximo de 2"):
-            validate_attachments(batch)
+            validate_attachments(batch, pdf_count=1)

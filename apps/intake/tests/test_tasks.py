@@ -283,8 +283,8 @@ def test_inline_creation_processes(nir_user: User) -> None:
         case = create_case_with_documents(
             user=nir_user,
             role=NIR_ROLE,
-            files=[uploaded],
-            procedure_types=["cat_cardiaco"],
+            file=uploaded,
+            procedure_type="cat_cardiaco",
         )
 
     case.refresh_from_db()

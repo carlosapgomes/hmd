@@ -99,7 +99,9 @@ out_of_scope:
   lote/tipo/anexos são únicos e claros.
 - O loop do lote envolve a criação de cada caso em try/except → erro por
   arquivo (contrato D1 de parcialidade inclui falha de persistência).
-- `upload_phase`: `"initial"` (envio) / `"corrected"` (reenvio corrigido).
+- **Sem `upload_phase`** (desvio aprovado na execução): o campo não existe no
+HMD (change 10, "espelho enxuto sem fase") e nenhuma spec o exige — anexos do
+reenvio são gravados no novo caso como os do envio; modelo/migration intocados.
 
 ## Plano de testes
 

@@ -1,20 +1,31 @@
-"""Serviço atômico de criação de caso com upload multi-PDF (slice 001, R3/D7).
+"""Serviços do intake do NIR — lote, caso único e reenvios (R1–R4).
+
+Semântica do change intake-batch-semantics (rev. 2, molde ats-web): cada PDF é
+o relatório de um paciente e vira **um** ``Case`` (nunca N documentos por
+caso) e o tipo de procedimento é único por envio/lote. As TRÊS entradas de
+criação compartilham a primitiva de caso único (``create_case_with_documents``):
+o envio em lote (``submit_report_batch``) cria N casos independentes com falhas
+parciais (cada arquivo é uma transação; erro por arquivo preserva os casos já
+criados), o reenvio de documentos do gate (``resubmit_case_documents``) exige
+exatamente 1 PDF e o reenvio corrigido (``create_corrected_resubmission``) cria
+1 caso novo vinculado com 1 PDF + 1 tipo + anexos.
 
 Referência de padrão: ats-web ``apps/intake/services.py``
 (``validate_single_file``/``validate_batch`` + ``process_uploaded_files``).
-Divergências deliberadas do HMD (D1/D7): um upload vira **um** ``Case`` com
-1–N ``CaseDocument`` ordenados (o ats-web cria um caso por PDF); a validação é
-**PDF-only** própria (content-type ``application/pdf`` + extensão + tamanho) —
-o ``validate_attachment_file`` do ats-web NÃO serve (aceita JPEG/PNG para
-anexos); a criação dispara o processamento FORA da transação (slice 003,
-D7: inline em dev/teste ou enqueue no cluster pdf do django-q2).
+Divergências deliberadas do HMD: a validação é **PDF-only** própria
+(content-type ``application/pdf`` + extensão + tamanho — o
+``validate_attachment_file`` do ats-web aceita JPEG/PNG para anexos) e a
+criação dispara o processamento FORA da transação (slice 003, D7: inline em
+dev/teste ou enqueue no cluster pdf do django-q2).
 
-Contrato (R3): toda validação roda ANTES de qualquer persistência — falha =
-zero efeito no banco e o erro nomeia o arquivo/tipo inválido. No sucesso, uma
-transação única cria o ``Case(NEW)``, grava os arquivos físicos dos documentos
-e declara os procedimentos (``set_declared_procedures`` + evento na trilha).
-Como o rollback do banco não reverte o filesystem, exceção após gravação de
-arquivos dispara limpeza compensatória best-effort (unlink) — design D7.
+Contrato de falha (D1): a validação de arquivo/tipo roda ANTES de persistir na
+primitiva de caso único e, no lote, cada arquivo vira erro nomeado preservando
+os casos já criados — inclusive exceção inesperada de persistência (storage/
+DB), sem 500 silencioso. Na primitiva, uma transação única cria ``Case(NEW)`` +
+1 ``CaseDocument`` + anexos opcionais + declaração do tipo
+(``set_declared_procedures`` + evento). Como o rollback do banco não reverte o
+filesystem, exceção após gravação de arquivos dispara limpeza compensatória
+best-effort (unlink) — design D7.
 """
 
 from __future__ import annotations
@@ -31,7 +42,7 @@ from django.http import Http404
 from django.utils import timezone
 
 from apps.attachments.models import CaseAttachment
-from apps.attachments.services import validate_attachments
+from apps.attachments.services import AttachmentValidationError, validate_attachments
 from apps.cases.events import CaseEventType
 from apps.cases.locks import CaseLockConflictError
 from apps.cases.models import (
@@ -101,37 +112,62 @@ def _validate_document_file(uploaded_file: UploadedFile[Any]) -> None:
     if not file_name.lower().endswith(".pdf"):
         raise IntakeValidationError(f'"{file_name}" não tem extensão .pdf.')
 
-    max_bytes = settings.INTAKE_MAX_FILE_MB * 1024 * 1024
+    max_bytes = settings.INTAKE_MAX_UPLOAD_BYTES_PER_FILE
     if file_size > max_bytes:
         raise IntakeValidationError(
-            f'"{file_name}" excede o limite de {settings.INTAKE_MAX_FILE_MB} MB '
+            f'"{file_name}" excede o limite de {max_bytes // (1024 * 1024)} MB '
             f"por arquivo ({file_size / (1024 * 1024):.1f} MB)."
         )
 
 
 def _validate_batch(uploaded_files: list[UploadedFile[Any]]) -> None:
-    """Valida contagem (1..INTAKE_MAX_DOCUMENTS) e cada arquivo do lote."""
+    """Valida os limites do LOTE (não-vazio, contagem e tamanho total).
+
+    Validação de nível de lote (design D1, passo 3): roda uma vez por envio,
+    ANTES do loop por arquivo. O tamanho/tipo de cada arquivo é validado no
+    loop (``_validate_document_file``), para virar erro por arquivo.
+    """
     if not uploaded_files:
         raise IntakeValidationError("Envie ao menos um arquivo PDF do relatório.")
-    max_count = settings.INTAKE_MAX_DOCUMENTS
-    if len(uploaded_files) > max_count:
+    max_files = settings.INTAKE_MAX_FILES_PER_BATCH
+    if len(uploaded_files) > max_files:
         raise IntakeValidationError(
-            f"Máximo de {max_count} arquivos PDF por caso. Recebidos: {len(uploaded_files)}."
+            f"Máximo de {max_files} arquivos PDF por lote. Recebidos: {len(uploaded_files)}."
         )
-    for uploaded_file in uploaded_files:
-        _validate_document_file(uploaded_file)
+    total_bytes = sum(uploaded_file.size or 0 for uploaded_file in uploaded_files)
+    max_batch_bytes = settings.INTAKE_MAX_UPLOAD_BYTES_PER_BATCH
+    if total_bytes > max_batch_bytes:
+        raise IntakeValidationError(
+            f"Tamanho total do lote ({total_bytes / (1024 * 1024):.1f} MB) "
+            f"excede o limite de {max_batch_bytes // (1024 * 1024)} MB."
+        )
 
 
-def _validate_declared_types(procedure_types: Iterable[str]) -> None:
-    """Valida tipos declarados: ao menos um e todos do catálogo (erro nomeia o tipo)."""
-    declared = tuple(procedure_types)
-    if not declared:
-        raise IntakeValidationError("Declare ao menos um tipo de procedimento do relatório.")
-    for procedure_type in declared:
-        try:
-            get_procedure_profile(procedure_type)
-        except KeyError as exc:
-            raise IntakeValidationError(str(exc)) from None
+def _validate_single_document(uploaded_files: list[UploadedFile[Any]]) -> None:
+    """Exige EXATAMENTE 1 PDF (reenvio de documentos do gate — R3/D2).
+
+    0 ou >1 arquivo → erro nomeado, nada alterado; com 1 arquivo valida o
+    PDF/tamanho pela mesma checagem do lote (``_validate_document_file``).
+    """
+    if len(uploaded_files) != 1:
+        raise IntakeValidationError(
+            f"O reenvio aceita exatamente 1 PDF do relatório. Recebidos: {len(uploaded_files)}."
+        )
+    _validate_document_file(uploaded_files[0])
+
+
+def _validate_declared_type(procedure_type: str) -> None:
+    """Valida o tipo ÚNICO declarado do envio: presente e no catálogo (R2).
+
+    Tipo ausente → erro nomeado; fora do catálogo →
+    ``get_procedure_profile`` levanta ``KeyError`` nomeando o tipo.
+    """
+    if not procedure_type:
+        raise IntakeValidationError("Informe um único tipo de procedimento do relatório.")
+    try:
+        get_procedure_profile(procedure_type)
+    except KeyError as exc:
+        raise IntakeValidationError(str(exc)) from None
 
 
 def _delete_saved_files_best_effort(saved_names: Iterable[str]) -> None:
@@ -143,47 +179,130 @@ def _delete_saved_files_best_effort(saved_names: Iterable[str]) -> None:
             logger.warning("falha ao remover arquivo compensatório: %s", name, exc_info=True)
 
 
-def create_case_with_documents(
+def submit_report_batch(
     *,
     user: User,
     role: str | None,
     files: Iterable[UploadedFile[Any]],
-    procedure_types: Iterable[str],
+    procedure_type: str,
+    attachments: Sequence[UploadedFile[Any]] = (),
+) -> tuple[list[Case], list[str]]:
+    """Envia 1–N PDFs (um relatório por PDF) declarando um tipo único (R1/D1).
+
+    Molde ats-web (design D1), na ordem exata:
+
+    1. Guard ``INTAKE_ENABLED`` (fail-closed, topo);
+    2. Tipo único do lote (ausente/fora do catálogo → ``([], [erro])``);
+    3. Limites do lote (vazio/contagem/tamanho total → ``([], [erro])``);
+    4. Anexos (se houver): ``validate_attachments(.., pdf_count=len(files))`` —
+       com >1 PDF o erro é NÃO-bloqueante (casos criados sem anexos); com
+       exatamente 1 PDF anexo inválido ABORTA o envio inteiro;
+    5. Loop por arquivo: arquivo inválido vira erro nomeado e os demais seguem;
+       arquivo válido cria um caso próprio (transação independente);
+    6. Fim: com exatamente 1 PDF e anexos válidos, os anexos vão para o caso.
+
+    Falha de persistência num caso do lote é capturada no loop (D1) e vira erro
+    por arquivo, preservando os casos já criados — sem 500 silencioso.
+
+    Returns:
+        ``(cases, errors)``: os casos criados (na ordem dos arquivos válidos) e
+        as mensagens de erro (nomeando o arquivo ou o limite violado).
+    """
+    _assert_intake_enabled()
+    uploaded_files = list(files)
+    attachment_files = list(attachments)
+
+    # 2. Tipo único do lote — sem tipo válido, nenhum caso é criado.
+    try:
+        _validate_declared_type(procedure_type)
+    except IntakeValidationError as exc:
+        return [], [str(exc)]
+
+    # 3. Limites de lote (vazio/contagem/tamanho total).
+    try:
+        _validate_batch(uploaded_files)
+    except IntakeValidationError as exc:
+        return [], [str(exc)]
+
+    # 4. Anexos: só com exatamente 1 PDF; multi-PDF registra erro não-bloqueante.
+    attachment_error: str | None = None
+    if attachment_files:
+        try:
+            validate_attachments(attachment_files, pdf_count=len(uploaded_files))
+        except AttachmentValidationError as exc:
+            attachment_error = str(exc)
+            if len(uploaded_files) == 1:
+                return [], [str(exc)]
+
+    carries_attachments = bool(attachment_files) and attachment_error is None
+
+    # 5. Loop por arquivo: cada caso é uma transação independente (parcial).
+    cases: list[Case] = []
+    errors: list[str] = []
+    for uploaded_file in uploaded_files:
+        try:
+            case = create_case_with_documents(
+                user=user,
+                role=role,
+                file=uploaded_file,
+                procedure_type=procedure_type,
+                attachments=attachment_files if carries_attachments else (),
+            )
+        except IntakeValidationError as exc:
+            errors.append(str(exc))
+        except Exception:  # noqa: BLE001 — erro por arquivo (storage/DB), sem 500
+            logger.exception("intake_batch_case_failed file=%s", uploaded_file.name or "")
+            errors.append(f'"{uploaded_file.name or ""}" não pôde ser processado (erro interno).')
+        else:
+            cases.append(case)
+
+    # 6. Erro multi-PDF de anexos entra ao fim, após os casos criados.
+    if attachment_error is not None:
+        errors.append(attachment_error)
+
+    return cases, errors
+
+
+def create_case_with_documents(
+    *,
+    user: User,
+    role: str | None,
+    file: UploadedFile[Any],
+    procedure_type: str,
     attachments: Sequence[UploadedFile[Any]] = (),
     corrects_case: Case | None = None,
     correction_reason: str = "",
     correction_created_by: User | None = None,
 ) -> Case:
-    """Cria atomicamente um caso em NEW com N documentos e tipos declarados (R3).
+    """Cria atomicamente um caso em NEW com 1 documento e 1 tipo (R2, primitiva).
 
-    Valida tudo antes de persistir (contagem, PDF-only por arquivo, tipos do
-    catálogo e — quando houver — os anexos via ``validate_attachments``, fonte
-    única nova de apps/attachments). No sucesso, numa transação única:
-    ``Case(NEW, created_by=user)``, as rows ``CaseDocument`` (position 1..N,
-    arquivos gravados no storage), as rows ``CaseAttachment`` dos anexos
-    (arquivos gravados antes do INSERT no path seguro por UUID, com
-    ``uploaded_by=user`` e ``status=pending``) e a declaração via
-    ``set_declared_procedures`` (com evento na trilha). Fora da transação, o
-    processamento é disparado via ``enqueue_case_processing`` (inline em
-    dev/teste ou enqueue no cluster pdf — D7, slice 003). Em exceção após
-    gravações físicas, remove best-effort os arquivos já escritos (o rollback
-    do banco não reverte o filesystem).
+    Primitiva de **caso único** compartilhada pelas três entradas (D2): valida
+    TUDO antes de persistir (o PDF via ``_validate_document_file``, o tipo único
+    via ``_validate_declared_type`` e — quando houver — os anexos via
+    ``validate_attachments(.., pdf_count=1)``, fonte única nova de
+    apps/attachments). No sucesso, numa transação única: ``Case(NEW,
+    created_by=user)``, a row ``CaseDocument`` (position 1, arquivo gravado no
+    storage), as rows ``CaseAttachment`` dos anexos (arquivos gravados antes do
+    INSERT no path seguro por UUID, com ``uploaded_by=user`` e
+    ``status=pending``) e a declaração via ``set_declared_procedures`` (com
+    evento na trilha). Fora da transação, o processamento é disparado via
+    ``enqueue_case_processing`` (inline em dev/teste ou enqueue no cluster pdf —
+    D7, slice 003). Em exceção após gravações físicas, remove best-effort os
+    arquivos já escritos (o rollback do banco não reverte o filesystem).
 
     Os kwargs aditivos ``attachments`` (design D2) e ``corrects_case``/
     ``correction_reason``/``correction_created_by`` (design D4) materializam,
     respectivamente, os anexos de evidência do caso e o vínculo de reenvio
-    corrigido — os defaults ``()``/``None``/``""`` preservam o comportamento
-    do change 04 (criação pura — regressão coberta por teste).
+    corrigido — os defaults ``()``/``None``/``""`` preservam o comportamento do
+    change 04 (criação pura — regressão coberta por teste).
     """
     _assert_intake_enabled()
-    uploaded_files = list(files)
-    declared_types = tuple(procedure_types)
     attachment_files = list(attachments)
-    _validate_batch(uploaded_files)
-    _validate_declared_types(declared_types)
+    _validate_document_file(file)
+    _validate_declared_type(procedure_type)
     # Anexo inválido rejeita TUDO antes de qualquer gravação (nem caso, nem
     # documentos) — validação pura, sem efeito (R2/D2).
-    validate_attachments(attachment_files)
+    validate_attachments(attachment_files, pdf_count=1)
 
     saved_file_names: list[str] = []
     try:
@@ -194,22 +313,21 @@ def create_case_with_documents(
                 correction_reason=correction_reason,
                 correction_created_by=correction_created_by,
             )
-            for position, uploaded_file in enumerate(uploaded_files, start=1):
-                document = CaseDocument(
-                    case=case,
-                    position=position,
-                    original_filename=uploaded_file.name or "",
-                    content_type=(uploaded_file.content_type or "").lower(),
-                    size_bytes=uploaded_file.size or 0,
-                    uploaded_by=user,
-                )
-                # Grava o arquivo antes do INSERT para conhecer o nome no
-                # storage e poder compensar (unlink) se algo falhar depois.
-                document.file.save(document.original_filename, uploaded_file, save=False)
-                stored_name = document.file.name
-                if stored_name:
-                    saved_file_names.append(stored_name)
-                document.save()
+            document = CaseDocument(
+                case=case,
+                position=1,
+                original_filename=file.name or "",
+                content_type=(file.content_type or "").lower(),
+                size_bytes=file.size or 0,
+                uploaded_by=user,
+            )
+            # Grava o arquivo antes do INSERT para conhecer o nome no storage e
+            # poder compensar (unlink) se algo falhar depois.
+            document.file.save(document.original_filename, file, save=False)
+            stored_name = document.file.name
+            if stored_name:
+                saved_file_names.append(stored_name)
+            document.save()
             for uploaded_attachment in attachment_files:
                 attachment = CaseAttachment(
                     case=case,
@@ -228,7 +346,7 @@ def create_case_with_documents(
                 if stored_name:
                     saved_file_names.append(stored_name)
                 attachment.save()
-            set_declared_procedures(case, declared_types, user=user, role=role)
+            set_declared_procedures(case, (procedure_type,), user=user, role=role)
     except BaseException:
         _delete_saved_files_best_effort(saved_file_names)
         raise
@@ -397,13 +515,14 @@ def resubmit_case_documents(
     role: str | None,
     files: Iterable[UploadedFile[Any]],
 ) -> None:
-    """Reenvia os documentos de um caso retido e reenfileira o processamento (R2).
+    """Reenvia os documentos de um caso retido e reenfileira o processamento (R3).
 
-    Valida o lote ANTES da transação reutilizando a validação do slice 001
-    (PDF-only, contagem/tamanho — ``_validate_batch``, fonte única). Na
+    Substitui os documentos do caso retido por **exatamente 1** PDF novo
+    (design D2/P0-1): 0 ou >1 arquivo → erro nomeado sem efeito (validação
+    ANTES da transação, fonte única ``_validate_single_document``). Na
     transação, com ``select_for_update`` + re-check das pré-condições na
     ordem do escopo (criador → retido → sem lock ativo): remove os
-    ``CaseDocument`` antigos, grava os novos (positions 1..N) e zera
+    ``CaseDocument`` antigos, grava o novo (position 1) e zera
     ``extracted_text``/``agency_record_number``/``agency_record_extracted_at``/
     ``manual_review_*``. Exceção após gravação de arquivos físicos dispara a
     limpeza compensatória best-effort dos caminhos novos (D7); os arquivos
@@ -412,14 +531,14 @@ def resubmit_case_documents(
     processamento (inline em dev/teste ou enqueue no cluster pdf — slice 003).
 
     Raises:
-        IntakeValidationError: lote inválido (nada muda).
+        IntakeValidationError: não é exatamente 1 PDF válido (nada muda).
         Http404: caso não é do criador (escopo por criador, sem vazar informação).
         CaseNotRetainedError: caso fora da retenção (sem efeito).
         CaseLockConflictError: lock ativo não-expirado de outro ator (sem efeito).
     """
     _assert_intake_enabled()
     uploaded_files = list(files)
-    _validate_batch(uploaded_files)
+    _validate_single_document(uploaded_files)
 
     with transaction.atomic():
         locked = Case.objects.select_for_update().get(pk=case.pk)
@@ -473,17 +592,17 @@ def create_corrected_resubmission(
     original_case: Case,
     user: User,
     role: str | None,
-    files: Iterable[UploadedFile[Any]],
-    procedure_types: Iterable[str],
+    file: UploadedFile[Any],
+    procedure_type: str,
     correction_reason: str,
     attachments: Sequence[UploadedFile[Any]] = (),
 ) -> Case:
     """Cria um NOVO caso vinculado a um caso encerrado do criador (R2/D4).
 
-    Reenvio corrigido (semântica ats-web, design D4): de um caso ``CLEANED``
-    do próprio criador, o NIR declara um novo lote de documentos + tipos
-    EXPLÍCITOS (nunca herdados — R3) e um motivo obrigatório; no MESMO
-    ``atomic`` nasce um novo caso em ``NEW`` (pipeline completo) vinculado por
+    Reenvio corrigido (semântica ats-web, design D4/D5): de um caso ``CLEANED``
+    do próprio criador, o NIR declara **exatamente 1 PDF**, um tipo único
+    EXPLÍCITO (nunca herdado — R3) e um motivo obrigatório; no MESMO ``atomic``
+    nasce um novo caso em ``NEW`` (pipeline completo) vinculado por
     ``corrects_case`` com ``correction_reason``/``correction_created_by``,
     o original ganha ``CASE_MARKED_SUPERSEDED`` (payload com o id do novo) e o
     novo ganha ``CASE_CORRECTION_CREATED`` (payload com id do original +
@@ -491,18 +610,19 @@ def create_corrected_resubmission(
 
     Validações ANTES de qualquer criação, na ordem do escopo por criador:
     motivo não-vazio (strip), criador (``_assert_owned_by`` → ``Http404`` sem
-    vazar informação), estado ``CLEANED``, lote e tipos (fontes únicas
-    existentes — ``_validate_batch``/``_validate_declared_types``). Anexos
-    são um kwarg ADITIVO (design D2) repassado a ``create_case_with_documents``,
-    que os valida (fonte única) antes de criar qualquer coisa — anexo
-    inválido rejeita o reenvio inteiro sem efeito. O enqueue do worker pdf do
-    novo caso já acontece dentro do ``create_case_with_documents`` (D7); o
-    enqueue em cascata no atomic externo é inofensivo em prod (async
-    pós-commit pelo broker) e, em teste com ``INTAKE_RUN_TASKS_INLINE=False``,
-    é assertado — o comportamento inline é desvio conhecido (design D4).
+    vazar informação), estado ``CLEANED``, o PDF único e o tipo único (fontes
+    únicas do caso único — ``_validate_document_file``/``_validate_declared_type``).
+    Anexos são um kwarg ADITIVO (design D2) repassado a
+    ``create_case_with_documents``, que os valida (fonte única) antes de criar
+    qualquer coisa — anexo inválido rejeita o reenvio inteiro sem efeito. O
+    enqueue do worker pdf do novo caso já acontece dentro do
+    ``create_case_with_documents`` (D7); o enqueue em cascata no atomic externo
+    é inofensivo em prod (async pós-commit pelo broker) e, em teste com
+    ``INTAKE_RUN_TASKS_INLINE=False``, é assertado — o comportamento inline é
+    desvio conhecido (design D4).
 
     Raises:
-        IntakeValidationError: motivo/estado/lote/tipos inválidos (nada muda).
+        IntakeValidationError: motivo/estado/PDF/tipo inválidos (nada muda).
         AttachmentValidationError: anexo inválido (nada muda).
         Http404: caso não é do criador (escopo por criador, sem vazar informação).
     """
@@ -516,17 +636,15 @@ def create_corrected_resubmission(
             "reenvio corrigido disponível apenas para casos encerrados (CLEANED) — "
             f"estado atual {original_case.status!r}"
         )
-    uploaded_files = list(files)
-    declared_types = tuple(procedure_types)
-    _validate_batch(uploaded_files)
-    _validate_declared_types(declared_types)
+    _validate_document_file(file)
+    _validate_declared_type(procedure_type)
 
     with transaction.atomic():
         new_case = create_case_with_documents(
             user=user,
             role=role,
-            files=uploaded_files,
-            procedure_types=declared_types,
+            file=file,
+            procedure_type=procedure_type,
             attachments=attachments,
             corrects_case=original_case,
             correction_reason=reason,

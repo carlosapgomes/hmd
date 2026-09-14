@@ -1,13 +1,16 @@
-"""Serviços de anexos — validação (change 10, slice 001, design D2/D7).
+"""Serviços de anexos — validação (change 10, slice 001, design D2/D7;
+change intake-batch-semantics, slice 001, R2).
 
 ``validate_attachments`` é a FONTE ÚNICA da validação de anexos do intake:
-contagem ≤ ``ATTACHMENTS_MAX_COUNT``, tamanho ≤ ``ATTACHMENTS_MAX_SIZE_MB`` por
-arquivo e MIME ∈ ``ATTACHMENTS_ACCEPTED_MIME_TYPES`` (jpeg/png/pdf), com erro
-nomeado (``AttachmentValidationError``, subclasse de ``ValueError`` — mesmo
-contrato do ``_validate_batch`` do intake). Validação pura, SEM efeito: roda
-antes de qualquer gravação na criação do caso (``create_case_with_documents``).
-Anexos são opcionais — lista vazia é válida (default ``()`` preserva o
-change 04).
+"anexos só com exatamente 1 PDF de relatório" (``pdf_count != 1`` rejeita antes
+de qualquer contagem/tamanho — sem vínculo seguro entre anexo e relatório com
+múltiplos PDFs), contagem ≤ ``ATTACHMENTS_MAX_COUNT``, tamanho ≤
+``ATTACHMENTS_MAX_SIZE_MB`` por arquivo e MIME ∈ ``ATTACHMENTS_ACCEPTED_MIME_TYPES``
+(jpeg/png/pdf), com erro nomeado (``AttachmentValidationError``, subclasse de
+``ValueError`` — mesmo contrato do ``_validate_batch`` do intake). Validação
+pura, SEM efeito: roda antes de qualquer gravação na criação do caso
+(``create_case_with_documents``). Anexos são opcionais — lista vazia é válida
+(default ``()`` preserva o change 04), independente do ``pdf_count``.
 """
 
 from __future__ import annotations
@@ -25,19 +28,29 @@ class AttachmentValidationError(ValueError):
     """Lote de anexos inválido — nada foi persistido (R2/D2)."""
 
 
-def validate_attachments(uploaded_files: Sequence[UploadedFile[Any]]) -> None:
-    """Valida o lote de anexos antes de qualquer gravação (contagem/tamanho/MIME).
+def validate_attachments(uploaded_files: Sequence[UploadedFile[Any]], *, pdf_count: int) -> None:
+    """Valida o lote de anexos antes de qualquer gravação (PDF único/contagem/tamanho/MIME).
 
-    Nomeia no erro o arquivo (tipo/tamanho) ou o limite (contagem), no mesmo
-    espírito do ``_validate_batch`` do intake — anexos são opcionais, então um
-    lote vazio passa sem validação de conteúdo.
+    Regra de vínculo ANTES de qualquer outra checagem: anexos só são aceitos
+    quando o envio tem exatamente 1 PDF de relatório (``pdf_count``); com
+    0/múltiplos PDFs a vinculação segura entre anexos e relatórios é
+    impossível. Depois valida contagem, MIME e tamanho — nomeando no erro o
+    arquivo ou o limite, no mesmo espírito do ``_validate_batch`` do intake.
+    Anexos são opcionais: um lote vazio passa sem validação de conteúdo.
 
     Raises:
-        AttachmentValidationError: lote fora dos limites (nada foi gravado).
+        AttachmentValidationError: anexos sem exatamente 1 PDF ou lote fora
+            dos limites (nada foi gravado).
     """
     files = list(uploaded_files)
     if not files:
         return
+
+    if pdf_count != 1:
+        raise AttachmentValidationError(
+            "Anexos só são permitidos quando o envio tem exatamente 1 relatório "
+            "(PDF). Remova os anexos ou envie apenas 1 PDF."
+        )
 
     max_count = settings.ATTACHMENTS_MAX_COUNT
     if len(files) > max_count:

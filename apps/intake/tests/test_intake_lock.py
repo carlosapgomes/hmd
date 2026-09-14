@@ -4,10 +4,11 @@ Cobre:
 - R1: setting ``INTAKE_ENABLED`` — default true em base/dev/teste e false em
   prod (import de ``config.settings.prod`` com envs dummy, mesmo padrão de
   ``apps/accounts/tests/test_health.py``); override explícito por env.
-- R2: guard ``_assert_intake_enabled()`` no TOPO das três funções de criação
-  (``create_case_with_documents``, ``create_corrected_resubmission``,
-  ``resubmit_case_documents``) — erro nomeado ANTES de qualquer validação/
-  escrita/arquivo, cobrindo callers não-HTTP.
+- R2: guard ``_assert_intake_enabled()`` no TOPO das quatro funções de
+  criação/envio (``submit_report_batch``, ``create_case_with_documents``,
+  ``create_corrected_resubmission``, ``resubmit_case_documents``) — erro
+  nomeado ANTES de qualquer validação/escrita/arquivo, cobrindo callers
+  não-HTTP.
 - R3: nos 3 POSTs (``intake:home``, ``intake:case_resubmit``,
   ``intake:gate_resubmit``) o intake desligado responde com flash + redirect
   (302), nunca 4xx/5xx; GETs seguem renderizando.
@@ -44,6 +45,7 @@ from apps.intake.services import (
     create_case_with_documents,
     create_corrected_resubmission,
     resubmit_case_documents,
+    submit_report_batch,
 )
 
 NIR_ROLE = "nir"
@@ -108,8 +110,8 @@ def _create_case(user: User, pdf_factory: Callable[..., SimpleUploadedFile]) -> 
     return create_case_with_documents(
         user=user,
         role=NIR_ROLE,
-        files=[pdf_factory()],
-        procedure_types=["cat_cardiaco"],
+        file=pdf_factory(),
+        procedure_type="cat_cardiaco",
     )
 
 
@@ -185,9 +187,33 @@ def test_create_case_disabled_raises_before_any_effect(
             create_case_with_documents(
                 user=nir_user,
                 role=NIR_ROLE,
-                files=[pdf_factory()],
-                procedure_types=["cat_cardiaco"],
+                file=pdf_factory(),
+                procedure_type="cat_cardiaco",
                 attachments=[attachment],
+            )
+
+    _assert_no_intake_rows()
+    _assert_storage_empty()
+    assert enqueued == []
+
+
+@pytest.mark.django_db
+def test_submit_batch_disabled_raises_before_any_effect(
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R2/cenário spec: o envio em lote desligado levanta erro nomeado sem
+    criar nada — nem caso/documento, nem enfileiramento (inventário fail-closed)."""
+    enqueued = _enqueue_recorder(monkeypatch)
+
+    with override_settings(INTAKE_ENABLED=False):
+        with pytest.raises(IntakeValidationError, match=INTAKE_DISABLED_MESSAGE):
+            submit_report_batch(
+                user=nir_user,
+                role=NIR_ROLE,
+                files=[pdf_factory(), pdf_factory()],
+                procedure_type="cat_cardiaco",
             )
 
     _assert_no_intake_rows()
@@ -203,11 +229,11 @@ def test_create_case_disabled_guard_precedes_validation(
     desligado, provando que nenhuma validação/write precede o bloqueio."""
     with override_settings(INTAKE_ENABLED=False):
         with pytest.raises(IntakeValidationError, match=INTAKE_DISABLED_MESSAGE):
-            create_case_with_documents(
+            submit_report_batch(
                 user=nir_user,
                 role=NIR_ROLE,
                 files=[],
-                procedure_types=[],
+                procedure_type="",
             )
 
     _assert_no_intake_rows()
@@ -258,8 +284,8 @@ def test_corrected_resubmission_disabled_no_side_effect(
                 original_case=original,
                 user=nir_user,
                 role=NIR_ROLE,
-                files=[pdf_factory(name="corrigido.pdf")],
-                procedure_types=["cat_cardiaco"],
+                file=pdf_factory(name="corrigido.pdf"),
+                procedure_type="cat_cardiaco",
                 correction_reason=CORRECTION_REASON,
             )
 
@@ -392,8 +418,8 @@ def test_enabled_still_creates(
         case = create_case_with_documents(
             user=nir_user,
             role=NIR_ROLE,
-            files=[pdf_factory()],
-            procedure_types=["cat_cardiaco"],
+            file=pdf_factory(),
+            procedure_type="cat_cardiaco",
         )
 
     assert case.status == CaseStatus.NEW
@@ -416,8 +442,8 @@ def test_disabled_guard_is_named_value_error(
             create_case_with_documents(
                 user=nir_user,
                 role=NIR_ROLE,
-                files=[pdf_factory()],
-                procedure_types=["cat_cardiaco"],
+                file=pdf_factory(),
+                procedure_type="cat_cardiaco",
             )
 
     _assert_no_intake_rows()

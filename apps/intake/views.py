@@ -58,10 +58,10 @@ from .services import (
     PDF_CONTENT_TYPE,
     CaseNotRetainedError,
     IntakeValidationError,
-    create_case_with_documents,
     create_corrected_resubmission,
     release_retained_case,
     resubmit_case_documents,
+    submit_report_batch,
 )
 
 logger = logging.getLogger(__name__)
@@ -213,23 +213,28 @@ def intake_home(request: HttpRequest) -> HttpResponse:
             attachments = form.cleaned_data["attachments"]
             procedure_types = form.cleaned_data["procedure_types"]
             try:
-                case = create_case_with_documents(
+                # Slice 002 troca o form para tipo único; aqui o serviço recebe
+                # o tipo único do lote (ausente/múltiplo vira erro do serviço).
+                cases, errors = submit_report_batch(
                     user=user,
                     role=active_role,
                     files=documents,
-                    procedure_types=procedure_types,
+                    procedure_type=procedure_types[0] if len(procedure_types) == 1 else "",
                     attachments=attachments,
                 )
             except ValueError as exc:
                 logger.warning("intake_upload_rejected user=%s motivo=%s", user.pk, exc)
                 form.add_error(None, str(exc))
             else:
-                messages.success(
-                    request,
-                    f"Caso {case.case_id} criado com sucesso.",
-                )
-                # R5 (slice 004): o POST do formulário leva ao detalhe do caso.
-                return redirect(reverse("intake:case_detail", args=[case.case_id]))
+                for message in errors:
+                    form.add_error(None, message)
+                # R5 (slice 004) preservado: 1 caso sem erros → detalhe do caso.
+                if not errors and len(cases) == 1:
+                    messages.success(request, f"Caso {cases[0].case_id} criado com sucesso.")
+                    return redirect(reverse("intake:case_detail", args=[cases[0].case_id]))
+                if not errors and cases:
+                    messages.success(request, f"{len(cases)} casos criados com sucesso.")
+                    return redirect(reverse("intake:my_cases"))
 
     return render(request, "intake/home.html", {"form": form})
 
@@ -427,30 +432,35 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
             attachments = form.cleaned_data["attachments"]
             procedure_types = form.cleaned_data["procedure_types"]
             correction_reason = form.cleaned_data["correction_reason"]
-            try:
-                new_case = create_corrected_resubmission(
-                    original_case=case,
-                    user=user,
-                    role=active_role,
-                    files=documents,
-                    procedure_types=procedure_types,
-                    correction_reason=correction_reason,
-                    attachments=attachments,
-                )
-            except ValueError as exc:
-                logger.warning(
-                    "case_resubmit_rejected user=%s case=%s motivo=%s",
-                    user.pk,
-                    case.case_id,
-                    exc,
-                )
-                form.add_error(None, str(exc))
+            # Slice 002 troca o form para arquivo único; até lá o serviço exige
+            # exatamente 1 PDF (o guard abaixo preserva o contrato do serviço).
+            if len(documents) != 1:
+                form.add_error(None, "O reenvio corrigido aceita exatamente 1 PDF do relatório.")
             else:
-                messages.success(
-                    request,
-                    f"Reenvio corrigido criado — acompanhe o novo caso {new_case.case_id}.",
-                )
-                return redirect(reverse("intake:case_detail", args=[new_case.case_id]))
+                try:
+                    new_case = create_corrected_resubmission(
+                        original_case=case,
+                        user=user,
+                        role=active_role,
+                        file=documents[0],
+                        procedure_type=procedure_types[0] if len(procedure_types) == 1 else "",
+                        correction_reason=correction_reason,
+                        attachments=attachments,
+                    )
+                except ValueError as exc:
+                    logger.warning(
+                        "case_resubmit_rejected user=%s case=%s motivo=%s",
+                        user.pk,
+                        case.case_id,
+                        exc,
+                    )
+                    form.add_error(None, str(exc))
+                else:
+                    messages.success(
+                        request,
+                        f"Reenvio corrigido criado — acompanhe o novo caso {new_case.case_id}.",
+                    )
+                    return redirect(reverse("intake:case_detail", args=[new_case.case_id]))
 
     return render(
         request,

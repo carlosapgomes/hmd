@@ -52,13 +52,13 @@ def _create_case(
     pdf_factory: Callable[..., SimpleUploadedFile],
     *names: str,
 ) -> Case:
-    """Cria um caso NEW com 1–N PDFs (nomes opcionais) e dois tipos declarados."""
-    files = [pdf_factory(name=name) if name else pdf_factory() for name in (names or ("",))]
+    """Cria um caso NEW com 1 PDF (o primeiro nome, se informado) e 1 tipo."""
+    name = names[0] if names else ""
     return create_case_with_documents(
         user=user,
         role=NIR_ROLE,
-        files=files,
-        procedure_types=["art_perif", "cat_cardiaco"],
+        file=pdf_factory(name=name) if name else pdf_factory(),
+        procedure_type="art_perif",
     )
 
 
@@ -134,11 +134,9 @@ def test_detail_shows_docs_events_communications(
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
     """R2/cenário spec: detalhe do próprio caso mostra docs, trilha e comunicações."""
-    case = _retain_for_review(
-        _create_case(nir_user, pdf_factory, "relatorio-sesab.pdf", "pagina-2.pdf")
-    )
+    case = _retain_for_review(_create_case(nir_user, pdf_factory, "relatorio-sesab.pdf"))
     documents = list(case.documents.all())
-    assert len(documents) == 2
+    assert len(documents) == 1
     post_user_communication(
         case, user=nir_user, role=NIR_ROLE, body="Paciente aguardando complemento do relatório."
     )
@@ -197,8 +195,8 @@ def test_serve_document_ok(
     case = create_case_with_documents(
         user=nir_user,
         role=NIR_ROLE,
-        files=[uploaded],
-        procedure_types=["art_perif"],
+        file=uploaded,
+        procedure_type="art_perif",
     )
     document = list(case.documents.all())[0]
 

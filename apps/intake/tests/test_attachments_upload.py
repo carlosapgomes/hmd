@@ -141,11 +141,11 @@ def _assert_nothing_persisted() -> None:
     assert CaseEvent.objects.count() == 0
 
 
-def _valid_batch(
+def _valid_document(
     pdf_factory: Callable[..., SimpleUploadedFile],
-) -> list[SimpleUploadedFile]:
-    """Lote de PDFs fake do relatório (válido para o slice)."""
-    return [pdf_factory(name="relatorio.pdf")]
+) -> SimpleUploadedFile:
+    """PDF fake do relatório (1 arquivo — a primitiva cria 1 caso por PDF)."""
+    return pdf_factory(name="relatorio.pdf")
 
 
 # ── R3: serviço — rows + arquivos no atomic da criação ────────────────────
@@ -161,13 +161,12 @@ def test_create_case_with_attachments(
     gravados com path seguro, ``uploaded_by=user`` e ``status=pending``."""
     jpg = attachment_factory(name="foto-exame.jpg", content_type="image/jpeg")
     pdf_attachment = attachment_factory(name="exame-extra.pdf", content_type="application/pdf")
-    files = _valid_batch(pdf_factory)
 
     case = create_case_with_documents(
         user=nir_user,
         role=NIR_ROLE,
-        files=files,
-        procedure_types=[ANGIO_TYPE],
+        file=_valid_document(pdf_factory),
+        procedure_type=ANGIO_TYPE,
         attachments=[jpg, pdf_attachment],
     )
 
@@ -199,19 +198,19 @@ def test_create_without_attachments_unchanged(
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
     """R3/regressão change 04: sem o kwarg ``attachments`` (default ``()``) a
-    criação pura segue idêntica — nenhuma row de anexo, casos/docs/declaração
+    criação pura segue idêntica — nenhuma row de anexo, caso/documento/declaração
     intactos."""
-    files = [pdf_factory(name="relatorio-1.pdf"), pdf_factory(name="relatorio-2.pdf")]
+    uploaded = pdf_factory(name="relatorio-1.pdf")
 
     case = create_case_with_documents(
         user=nir_user,
         role=NIR_ROLE,
-        files=files,
-        procedure_types=[ANGIO_TYPE],
+        file=uploaded,
+        procedure_type=ANGIO_TYPE,
     )
 
     assert case.status == CaseStatus.NEW
-    assert case.documents.count() == 2
+    assert case.documents.count() == 1
     assert case.attachments.count() == 0
     assert CaseAttachment.objects.count() == 0
     assert CaseProcedure.objects.filter(case=case, declared_by_nir=True).count() == 1
@@ -230,8 +229,8 @@ def test_invalid_attachment_type_rejects_all(
         create_case_with_documents(
             user=nir_user,
             role=NIR_ROLE,
-            files=_valid_batch(pdf_factory),
-            procedure_types=[ANGIO_TYPE],
+            file=_valid_document(pdf_factory),
+            procedure_type=ANGIO_TYPE,
             attachments=[attachment_factory(name="diagrama.gif", content_type="image/gif")],
         )
 
@@ -256,8 +255,8 @@ def test_invalid_attachment_size_rejects_all(
             create_case_with_documents(
                 user=nir_user,
                 role=NIR_ROLE,
-                files=_valid_batch(pdf_factory),
-                procedure_types=[ANGIO_TYPE],
+                file=_valid_document(pdf_factory),
+                procedure_type=ANGIO_TYPE,
                 attachments=[oversized],
             )
 
@@ -283,8 +282,8 @@ def test_invalid_attachment_count_rejects_all(
             create_case_with_documents(
                 user=nir_user,
                 role=NIR_ROLE,
-                files=_valid_batch(pdf_factory),
-                procedure_types=[ANGIO_TYPE],
+                file=_valid_document(pdf_factory),
+                procedure_type=ANGIO_TYPE,
                 attachments=many,
             )
 
@@ -312,8 +311,8 @@ def test_resubmission_with_attachments(
         original_case=original,
         user=nir_user,
         role=NIR_ROLE,
-        files=_valid_batch(pdf_factory),
-        procedure_types=[ANGIO_TYPE],
+        file=_valid_document(pdf_factory),
+        procedure_type=ANGIO_TYPE,
         correction_reason="laudo com dados divergentes do exame original",
         attachments=[jpg],
     )
@@ -350,8 +349,8 @@ def test_resubmission_without_attachments_unchanged(
         original_case=original,
         user=nir_user,
         role=NIR_ROLE,
-        files=_valid_batch(pdf_factory),
-        procedure_types=[ANGIO_TYPE],
+        file=_valid_document(pdf_factory),
+        procedure_type=ANGIO_TYPE,
         correction_reason="revisão do laudo",
     )
 
@@ -378,8 +377,8 @@ def test_resubmission_invalid_attachment_rejected(
             original_case=original,
             user=nir_user,
             role=NIR_ROLE,
-            files=_valid_batch(pdf_factory),
-            procedure_types=[ANGIO_TYPE],
+            file=_valid_document(pdf_factory),
+            procedure_type=ANGIO_TYPE,
             correction_reason="revisão do laudo",
             attachments=[
                 SimpleUploadedFile(
@@ -458,8 +457,8 @@ def test_detail_lists_attachments_status(
     case = create_case_with_documents(
         user=nir_user,
         role=NIR_ROLE,
-        files=_valid_batch(pdf_factory),
-        procedure_types=[ANGIO_TYPE],
+        file=_valid_document(pdf_factory),
+        procedure_type=ANGIO_TYPE,
         attachments=[attachment_factory(name="evidencia-1.jpg", content_type="image/jpeg")],
     )
     attachment = case.attachments.get()
@@ -491,8 +490,8 @@ def test_detail_hides_block_without_attachments(
     case = create_case_with_documents(
         user=nir_user,
         role=NIR_ROLE,
-        files=_valid_batch(pdf_factory),
-        procedure_types=[ANGIO_TYPE],
+        file=_valid_document(pdf_factory),
+        procedure_type=ANGIO_TYPE,
     )
     client.force_login(nir_user)
 

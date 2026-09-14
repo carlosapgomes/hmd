@@ -1,41 +1,46 @@
-"""Testes de criação de caso com upload multi-PDF (slice 001 do intake NIR).
+"""Testes do envio em lote e da primitiva de caso único (slice 001, R1/R2).
 
-Cobre R1 (``CaseDocument`` ordenado + unicidade (case, position)), R2 (campos
-novos do ``Case``: ``extracted_text``/``manual_review_required``/
-``manual_review_reason``), R3 (serviço atômico — validação 100% antes de
-persistir; erro nomeia arquivo/tipo), R4/R5 (fluxo via view com papel ativo
-``nir``; papel diferente → 403) e os 3 cenários da spec "Criação de caso com
-upload multi-PDF e declaração de tipos".
+R1: ``submit_report_batch`` cria **um caso por PDF** (tipo único por lote),
+com falhas parciais (arquivo inválido/erro de persistência por arquivo
+preservando os casos já criados), limites de lote (contagem/tamanho total) e
+regra de anexos × nº de PDFs (anexos só com exatamente 1 PDF; multi-PDF cria
+casos sem anexos; 1 PDF + anexo inválido aborta tudo). R2: a primitiva
+``create_case_with_documents`` cria atomicamente 1 caso com 1 documento, 1
+tipo e anexos opcionais. Cobre também o fluxo via view (papel ativo ``nir``;
+papel diferente → 403).
+
+Os casos nascem em ``NEW`` (R7): o módulo desliga o processamento automático
+(``INTAKE_RUN_TASKS_INLINE=False``) porque os PDFs fake não têm camada de
+texto — o caminho inline em si é coberto em test_tasks.py.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.db import IntegrityError
 from django.test import Client, override_settings
 from django.urls import reverse
 
 from apps.accounts.models import User
 from apps.cases.events import CaseEventType
 from apps.cases.models import Case, CaseDocument, CaseEvent, CaseProcedure, CaseStatus
-from apps.intake.services import create_case_with_documents
+from apps.cases.procedures import set_declared_procedures
+from apps.intake.services import create_case_with_documents, submit_report_batch
 
 NIR_ROLE = "nir"
 DOCTOR_ROLE = "doctor"
+ANGIO_TYPE = "art_perif"
 
 
 @pytest.fixture(autouse=True)
 def _creation_without_processing() -> Iterator[None]:
-    """Criação apenas (slice 001): processamento desligado nos testes deste módulo.
+    """Criação apenas (R7): processamento desligado nos testes deste módulo.
 
-    Os PDFs fake destes testes não têm camada de texto/estrutura lida pelo
-    extrator — o enqueue pós-transação (slice 003) roda inline por default na
-    suíte e processaria/descartaria esses arquivos. Os testes de criação fixam
-    o comportamento que testam (criação até NEW) desligando o processamento;
-    o caminho inline em si é coberto em test_tasks.py.
+    Sem o override, o caso avançaria sozinho (inline pinado no test.py) com os
+    PDFs fake (sem camada de texto); os testes fixam o comportamento "nasce em
+    NEW".
     """
 
     with override_settings(INTAKE_RUN_TASKS_INLINE=False):
@@ -43,54 +48,63 @@ def _creation_without_processing() -> Iterator[None]:
 
 
 def _assert_nothing_persisted() -> None:
-    """Zero efeito em banco: validação falhou antes de qualquer escrita (R3)."""
+    """Zero efeito em banco: validação falhou antes de qualquer escrita (R2)."""
     assert Case.objects.count() == 0
     assert CaseDocument.objects.count() == 0
     assert CaseProcedure.objects.count() == 0
     assert CaseEvent.objects.count() == 0
 
 
+def _attachment(name: str, content_type: str = "image/jpeg") -> SimpleUploadedFile:
+    """Anexo fake (conteúdo não lido neste slice)."""
+    return SimpleUploadedFile(name, b"anexo fake", content_type=content_type)
+
+
+# ── R2: primitiva de caso único ───────────────────────────────────────────
+
+
 @pytest.mark.django_db
-def test_documents_ordered_and_unique(
+def test_single_case_primitive_single_document_and_type(
     nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
 ) -> None:
-    """R1: documentos ordenados por position + constraint única (case, position)."""
+    """R2: a primitiva cria 1 caso NEW com 1 documento (position 1), o tipo
+    único declarado e o evento de declaração na trilha."""
+    uploaded = pdf_factory(name="relatorio.pdf")
     case = create_case_with_documents(
         user=nir_user,
         role=NIR_ROLE,
-        files=[pdf_factory(), pdf_factory(), pdf_factory()],
-        procedure_types=["art_perif"],
+        file=uploaded,
+        procedure_type=ANGIO_TYPE,
     )
 
-    assert [document.position for document in case.documents.all()] == [1, 2, 3]
-    prefix = f"case_documents/{case.case_id}/"
-    assert all((document.file.name or "").startswith(prefix) for document in case.documents.all())
-    assert all((document.file.name or "").endswith(".pdf") for document in case.documents.all())
+    assert case.status == CaseStatus.NEW
+    assert case.created_by == nir_user
+    documents = list(case.documents.all())
+    assert len(documents) == 1
+    assert documents[0].position == 1
+    assert documents[0].original_filename == "relatorio.pdf"
+    assert documents[0].content_type == "application/pdf"
+    assert documents[0].uploaded_by == nir_user
+    assert (documents[0].file.name or "").startswith(f"case_documents/{case.case_id}/")
 
-    # Segunda posição no mesmo caso viola a constraint única.
-    duplicate = CaseDocument(
-        case=case,
-        file=pdf_factory(),
-        position=1,
-        original_filename="duplicado.pdf",
-        content_type="application/pdf",
-        size_bytes=1,
-        uploaded_by=nir_user,
-    )
-    with pytest.raises(IntegrityError):
-        duplicate.save()
+    declared_rows = CaseProcedure.objects.filter(case=case, declared_by_nir=True)
+    assert {row.procedure_type for row in declared_rows} == {ANGIO_TYPE}
+    event = case.events.get(event_type=CaseEventType.CASE_PROCEDURES_DECLARED)
+    assert event.actor == nir_user
+    assert event.actor_role == NIR_ROLE
+    assert event.payload == {"procedure_types": [ANGIO_TYPE]}
 
 
 @pytest.mark.django_db
-def test_case_new_fields_defaults(
+def test_single_case_primitive_new_fields_defaults(
     nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
 ) -> None:
     """R2: campos de extração/gate chegam vazios/neutros na criação."""
     case = create_case_with_documents(
         user=nir_user,
         role=NIR_ROLE,
-        files=[pdf_factory()],
-        procedure_types=["cat_cardiaco"],
+        file=pdf_factory(),
+        procedure_type=ANGIO_TYPE,
     )
 
     assert case.status == CaseStatus.NEW
@@ -100,153 +114,356 @@ def test_case_new_fields_defaults(
 
 
 @pytest.mark.django_db
-def test_create_atomic_success(
+def test_single_case_primitive_rejects_non_pdf(
     nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
 ) -> None:
-    """R3/cenário spec: 2 PDFs + 2 tipos → caso NEW, docs ordenados, 2 rows declaradas e evento."""
-    files = [pdf_factory(), pdf_factory()]
-    case = create_case_with_documents(
-        user=nir_user,
-        role=NIR_ROLE,
-        files=files,
-        procedure_types=["art_perif", "cat_cardiaco"],
-    )
-
-    assert case.created_by == nir_user
-    assert case.status == CaseStatus.NEW
-
-    documents = list(case.documents.all())
-    assert len(documents) == 2
-    assert [document.position for document in documents] == [1, 2]
-    assert [document.original_filename for document in documents] == [
-        files[0].name,
-        files[1].name,
-    ]
-    assert all(document.content_type == "application/pdf" for document in documents)
-    assert all(document.uploaded_by == nir_user for document in documents)
-    assert all(document.size_bytes > 0 for document in documents)
-    prefix = f"case_documents/{case.case_id}/"
-    assert all((document.file.name or "").startswith(prefix) for document in documents)
-    assert all((document.file.name or "").endswith(".pdf") for document in documents)
-
-    declared_rows = CaseProcedure.objects.filter(case=case, declared_by_nir=True)
-    assert len(declared_rows) == 2
-    assert {row.procedure_type for row in declared_rows} == {"art_perif", "cat_cardiaco"}
-
-    event = case.events.get(event_type=CaseEventType.CASE_PROCEDURES_DECLARED)
-    assert event.actor == nir_user
-    assert event.actor_role == NIR_ROLE
-    assert event.payload == {"procedure_types": ["art_perif", "cat_cardiaco"]}
-
-
-@pytest.mark.django_db
-def test_non_pdf_rejects_all(
-    nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
-) -> None:
-    """R3/cenário spec: 1 PDF + 1 imagem rejeitam a criação inteira nomeando o arquivo."""
-    batch = [pdf_factory(), pdf_factory(name="imagem.png", content_type="image/png")]
-
+    """R2: arquivo não-PDF é rejeitado nomeando o arquivo, sem persistir nada."""
     with pytest.raises(ValueError, match="imagem.png"):
         create_case_with_documents(
             user=nir_user,
             role=NIR_ROLE,
-            files=batch,
-            procedure_types=["art_perif"],
+            file=pdf_factory(name="imagem.png", content_type="image/png"),
+            procedure_type=ANGIO_TYPE,
         )
 
     _assert_nothing_persisted()
 
 
 @pytest.mark.django_db
-def test_non_pdf_extension_rejects(
+def test_single_case_primitive_rejects_extension(
     nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
 ) -> None:
-    """R3: PDF com content-type mas extensão errada também é rejeitado nomeando o arquivo."""
-    batch = [pdf_factory(name="relatorio.txt")]
-
+    """R2: PDF com content-type mas extensão errada também é rejeitado."""
     with pytest.raises(ValueError, match="relatorio.txt"):
         create_case_with_documents(
             user=nir_user,
             role=NIR_ROLE,
-            files=batch,
-            procedure_types=["art_perif"],
+            file=pdf_factory(name="relatorio.txt"),
+            procedure_type=ANGIO_TYPE,
         )
 
     _assert_nothing_persisted()
 
 
 @pytest.mark.django_db
-def test_over_count_limit_rejects(
+def test_single_case_primitive_rejects_absent_type(
     nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
 ) -> None:
-    """R3/cenário spec: acima do limite de documentos → rejeição antes de persistir."""
-    batch = [pdf_factory(), pdf_factory(), pdf_factory()]
-
-    with override_settings(INTAKE_MAX_DOCUMENTS=2):
-        with pytest.raises(ValueError, match="Máximo de 2"):
-            create_case_with_documents(
-                user=nir_user,
-                role=NIR_ROLE,
-                files=batch,
-                procedure_types=["art_perif"],
-            )
+    """R2: tipo ausente é rejeitado sem criar nada."""
+    with pytest.raises(ValueError, match="único tipo"):
+        create_case_with_documents(
+            user=nir_user,
+            role=NIR_ROLE,
+            file=pdf_factory(),
+            procedure_type="",
+        )
 
     _assert_nothing_persisted()
 
 
 @pytest.mark.django_db
-def test_file_over_size_limit_rejects(
+def test_single_case_primitive_rejects_invalid_type(
     nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
 ) -> None:
-    """R3: arquivo acima de INTAKE_MAX_FILE_MB é rejeitado nomeando o arquivo."""
+    """R2: tipo fora do catálogo rejeita nomeando o tipo, sem criar nada."""
+    with pytest.raises(ValueError, match="fora do catálogo"):
+        create_case_with_documents(
+            user=nir_user,
+            role=NIR_ROLE,
+            file=pdf_factory(),
+            procedure_type="procedimento_inexistente",
+        )
+
+    _assert_nothing_persisted()
+
+
+@pytest.mark.django_db
+def test_single_case_primitive_file_over_size_limit(
+    nir_user: User,
+) -> None:
+    """R2: arquivo acima de INTAKE_MAX_UPLOAD_BYTES_PER_FILE é rejeitado
+    nomeando o arquivo."""
     big_file = SimpleUploadedFile(
         "grande.pdf",
         b"x" * (1024 * 1024 + 1),
         content_type="application/pdf",
     )
 
-    with override_settings(INTAKE_MAX_FILE_MB=1):
+    with override_settings(INTAKE_MAX_UPLOAD_BYTES_PER_FILE=1):
         with pytest.raises(ValueError, match="grande.pdf"):
             create_case_with_documents(
                 user=nir_user,
                 role=NIR_ROLE,
-                files=[big_file],
-                procedure_types=["art_perif"],
+                file=big_file,
+                procedure_type=ANGIO_TYPE,
             )
 
     _assert_nothing_persisted()
 
 
 @pytest.mark.django_db
-def test_requires_at_least_one_type(
+def test_single_case_primitive_invalid_attachment_rejects_all(
     nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
 ) -> None:
-    """R3: lote sem tipo declarado é rejeitado sem criar nada."""
-    with pytest.raises(ValueError, match="ao menos um tipo"):
+    """R2: anexo inválido rejeita TUDO antes de qualquer gravação."""
+    with pytest.raises(ValueError, match="diagrama.gif"):
         create_case_with_documents(
             user=nir_user,
             role=NIR_ROLE,
-            files=[pdf_factory()],
-            procedure_types=[],
+            file=pdf_factory(),
+            procedure_type=ANGIO_TYPE,
+            attachments=[_attachment("diagrama.gif", "image/gif")],
         )
 
+    _assert_nothing_persisted()
+
+
+# ── R1: envio em lote ─────────────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+def test_submit_batch_creates_one_case_per_pdf(
+    nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
+) -> None:
+    """R1/cenário spec: 2 PDFs válidos + 1 tipo → 2 casos independentes em NEW,
+    cada um com 1 documento e o tipo declarado."""
+    files = [pdf_factory(name="a.pdf"), pdf_factory(name="b.pdf")]
+
+    cases, errors = submit_report_batch(
+        user=nir_user,
+        role=NIR_ROLE,
+        files=files,
+        procedure_type=ANGIO_TYPE,
+    )
+
+    assert errors == []
+    assert len(cases) == 2
+    assert {case.status for case in cases} == {CaseStatus.NEW}
+    assert [case.documents.get().original_filename for case in cases] == ["a.pdf", "b.pdf"]
+    for case in cases:
+        assert case.documents.count() == 1
+        assert {row.procedure_type for row in case.procedures.filter(declared_by_nir=True)} == {
+            ANGIO_TYPE
+        }
+
+
+@pytest.mark.django_db
+def test_submit_batch_invalid_file_rejects_only_it(
+    nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
+) -> None:
+    """R1/cenário spec: lote com 2 PDFs válidos + 1 imagem cria os 2 casos e
+    lista o erro nomeado do arquivo inválido, sem interromper os demais."""
+    files = [
+        pdf_factory(name="a.pdf"),
+        pdf_factory(name="imagem.png", content_type="image/png"),
+        pdf_factory(name="b.pdf"),
+    ]
+
+    cases, errors = submit_report_batch(
+        user=nir_user,
+        role=NIR_ROLE,
+        files=files,
+        procedure_type=ANGIO_TYPE,
+    )
+
+    assert [case.documents.get().original_filename for case in cases] == ["a.pdf", "b.pdf"]
+    assert len(errors) == 1
+    assert "imagem.png" in errors[0]
+
+
+@pytest.mark.django_db
+def test_submit_batch_absent_type_rejects_all(
+    nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
+) -> None:
+    """R1: tipo ausente rejeita o lote inteiro (nenhum caso criado)."""
+    cases, errors = submit_report_batch(
+        user=nir_user,
+        role=NIR_ROLE,
+        files=[pdf_factory(), pdf_factory()],
+        procedure_type="",
+    )
+
+    assert cases == []
+    assert len(errors) == 1
+    assert "único tipo" in errors[0]
     _assert_nothing_persisted()
 
 
 @pytest.mark.django_db
-def test_invalid_procedure_type_rejects_all(
+def test_submit_batch_invalid_type_rejects_all(
     nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
 ) -> None:
-    """R3: tipo fora do catálogo rejeita o lote inteiro nomeando o tipo."""
-    with pytest.raises(ValueError, match="fora do catálogo"):
-        create_case_with_documents(
+    """R1/cenário spec: tipo fora do catálogo rejeita o lote inteiro."""
+    cases, errors = submit_report_batch(
+        user=nir_user,
+        role=NIR_ROLE,
+        files=[pdf_factory()],
+        procedure_type="procedimento_inexistente",
+    )
+
+    assert cases == []
+    assert len(errors) == 1
+    assert "fora do catálogo" in errors[0]
+    _assert_nothing_persisted()
+
+
+@pytest.mark.django_db
+def test_submit_batch_empty_rejects(
+    nir_user: User,
+) -> None:
+    """R1: lote vazio é rejeitado antes de qualquer persistência."""
+    cases, errors = submit_report_batch(
+        user=nir_user,
+        role=NIR_ROLE,
+        files=[],
+        procedure_type=ANGIO_TYPE,
+    )
+
+    assert cases == []
+    assert len(errors) == 1
+    assert "ao menos um" in errors[0]
+    _assert_nothing_persisted()
+
+
+@pytest.mark.django_db
+def test_submit_batch_count_limit_rejects_all(
+    nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
+) -> None:
+    """R1/cenário spec: acima do limite de arquivos por lote → nada criado."""
+    files = [pdf_factory() for _ in range(3)]
+
+    with override_settings(INTAKE_MAX_FILES_PER_BATCH=2):
+        cases, errors = submit_report_batch(
             user=nir_user,
             role=NIR_ROLE,
-            files=[pdf_factory()],
-            procedure_types=["art_perif", "procedimento_inexistente"],
+            files=files,
+            procedure_type=ANGIO_TYPE,
         )
 
+    assert cases == []
+    assert len(errors) == 1
+    assert "Máximo de 2" in errors[0]
     _assert_nothing_persisted()
+
+
+@pytest.mark.django_db
+def test_submit_batch_total_size_limit_rejects_all(
+    nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
+) -> None:
+    """R1/cenário spec: tamanho total do lote acima do limite → nada criado."""
+    files = [pdf_factory(), pdf_factory()]
+
+    with override_settings(INTAKE_MAX_UPLOAD_BYTES_PER_BATCH=1):
+        cases, errors = submit_report_batch(
+            user=nir_user,
+            role=NIR_ROLE,
+            files=files,
+            procedure_type=ANGIO_TYPE,
+        )
+
+    assert cases == []
+    assert len(errors) == 1
+    assert "Tamanho total do lote" in errors[0]
+    _assert_nothing_persisted()
+
+
+@pytest.mark.django_db
+def test_submit_batch_single_pdf_attachments_saved(
+    nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
+) -> None:
+    """R1: 1 PDF + anexos válidos → anexos gravados no caso único."""
+    cases, errors = submit_report_batch(
+        user=nir_user,
+        role=NIR_ROLE,
+        files=[pdf_factory()],
+        procedure_type=ANGIO_TYPE,
+        attachments=[_attachment("foto.jpg")],
+    )
+
+    assert errors == []
+    assert len(cases) == 1
+    assert cases[0].attachments.count() == 1
+
+
+@pytest.mark.django_db
+def test_submit_batch_single_pdf_invalid_attachment_aborts(
+    nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
+) -> None:
+    """R1/cenário spec: 1 PDF + anexo inválido aborta tudo (nada criado)."""
+    cases, errors = submit_report_batch(
+        user=nir_user,
+        role=NIR_ROLE,
+        files=[pdf_factory()],
+        procedure_type=ANGIO_TYPE,
+        attachments=[_attachment("diagrama.gif", "image/gif")],
+    )
+
+    assert cases == []
+    assert len(errors) == 1
+    assert "diagrama.gif" in errors[0]
+    _assert_nothing_persisted()
+
+
+@pytest.mark.django_db
+def test_submit_batch_multi_pdf_with_attachments_creates_without_attachments(
+    nir_user: User, pdf_factory: Callable[..., SimpleUploadedFile]
+) -> None:
+    """R1/cenário spec: 2 PDFs + anexos → 2 casos SEM anexos e o erro informa
+    que anexos só são permitidos com exatamente 1 relatório."""
+    cases, errors = submit_report_batch(
+        user=nir_user,
+        role=NIR_ROLE,
+        files=[pdf_factory(), pdf_factory()],
+        procedure_type=ANGIO_TYPE,
+        attachments=[_attachment("foto.jpg")],
+    )
+
+    assert len(cases) == 2
+    assert all(case.attachments.count() == 0 for case in cases)
+    assert len(errors) == 1
+    assert "exatamente 1" in errors[0]
+
+
+@pytest.mark.django_db
+def test_submit_batch_persistence_failure_preserves_earlier_cases(
+    monkeypatch: pytest.MonkeyPatch,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R1/cenário spec: exceção de persistência no 2º caso vira erro por
+    arquivo (nome + "erro interno") e o 1º caso permanece criado e íntegro."""
+    real = set_declared_procedures
+    calls = {"count": 0}
+
+    def _flaky(
+        case: Case,
+        procedure_types: Iterable[str],
+        *,
+        user: User | None,
+        role: str | None,
+    ) -> None:
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise RuntimeError("falha simulada de persistência")
+        real(case, procedure_types, user=user, role=role)
+
+    monkeypatch.setattr("apps.intake.services.set_declared_procedures", _flaky)
+
+    cases, errors = submit_report_batch(
+        user=nir_user,
+        role=NIR_ROLE,
+        files=[pdf_factory(name="a.pdf"), pdf_factory(name="b.pdf")],
+        procedure_type=ANGIO_TYPE,
+    )
+
+    assert [case.documents.get().original_filename for case in cases] == ["a.pdf"]
+    assert len(errors) == 1
+    assert "b.pdf" in errors[0]
+    assert "erro interno" in errors[0]
+    assert Case.objects.count() == 1
+
+
+# ── Fluxo via view (R4/R5 do slice original — UI migrada no slice 002) ─────
 
 
 @pytest.mark.django_db
@@ -255,11 +472,8 @@ def test_upload_flow_via_view(
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R4/R5: GET renderiza o form; POST cria o caso e redireciona ao detalhe.
-
-    O destino do redirect mudou no slice 004 (R5): do POST de criação vai para
-    o detalhe do caso criado (antes apontava à home placeholder).
-    """
+    """GET renderiza o form; POST de 1 PDF + 1 tipo cria o caso e redireciona
+    ao detalhe (contrato redirect×resultado preservado: 1 caso sem erros)."""
     client.force_login(nir_user)
     url = reverse("intake:home")
 
@@ -273,8 +487,8 @@ def test_upload_flow_via_view(
     response = client.post(
         url,
         {
-            "documents": [pdf_factory(), pdf_factory()],
-            "procedure_types": ["art_perif", "cat_cardiaco"],
+            "documents": [pdf_factory()],
+            "procedure_types": [ANGIO_TYPE],
         },
         follow=True,
     )
@@ -283,13 +497,11 @@ def test_upload_flow_via_view(
     case = Case.objects.get()
     assert case.status == CaseStatus.NEW
     assert case.created_by == nir_user
-    assert case.documents.count() == 2
+    assert case.documents.count() == 1
     assert {row.procedure_type for row in case.procedures.filter(declared_by_nir=True)} == {
-        "art_perif",
-        "cat_cardiaco",
+        ANGIO_TYPE
     }
     assert "criado com sucesso" in response.content.decode()
-    # R5 (slice 004): o redirect final do POST é o detalhe do caso criado.
     assert response.redirect_chain[-1][0].endswith(
         reverse("intake:case_detail", args=[str(case.case_id)])
     )
@@ -301,13 +513,16 @@ def test_upload_invalid_rerenders_with_error(
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R4: lote inválido re-renderiza o form com o resumo nomeando o arquivo."""
+    """R4: arquivo inválido re-renderiza o form com o resumo nomeando o arquivo."""
     client.force_login(nir_user)
     url = reverse("intake:home")
 
     response = client.post(
         url,
-        {"documents": [pdf_factory(name="foto.jpg", content_type="image/jpeg")]},
+        {
+            "documents": [pdf_factory(name="foto.jpg", content_type="image/jpeg")],
+            "procedure_types": [ANGIO_TYPE],
+        },
     )
 
     assert response.status_code == 200

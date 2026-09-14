@@ -416,8 +416,8 @@ def test_inline_full_chain_pdf_to_anonymization(monkeypatch: pytest.MonkeyPatch)
         case = create_case_with_documents(
             user=user,
             role=SYSTEM_ROLE,
-            files=[_chain_report_pdf()],
-            procedure_types=["art_perif", "cat_cardiaco"],
+            file=_chain_report_pdf(),
+            procedure_type="art_perif",
         )
 
     case.refresh_from_db()

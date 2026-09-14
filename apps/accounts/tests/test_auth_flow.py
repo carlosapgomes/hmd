@@ -14,9 +14,8 @@ change admin-local-identity). Os fluxos aqui exercitam esse caminho:
 - R5: usuário autenticado em ``/login/`` é redirecionado para a home.
 """
 
-from collections.abc import Sequence
-
 import re
+from collections.abc import Sequence
 
 import pytest
 from django.conf import settings

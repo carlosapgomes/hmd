@@ -4,6 +4,24 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.8] — 2026-09-14
+
+**Workers prontos para a fase 2** (change `phase2-workers-secrets`): a chave
+da OpenRouter passa a ser lida **por arquivo** (`OPENROUTER_API_KEY_FILE`,
+com precedência sobre a env e fail-closed em arquivo ilegível/vazio —
+primitiva extraída de `db.py` com re-export, consumidores intactos) e é
+montada **somente** nos workers que chamam a OpenRouter (`worker-llm`:
+LLM1+LLM2; `worker-attachments`: LLM1+VISION) — `web`, `worker-pdf`,
+`worker-anonymization` e `migrate` ficam sem nenhuma env OpenRouter (guard
+anti-vazamento por mutação). `worker-anonymization` ganha
+`ANONYMIZATION_SPACY_MODEL` ajustável (lg→md em host enxuto). Limites de
+memória ajustáveis por env nos 4 workers (pdf 512m · anonymization **2560m**
+— cluster 2×engine spaCy lg — · llm 512m · attachments 512m). Checklist de
+ativação da fase 2 no README (pin da imagem nova ANTES dos workers — o helper
+viaja na imagem —, `llm_check` dentro do worker, rollback por env).
+`INTAKE_ENABLED` permanece `false` por default: nada ativa sozinho.
+Baseline 1175 testes.
+
 ## [0.1.7] — 2026-09-14
 
 **Semântica clínica do intake corrigida** (change `intake-batch-semantics`,

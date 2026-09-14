@@ -18,7 +18,7 @@ Python 3.13+ · Django 5.2+ · PostgreSQL 17+ · Bootstrap 5.3 · Vanilla JS · 
 
 ## Status
 
-**v0.1.7 — piloto de produção em operação (fase 1)**: autenticação por AD
+**v0.1.8 — piloto de produção em operação (fase 1; workers prontos p/ fase 2)**: autenticação por AD
 (Kerberos), admin, painel, manual e navegação em `https://hmd.projetoshgrs.com`
 atrás de Cloudflare→Caddy; imagem GHCR não-root (uid 10001), segredos 100% por
 arquivo, intake/workers/egress LLM desligados (fase 1). Ciclo do caso completo
@@ -27,7 +27,7 @@ fail-closed, pipeline LLM por tipo (só tokens), decisão médica consultiva,
 agendamento em 2 unidades com labels configuráveis, resposta final/ciência,
 notificações, painel, PWA e manual. Guard de intranet por conjunto de papéis
 com encerramento de sessão no bloqueio externo.
-1160 testes · 14 specs (`openspec/`) · 18 changes arquivados. Veja `CHANGELOG.md`.
+1175 testes · 15 specs (`openspec/`) · 19 changes arquivados. Veja `CHANGELOG.md`.
 
 ## Ambiente de desenvolvimento
 
@@ -248,7 +248,7 @@ chown 10001:10001 secrets/*.txt
 
 **Configuração (`.env` no host, fora do Git).** Nomes novos documentados em
 `.env.example`: `HMD_IMAGE_TAG` (**obrigatório pinado tag+digest**:
-`v0.1.7@sha256:cd4942bc535f3bd805657b9aa4896c7922a59e0cdee829bc8af73e640285654a`), as envs de arquivo de segredo acima, os nomes de
+`v0.1.8@sha256:<digest>`), as envs de arquivo de segredo acima, os nomes de
 banco `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER` (+ `MIGRATOR_DB_USER`, role DDL
 usada só pelo passo migrate) — o compose não usa mais URL de banco —,
 `CSRF_TRUSTED_ORIGINS`, `PROXY_SSL_HEADER` e `DJANGO_SUPERUSER_USERNAME` (env

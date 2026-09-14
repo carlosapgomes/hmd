@@ -19,14 +19,16 @@ anonimização carrega spaCy lg ~541 MB).
   módulo próprio).
 - Compose produção: novo secret `openrouter_api_key`
   (`${OPENROUTER_API_KEY_FILE:-./secrets/openrouter_api_key.txt}`) montado
-  SÓ em `worker-llm` e `worker-attachments` (únicos com egress); envs
-  `LLM1_MODEL`/`LLM2_MODEL`/`VISION_MODEL` (+`LLM_TIMEOUT_SECONDS`/
+  SÓ em `worker-llm` e `worker-attachments` (únicos que chamam a OpenRouter); envs
+  `LLM1_MODEL`/`LLM2_MODEL`/`VISION_MODEL` conforme o consumidor (+`LLM_TIMEOUT_SECONDS`/
   `OPENROUTER_BASE_URL` opcionais) com passthrough `${VAR:-}` nesses mesmos
   dois serviços.
-- `deploy.resources.limits` (memória, env-tunable com default) nos 4 workers:
-  pdf 512m · anonymization 1536m · llm 512m · attachments 512m.
-- `.env.example` (seção fase 2: chave por arquivo + modelos obrigatórios +
-  limites) e README (checklist de ativação fase 2 + rollback por env).
+- `mem_limit` (estilo já usado pelo `web`, env-tunable com default) nos 4 workers:
+  pdf 512m · anonymization 2560m (cluster 2×engine) · llm 512m · attachments 512m.
+- `worker-anonymization` ganha `ANONYMIZATION_SPACY_MODEL` (lg→md em host
+  enxuto, sem receber a chave). `.env.example` (seção fase 2: chave por
+  arquivo + modelos obrigatórios + limites + calibração) e README (checklist
+  de ativação fase 2 — pin de imagem NOVA antes dos workers — + rollback).
 - `INTAKE_ENABLED` PERMANACE `${INTAKE_ENABLED:-false}` — a ativação em si
   continua sendo 1 env no host (decisão de operação, não de release).
 

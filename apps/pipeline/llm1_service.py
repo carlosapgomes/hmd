@@ -30,6 +30,7 @@ reconciliada com o declarado e registrada via ``record_detected_procedures``
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -60,6 +61,8 @@ from apps.pipeline.procedure_reconciliation import (
 from apps.pipeline.ptbr_language_guard import collect_forbidden_terms
 from apps.pipeline.schemas import build_llm1_schema, normalize_schema_for_response_format
 from apps.pipeline.schemas.base import StrictModel
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
@@ -220,12 +223,27 @@ def _assert_tokens_only(case: Case, artifact: dict[str, Any]) -> None:
     """
     serialized = json.dumps(artifact, ensure_ascii=False, sort_keys=True)
     leaked_count = 0
+    leaked_entity_types: list[str] = []
+    leaked_lengths: list[int] = []
     for entry in case.pseudonym_map.values():
         if isinstance(entry, dict) and isinstance(entry.get("value"), str):
             real_value = entry["value"]
             if real_value and real_value in serialized:
                 leaked_count += 1
+                leaked_entity_types.append(str(entry.get("entity_type", "?")))
+                leaked_lengths.append(len(real_value))
     if leaked_count:
+        # Diagnóstico privacy-safe (fase 2): tipo e comprimento dos valores
+        # que bateram — NUNCA o valor em si — para distinguir coincidência de
+        # valor curto (ex.: DATA "2026") de re-identificação por inferência.
+        logger.error(
+            "llm1_token_leak: caso %s — %d valor(es) do pseudonym_map no "
+            "artefato; entity_types=%s; comprimentos=%s (valores omitidos)",
+            case.case_id,
+            leaked_count,
+            sorted(leaked_entity_types),
+            sorted(leaked_lengths),
+        )
         raise LlmPipelineError(
             "llm1_token_leak",
             "artefato da extração contém valor(es) real(is) do pseudonym_map "

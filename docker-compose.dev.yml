@@ -131,6 +131,14 @@ services:
       DJANGO_SECRET_KEY: dev-secret-key-not-for-production
       DJANGO_DEBUG: "true"
       Q_CLUSTER_NAME: llm
+      # Fase 2 em dev (paridade com o prod, estilo dev sem secret-file): a
+      # chave/modelos entram pelo .env local (gitignored) — sem eles o
+      # pipeline falha fechado em auth/config no estágio LLM (esperado).
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-120}
+      LLM1_MODEL: ${LLM1_MODEL:-}
+      LLM2_MODEL: ${LLM2_MODEL:-}
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
       LLM_RUN_TASKS_INLINE: "false"

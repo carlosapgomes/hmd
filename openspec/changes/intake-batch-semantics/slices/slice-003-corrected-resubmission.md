@@ -57,13 +57,12 @@ view/template.
 ## Escopo e expected blast radius
 
 ```yaml
-expected_files:
-  - templates/accounts/manual.html       # P2 review slice 002: 'tipos declarados novamente'/'reenviar os documentos' → singular/exatamente 1 PDF
-  - apps/intake/services.py
-  - apps/intake/views.py          # apenas o fluxo do reenvio, se necessário
-  - apps/intake/forms.py          # apenas hint/herança do reenvio
-  - templates/intake/corrected_resubmission.html
-  - apps/intake/tests/
+expected_files:  # rev. 3 (emenda do parent pós-execução — semântica migrou p/ o slice 001):
+  - templates/accounts/manual.html       # frases plurais → singular/exatamente 1 PDF
+  - apps/intake/views.py                 # apenas comentário stale reescrito
+  - apps/intake/forms.py                 # hint do campo + label singular + pop multiple (P1 fix-cycle)
+  - templates/intake/case_detail.html    # gate: input sem multiple + label/hint "exatamente 1 PDF"
+  - apps/intake/tests/                   # hint/label/input/gate single-PDF (test_corrected_resubmission, test_gate_actions)
 
 allowed_incidental_files: []
 

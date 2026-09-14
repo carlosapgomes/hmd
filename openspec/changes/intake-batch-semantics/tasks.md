@@ -8,7 +8,7 @@
 
 - [x] Slice 001 — Serviços: lote + primitiva única + gate resubmit 1-PDF + reenvio corrigido + settings (rev. 2 pós-review: P0-1/P0-2) — `slices/slice-001-batch-service.md`
 - [x] Slice 002 — Form/UI: tipo único, hints numéricos, anexos desabilitáveis, resultado do lote — `slices/slice-002-form-ui.md`
-- [ ] Slice 003 — UI do reenvio corrigido e do gate (hints/templates) — `slices/slice-003-corrected-resubmission.md`
+- [x] Slice 003 — UI do reenvio corrigido e do gate (hints/templates) — `slices/slice-003-corrected-resubmission.md`
 
 ## Gate final
 

@@ -35,7 +35,7 @@
     </p>
     <ol class="list-group list-group-numbered mb-3">
       <li class="list-group-item">
-        <strong>NIR</strong> envia o relatório e declara os tipos de procedimento —
+        <strong>NIR</strong> envia o relatório e declara o tipo de procedimento —
         o caso nasce em <code>NEW</code> e entra em extração
         (<code>PDF_EXTRACTING</code>).
       </li>
@@ -104,11 +104,11 @@
       <li>
         <strong>Gate de regulação</strong>: se os documentos estiverem fora do
         padrão, o caso fica retido para revisão. No detalhe você pode
-        <em>liberar</em> (bypass, com registro na trilha) ou <em>reenviar os
-        documentos</em> para reprocessar do início. Se os procedimentos
-        detectados divergirem dos declarados, o caso também é retido — nesse
-        caso só há a liberação (o reenvio não se aplica à retenção por
-        divergência).
+        <em>liberar</em> (bypass, com registro na trilha) ou <em>reenviar um novo
+        PDF do relatório</em> — exatamente 1 PDF — para reprocessar do início.
+        Se os procedimentos detectados divergirem dos declarados, o caso também é
+        retido — nesse caso só há a liberação (o reenvio não se aplica à retenção
+        por divergência).
       </li>
       <li>
         <strong>Meus casos</strong> (<em>Meus casos</em>): a lista separa os casos
@@ -125,7 +125,8 @@
         <strong>Reenvio corrigido</strong>: para um caso seu já encerrado, é
         possível reenviar de forma corrigida; o sistema cria um novo caso que
         percorre o pipeline desde o início, vinculado ao original com motivo
-        obrigatório e tipos declarados novamente (nunca herdados).
+        obrigatório, exatamente 1 PDF do relatório corrigido e o tipo declarado
+        novamente (nunca herdado).
       </li>
     </ul>
   </section>

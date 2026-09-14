@@ -414,7 +414,10 @@ def test_upload_ui_with_attachments(
     assert response.status_code == 200
     body = response.content.decode()
     assert 'name="attachments"' in body
-    assert "multiple" in body
+    input_documents = re.search(r'<input[^>]*id="id_documents"[^>]*>', body)
+    # Reenvio corrigido (slice 003/P1): campo de relatório é EXATAMENTE 1 PDF —
+    # sem multiple (o de anexos segue múltiplo).
+    assert input_documents is not None and "multiple" not in input_documents.group(0)
     assert 'name="documents"' in body
 
     response = client.post(
@@ -521,7 +524,8 @@ def test_resubmission_ui_with_attachments(
     assert response.status_code == 200
     body = response.content.decode()
     assert 'name="attachments"' in body
-    assert "multiple" in body
+    input_documents = re.search(r'<input[^>]*id="id_documents"[^>]*>', body)
+    assert input_documents is not None and "multiple" in input_documents.group(0)
 
     response = client.post(
         url,

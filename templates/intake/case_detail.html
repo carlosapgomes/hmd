@@ -206,10 +206,10 @@
                 enctype="multipart/form-data" class="mt-3">
             {% csrf_token %}
             <label for="id_gate_documents" class="form-label small text-muted">
-              Novos arquivos PDF do relatório (na ordem em que compõem o relatório)
+              Novo arquivo PDF do relatório (exatamente 1 PDF)
             </label>
             <div class="d-flex flex-wrap gap-2">
-              <input type="file" id="id_gate_documents" name="documents" multiple
+              <input type="file" id="id_gate_documents" name="documents"
                      accept=".pdf,application/pdf" class="form-control w-auto" required>
               <button type="submit" class="btn btn-warning">Reenviar documentos</button>
             </div>

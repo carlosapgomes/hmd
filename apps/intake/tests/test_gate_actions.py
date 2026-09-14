@@ -24,6 +24,7 @@ no reenvio é verificada.
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -520,6 +521,27 @@ def test_detail_actions_only_when_retained(
     body_free = client.get(reverse("intake:case_detail", args=[free.case_id])).content.decode()
     assert reverse("intake:gate_release", args=[free.case_id]) not in body_free
     assert reverse("intake:gate_resubmit", args=[free.case_id]) not in body_free
+
+
+@pytest.mark.django_db
+def test_detail_gate_resubmit_input_is_single_pdf(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R2 (slice 003 do intake-batch-semantics): o input do reenvio do gate não
+    tem ``multiple`` e o hint anuncia exatamente 1 PDF — a instrução de ordem/
+    composição do relatório (semântica de N documentos) saiu do bloco."""
+    case = _create_retained_case(nir_user, pdf_factory, "retido.pdf")
+    client.force_login(nir_user)
+
+    body = client.get(reverse("intake:case_detail", args=[case.case_id])).content.decode()
+
+    input_tag = re.search(r'<input[^>]*id="id_gate_documents"[^>]*>', body)
+    assert input_tag is not None
+    assert "multiple" not in input_tag.group(0)
+    assert "exatamente 1 PDF" in body
+    assert "na ordem em que compõem o relatório" not in body
 
 
 @pytest.mark.django_db

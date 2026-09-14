@@ -455,8 +455,9 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
             attachments = form.cleaned_data["attachments"]
             procedure_type = form.cleaned_data["procedure_type"]
             correction_reason = form.cleaned_data["correction_reason"]
-            # O reenvio corrigido aceita exatamente 1 PDF (serviço, D5); o
-            # campo de arquivos do form ainda é múltiplo até o slice 003.
+            # O reenvio corrigido aceita exatamente 1 PDF (serviço, D5); o campo
+            # coleta a lista (o hint do form anuncia o único arquivo, slice 003)
+            # e o cliente que mandar 0/>1 recebe aqui o erro nomeado.
             if len(documents) != 1:
                 form.add_error(None, "O reenvio corrigido aceita exatamente 1 PDF do relatório.")
             else:

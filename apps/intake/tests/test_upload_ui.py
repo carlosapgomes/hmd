@@ -16,6 +16,7 @@ Os casos nascem em ``NEW``: o módulo desliga o processamento automático
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -196,7 +197,8 @@ def test_home_registers_upload_script_with_attrs(
     assert "d-none" in body
     assert "anexos só com exatamente 1 relatório" in body.lower()
     assert 'name="attachments"' in body
-    assert "multiple" in body
+    input_documents = re.search(r'<input[^>]*id="id_documents"[^>]*>', body)
+    assert input_documents is not None and "multiple" in input_documents.group(0)
 
 
 def test_upload_script_structure() -> None:

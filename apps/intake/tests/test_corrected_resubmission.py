@@ -22,9 +22,11 @@ setup de ``apps/intake/tests/test_closure_views.py`` e
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator
 
 import pytest
+from django import forms
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.http import Http404
 from django.test import Client, override_settings
@@ -33,6 +35,7 @@ from django.urls import reverse
 from apps.accounts.models import User
 from apps.cases.events import CaseEventType
 from apps.cases.models import Case, CaseProcedure, CaseStatus
+from apps.intake.forms import CorrectedResubmissionForm
 from apps.intake.services import create_case_with_documents, create_corrected_resubmission
 
 NIR_ROLE = "nir"
@@ -48,6 +51,13 @@ ANGIO_LABEL = "Arteriografia periférica"
 REASON = "laudo com dados divergentes do exame original"
 RESUBMIT_BUTTON_LABEL = "Reenviar corrigido"
 RESUBMIT_FLASH_PREFIX = "Reenvio corrigido criado"
+
+# Hints do campo de documentos (slice 003 do intake-batch-semantics, R1): o
+# reenvio anuncia o PDF único do relatório corrigido; o hint de LOTE
+# (1–N PDFs, um caso por PDF) não pode vazar para a página do reenvio.
+CORRECTED_DOCUMENTS_HINT = "exatamente 1 PDF do relatório corrigido"
+CORRECTED_DOCUMENTS_LABEL = "Arquivo PDF do relatório corrigido"
+BATCH_DOCUMENTS_HINT = "cada PDF é o relatório de um paciente"
 
 
 @pytest.fixture(autouse=True)
@@ -755,3 +765,82 @@ def test_original_lists_corrections(
     assert second_reason in listing
     # Ordenado por criação (mais antigo primeiro).
     assert listing.index(str(first.case_id)) < listing.index(str(second.case_id))
+
+
+# ── R1/R3 (slice 003 do intake-batch-semantics): hints do reenvio ─────────
+
+
+def test_corrected_form_documents_hint_is_single_pdf() -> None:
+    """R1: o campo de documentos do reenvio sobrescreve o hint HERDADO do lote —
+    anuncia exatamente 1 PDF do relatório corrigido com o limite real de
+    tamanho por arquivo (montado na instanciação, não congelado no import)."""
+    with override_settings(INTAKE_MAX_UPLOAD_BYTES_PER_FILE=3 * 1024 * 1024):
+        form = CorrectedResubmissionForm()
+
+    documents_help = str(form.fields["documents"].help_text)
+    assert CORRECTED_DOCUMENTS_HINT in documents_help
+    assert "3 MB" in documents_help
+    # O hint do LOTE (1–N PDFs, um caso por PDF) não aparece no reenvio.
+    assert BATCH_DOCUMENTS_HINT not in documents_help
+    assert "de 1 a" not in documents_help
+
+
+def test_corrected_form_inherits_single_type_and_attachments() -> None:
+    """R3: o reenvio herda o tipo único do slice 002 (radio obrigatório do
+    catálogo) e o campo de anexos segue o do envio — o reenvio é sempre de 1
+    paciente, então anexos são permitidos sob as mesmas regras."""
+    form = CorrectedResubmissionForm()
+
+    field = form.fields["procedure_type"]
+    assert isinstance(field, forms.ChoiceField)
+    assert isinstance(field.widget, forms.RadioSelect)
+    assert field.required is True
+    assert "procedure_types" not in form.fields
+
+    attachments_help = str(form.fields["attachments"].help_text)
+    assert "Anexos de evidência" in attachments_help
+    assert "exatamente 1 relatório" in attachments_help
+
+
+@pytest.mark.django_db
+def test_resubmit_page_renders_single_pdf_hints(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+) -> None:
+    """R1/R3: a página do reenvio renderiza os hints do reenvio — exatamente 1
+    PDF do relatório corrigido, tipo único (radio) e anexos do envio; o hint do
+    LOTE não aparece em lugar nenhum da página."""
+    doctor = user_factory("doctor-resub-hints", DOCTOR_ROLE)
+    original = _cleaned_case(created_by=nir_user, doctor=doctor)
+    _login(client, nir_user)
+
+    response = client.get(reverse("intake:case_resubmit", args=[original.case_id]))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert CORRECTED_DOCUMENTS_HINT in body
+    assert 'type="radio"' in body
+    assert "Anexos de evidência" in body
+    assert BATCH_DOCUMENTS_HINT not in body
+
+
+@pytest.mark.django_db
+def test_resubmit_input_is_single_pdf(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+) -> None:
+    """R1/R3: o input de documentos do reenvio não tem ``multiple`` e o label é
+    singular — o reenvio aceita exatamente 1 PDF (o server recusa 0/mais de 1);
+    o ``multiple`` do lote não pode vazar para a página do reenvio."""
+    doctor = user_factory("doctor-resub-input", DOCTOR_ROLE)
+    original = _cleaned_case(created_by=nir_user, doctor=doctor)
+    _login(client, nir_user)
+
+    body = client.get(reverse("intake:case_resubmit", args=[original.case_id])).content.decode()
+
+    input_tag = re.search(r'<input[^>]*id="id_documents"[^>]*>', body)
+    assert input_tag is not None
+    assert "multiple" not in input_tag.group(0)
+    assert CORRECTED_DOCUMENTS_LABEL in body

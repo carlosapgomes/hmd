@@ -13,7 +13,8 @@ Semântica de lote (slice 002, R1/R2): cada PDF é o relatório de um paciente e
 vira um caso, então o tipo é ÚNICO por envio (radio, obrigatório — tipo
 ausente/fora do catálogo é erro de formulário, sem chegar ao serviço) e os
 hints dos campos são montados com os números reais dos settings (D3) a cada
-instanciação.
+instanciação. O reenvio corrigido (slice 003, R1) sobrescreve o hint do campo
+de documentos: ali o envio é um só relatório corrigido.
 """
 
 from __future__ import annotations
@@ -49,6 +50,20 @@ def _documents_help_text() -> str:
         "cada PDF é o relatório de um paciente e vira um caso. "
         f"Limite de {_megabytes(settings.INTAKE_MAX_UPLOAD_BYTES_PER_FILE)} MB por arquivo "
         f"e {_megabytes(settings.INTAKE_MAX_UPLOAD_BYTES_PER_BATCH)} MB no total do envio."
+    )
+
+
+def _corrected_documents_help_text() -> str:
+    """Hint dos documentos do reenvio corrigido (slice 003, R1).
+
+    O campo herdava o hint do LOTE ("1 a N PDFs, cada PDF vira um caso"); o
+    reenvio cria UM caso a partir de um relatório corrigido, então só o limite
+    por arquivo segue valendo.
+    """
+    return (
+        "Selecione exatamente 1 PDF do relatório corrigido — o reenvio cria um novo "
+        "caso a partir dele. "
+        f"Limite de {_megabytes(settings.INTAKE_MAX_UPLOAD_BYTES_PER_FILE)} MB por arquivo."
     )
 
 
@@ -151,7 +166,9 @@ class CorrectedResubmissionForm(IntakeUploadForm):
     campo adicional ``correction_reason`` (motivo obrigatório do reenvio). A
     validação de conteúdo segue nas fontes únicas do serviço
     (``apps.intake.services.create_corrected_resubmission``) — aqui apenas o
-    valor é coletado, no mesmo espírito do ``IntakeUploadForm``.
+    valor é coletado, no mesmo espírito do ``IntakeUploadForm``. O hint de
+    ``documents`` é o do reenvio (exatamente 1 PDF do relatório corrigido),
+    NÃO o do lote (R1 do slice 003).
     """
 
     correction_reason = forms.CharField(
@@ -162,3 +179,19 @@ class CorrectedResubmissionForm(IntakeUploadForm):
             attrs={"class": "form-control", "rows": 3},
         ),
     )
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Hint, label e widget do campo de documentos do reenvio (slice 003, R1).
+
+        O ``__init__`` herdado monta hint/label/widget do LOTE; como o reenvio
+        aceita exatamente 1 PDF, o texto é sobrescrito, o label vai para o
+        singular e o input perde o ``multiple`` depois do ``super`` — sem isso
+        a página pediria seleção múltipla (o server recusa 0/mais de 1). O
+        campo continua ``MultiDocumentField``: o valor limpo segue sendo a lista
+        de 1 arquivo que o serviço espera.
+        """
+        super().__init__(*args, **kwargs)
+        documents = self.fields["documents"]
+        documents.label = "Arquivo PDF do relatório corrigido"
+        documents.help_text = _corrected_documents_help_text()
+        documents.widget.attrs.pop("multiple", None)

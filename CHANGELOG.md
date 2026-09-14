@@ -4,6 +4,31 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.7] — 2026-09-14
+
+**Semântica clínica do intake corrigida** (change `intake-batch-semantics`,
+pré-requisito da fase 2 — alinhado ao ats-web por decisão do dono): cada PDF
+do envio é o relatório de UM paciente e vira um caso independente em `NEW`
+com 1 documento (antes: N PDFs mergeados num único caso de N pacientes).
+**Um único tipo de procedimento por envio** (radio obrigatório; múltiplos
+tipos abolidos). **Anexos somente com exatamente 1 PDF no envio** — lote com
+>1 PDF cria os casos SEM anexos e reporta erro informativo; 1 PDF + anexo
+inválido aborta tudo. Falhas parciais por arquivo (nome + motivo), incl.
+falha de persistência (transação por caso). Reenvio do gate e reenvio
+corrigido passam a exigir **exatamente 1 PDF** (UI coerente: sem `multiple`,
+label singular, hint com o limite de MB). Limites operacionais configuráveis:
+30 arquivos/envio, 20 MB/arquivo, 100 MB/lote (envs `INTAKE_MAX_*`,
+recomendação Cloudflare). Contrato redirect×resultado: 1 caso+0 erros →
+detalhe; lote/erros → página de resultado com contagem e erros por arquivo.
+
+**Rótulos de papel em português na interface** (change `role-labels-ptbr`,
+feedback do piloto): as chaves internas (`doctor`, `scheduler`, `manager`,
+`nir`, `admin`) permanecem nos dados/sessão/permissionamento, mas a UI exibe
+**médico/agendador/supervisor** nas 9 superfícies (badge de papel ativo,
+seleção de papel — submetendo a chave crua —, home, perfil, trilhas de
+eventos e comunicações dos detalhes de caso). Chaves fora do mapeamento
+(`system`) exibem a própria chave (fallback seguro). Baseline 1160 testes.
+
 ## [0.1.6] — 2026-09-13
 
 **Painel gerencial e home por papel** (change `painel-gerencial-e-home`): o

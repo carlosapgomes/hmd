@@ -117,12 +117,12 @@ ponta a ponta em dev). Referência de padrão: `/projects/dev/ats-web`. O
 fundamento do cabeçalho (acima) já fornece nome/idade/sexo/raça/dias-em-tela
 — os changes abaixo agora têm dados para consumir.
 
-1. **Cards das filas** (todas as filas): hoje mostram só o UID do caso.
-   Devem exibir nome do paciente, idade e **tempo de tela**
-   (days_on_screen do cabeçalho — tempo oficial do regulador; fallback
-   waiting-time), ordenados pelo tempo de tela (mais tempo esperando
-   primeiro). Padrão: cards do ats-web em todas as filas. (Data de
-   nascimento não existe no relatório — fora de escopo.)
+1. ~~Cards das filas~~ **CONCLUÍDO** (change `queue-cards-wait-time`,
+   2026-09-15): filas de médico/agendador ordenadas por `days_on_screen`
+   desc nulls-last (tempo oficial; desempate FIFO — molde ats-web) com
+   cards nome+idade (`0 a` válido), ⏱ Aguardando há/Recebido há por aba,
+   data absoluta e badge `N d em tela`; meus casos do NIR com nome+idade
+   (escopo por criador; painel zero-PHI intacto).
 2. ~~Detalhe do caso (médico): demografia~~ **CONCLUÍDO** (change
    `doctor-detail-context`, 2026-09-15): card de identificação com Idade
    (`84 a`)/Sexo/Raça-Cor (`—` quando ausentes).

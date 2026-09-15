@@ -8,19 +8,37 @@ Confirmar, negar e reabrir o agendamento de casos aceitos pelo médico nas duas 
 
 ### Requirement: Fila do agendador completa
 
-O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos prontos para agendamento (estados `SCHEDULER_REQUESTED` e `AWAITING_SCHEDULING` — pedidos novos e casos reabertos por intercorrência), ordenada por chegada, paginada, **sem diferenciação por unidade**, com aba de casos processados do agendamento. Outros papéis ativos recebem 403; anônimo é redirecionado ao login.
+O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos prontos para agendamento (estados `SCHEDULER_REQUESTED` e `AWAITING_SCHEDULING` — pedidos novos e casos reabertos por intercorrência), ordenada por **tempo de tela** — `days_on_screen` (descendente, casos sem o campo ao fim), desempate FIFO por `created_at` — paginada, **sem diferenciação por unidade**, com aba de casos processados do agendamento; os cards exibem nome e idade do paciente (quando presentes), nº de ocorrência, tempo de espera e o tempo de tela oficial quando presente. Outros papéis ativos recebem 403; anônimo é redirecionado ao login.
 
 #### Scenario: Agendador vê a fila completa
 
 - **GIVEN** casos em `SCHEDULER_REQUESTED` de subtipos distintos e um caso reaberto por intercorrência em `AWAITING_SCHEDULING`
 - **WHEN** o agendador acessa a fila
-- **THEN** todos são listados na aba de aguardando, em ordem de chegada, sem filtro de unidade
+- **THEN** todos são listados na aba de aguardando, ordenados por tempo de tela (desempate FIFO), sem filtro de unidade
 
 #### Scenario: Papel não agendador recebe 403
 
 - **GIVEN** usuário com papel ativo `doctor`
 - **WHEN** acessa a fila do agendador
 - **THEN** recebe HTTP 403
+
+#### Scenario: Card do agendador com identificação e tempo
+
+- **GIVEN** um caso em `AWAITING_SCHEDULING` com nome, idade 84 e `days_on_screen` 6
+- **WHEN** o agendador acessa a fila (aba aguardando)
+- **THEN** o card exibe nome e idade (`84 a`), o rótulo «Aguardando há …» com o tempo desde o recebimento e o badge `6 d em tela`
+
+#### Scenario: Fila do agendador ordenada pelo tempo de tela
+
+- **GIVEN** casos aguardando com `days_on_screen` 10, 3 e um sem cabeçalho (upload mais antigo)
+- **WHEN** o agendador acessa a fila
+- **THEN** a ordem é 10, 3 e o caso sem cabeçalho ao fim (desempate FIFO), independentemente do momento do upload
+
+#### Scenario: Aba processada usa rótulo de recebimento
+
+- **GIVEN** um caso já processado pelo agendamento com nome e idade
+- **WHEN** o agendador acessa a aba processados
+- **THEN** o card exibe o rótulo «Recebido há …» e NÃO exibe «Aguardando», com a idade junto do nome
 
 ### Requirement: Confirmação de agendamento com unidade e resposta final
 

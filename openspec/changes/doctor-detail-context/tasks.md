@@ -7,8 +7,9 @@
 - [ ] 1.2 Card de identificação com Idade (`84 a`)/Sexo/Raça-Cor e `—`
       quando ausente; blocos Sumário clínico + Estrutura extraída movidos
       para logo após Procedimentos declarados (movimento posicional puro)
-- [ ] 1.3 Testes RED→GREEN (demografia renderizada, ausente → `—`, ordem
-      por índices no HTML para detalhe em decisão e decidido) + bateria
+- [ ] 1.3 Testes RED→GREEN (demografia renderizada, ausente → `—` escopado
+      por linha no card, ordem por índices no HTML para detalhe em decisão
+      e decidido) + bateria completa (pytest + ruff + mypy + manage.py check)
 
 ## 2. Encerramento
 

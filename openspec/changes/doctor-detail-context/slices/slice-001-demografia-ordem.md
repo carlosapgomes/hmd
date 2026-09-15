@@ -1,5 +1,12 @@
 # Slice 001 — Demografia no card de identificação + ordem clínica dos cards
 
+```yaml
+expected_files:
+  - apps/doctor/presenters.py
+  - templates/doctor/case_detail.html
+  - apps/doctor/tests/test_detail.py
+```
+
 ## Contexto necessário
 
 - `apps/doctor/presenters.py` `build_case_detail_context` (~656): monta
@@ -42,12 +49,17 @@ decidido.
 
 - Novos (RED): identification do presenter contém a demografia; template
   renderiza «84 a»/«F»/«Parda» no card de identificação; demografia
-  ausente → três linhas com «—»; **ordem**: `response` do detalhe com
-  índices crescentes de «Procedimentos declarados» < «Sumário clínico» <
-  «Estrutura extraída» < «Alertas consultivos»; detalhe decidido read-only
-  mantém a mesma ordem (mesmo template).
+  ausente → **assert escopado por linha**: os `<dd>` de Idade/Sexo/Raça
+  DENTRO do card de identificação com valor exatamente «—» (não contagem
+  global de «—», que passaria por placeholders de outros cards); idade
+  preenchida assertada como exatamente «84 a»; **ordem**: `response` do
+  detalhe com índices crescentes de «Procedimentos declarados» < «Sumário
+  clínico» < «Estrutura extraída» < «Alertas consultivos»; detalhe decidido
+  read-only mantém a mesma ordem (mesmo template).
 - Bateria: `TEST_DB_PORT=55435 uv run pytest -q apps/doctor` + suíte
-  completa + ruff/format.
+  completa + `uv run ruff check apps` + `uv run ruff format --check apps` +
+  `uv run mypy apps` + `uv run python manage.py check
+  --settings=config.settings.dev` (gate completo do AGENTS.md).
 
 ## Gates para o reviewer (2 linhas)
 

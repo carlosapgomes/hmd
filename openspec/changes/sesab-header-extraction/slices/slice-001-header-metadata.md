@@ -47,8 +47,12 @@ persiste nos campos novos do caso; cabeçalho ausente não é erro.
   informado, case/acentuação tolerantes)`. Idade/sexo/raça extraídos SOMENTE
   dessa linha (menção clínica órfã de idade NÃO casa — os três marcadores
   juntos são a âncora).
-- `days_on_screen`: MAIOR `Dias em tela:\s*(\d+)` do texto (molde ats-web).
-  Ausentes → `None`. Função pura, zero I/O.
+- `days_on_screen`: parser linha a linha de `Dias em tela:` — valor na
+  MESMA linha (`Dias em tela:\s*(\d+)`) OU, rótulo sozinho, na linha
+  imediatamente seguinte contendo APENAS um inteiro (`^\s*\d+\s*$`) —
+  layout real (rótulo numa linha, valor na seguinte). **Maior** valor entre
+  todas as ocorrências (ambas as formas, todas as páginas). Ausentes →
+  `None`. Função pura, zero I/O.
 
 ### R2 — Campos do caso + migration
 
@@ -73,7 +77,9 @@ persiste nos campos novos do caso; cabeçalho ausente não é erro.
 ### R4 — Testes (RED→GREEN)
 
 - Novos (RED): extração pura com fixture do layout real (nome na linha de
-  demografia, dias em tela em 2 páginas → maior valor, sexo/raça); campos
+  demografia, dias em tela MULTILINHA em 2 páginas (rótulo sozinho + valor
+  na linha seguinte; forma mesma-linha também casa) → maior valor,
+  sexo/raça); campos
   ausentes → `None`s; **adversariais**: menção clínica órfã «…Idade: 79a.»
   SEM Sexo+Raça/Cor na mesma linha → `age/gender/race` `None`; raça
   «Indígena»/«Não informado» (acentuado/composto) capturada pelo enum;

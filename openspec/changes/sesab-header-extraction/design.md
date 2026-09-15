@@ -84,9 +84,12 @@ marcadores NA MESMA LINHA, na ordem — anti-falso-positivo clínico):
   ausência** (`Branca|Preta|Parda|Amarela|Indígena|Não informado`,
   case-insensitive/acentuação tolerante) — captura livre de «primeira
   palavra» engoliria mal ou rejeitaria acentuados/compostos;
-- `days_on_screen`: `Dias em tela:\s*(\d+)` — **maior** ocorrência (molde
-  ats-web `extract_regulation_days_on_screen`); termo administrativo do
-  cabeçalho, improvável em texto clínico;
+- `days_on_screen`: **parser linha a linha** de `Dias em tela:` — valor na
+  MESMA linha (`Dias em tela:\s*(\d+)`) OU, quando o rótulo está sozinho,
+  na linha imediatamente seguinte contendo APENAS um inteiro
+  (`^\s*\d+\s*$`) — layout real do cabeçalho (rótulo L13, valor L14);
+  **maior** valor entre todas as ocorrências (ambas as formas, todas as
+  páginas);
 - ausentes → `None` (campos nullable). Abertura/Data Adm. Unid./Dias Unid.
   ficam NO TEXTO (não persistem — sem uso previsto; decisão de mínimo
   necessário).

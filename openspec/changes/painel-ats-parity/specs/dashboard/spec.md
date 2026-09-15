@@ -2,6 +2,54 @@
 
 ## MODIFIED Requirements
 
+### Requirement: Métricas por período sem dados de paciente
+
+O sistema SHALL exibir um painel com métricas do período selecionado (hoje,
+7 dias, 30 dias, tudo) computadas a partir de fontes imutáveis (evento de
+resposta final com sua origem, decisões por procedimento, unidade
+agendada), de modo que casos encerrados e limpos continuem contados —
+INCLUINDO a contagem de casos encerrados administrativamente no período.
+A **seção de métricas** SHALL conter apenas contagens, tempos médios e
+labels de tipo/unidade — nenhum dado de paciente (a listagem de casos da
+mesma página exibe a identificação completa do paciente — invariante
+próprio no requisito "Lista de casos no painel"; o invariante de PHI aplica-se
+apenas à seção de métricas). Casos encerrados administrativamente SHALL sair
+da contagem de "em andamento".
+
+#### Scenario: Resumo do período
+
+- **GIVEN** casos no período (agendados, negados e em andamento)
+- **WHEN** o painel é aberto no período
+- **THEN** exibe total, agendados, negados e em andamento coerentes com os casos
+
+#### Scenario: Casos limpos continuam contados
+
+- **GIVEN** um caso encerrado e limpo pela ciência do NIR dentro do período
+- **WHEN** o painel é aberto
+- **THEN** o caso segue contado pelo seu resultado final (agendado ou negado)
+
+#### Scenario: Página sem dados de paciente
+
+- **GIVEN** casos com nomes e números de registro
+- **WHEN** o painel é renderizado
+- **THEN** na seção de métricas, nenhum nome ou número de registro de
+  paciente aparece (a lista de casos exibe a identificação do paciente —
+  o invariante de PHI é da seção de métricas)
+
+#### Scenario: Período selecionável
+
+- **GIVEN** casos criados em dias distintos
+- **WHEN** o período 7 dias é selecionado
+- **THEN** apenas os casos do período entram nas métricas
+
+#### Scenario: Encerramentos administrativos contados no período
+
+- **GIVEN** casos encerrados administrativamente dentro do período
+- **WHEN** o painel é aberto
+- **THEN** a métrica de encerramentos administrativos reflete a contagem do
+  período, esses casos não aparecem como "em andamento" e seguem contados
+  como encerrados
+
 ### Requirement: Lista de casos no painel
 
 O painel SHALL exibir, abaixo das métricas, a lista dos casos com

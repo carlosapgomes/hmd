@@ -2,11 +2,11 @@
 
 ## 1. Slice 001 — Filas de espera ordenadas por tempo de tela (médico + agendador)
 
-- [ ] 1.1 Ordenação `days_on_screen` desc nulls-last + desempate FIFO nas
+- [x] 1.1 Ordenação `days_on_screen` desc nulls-last + desempate FIFO nas
       filas de médico e agendador (todas as abas)
-- [ ] 1.2 Cards com nome + idade (`84 a`), ⏱ tempo de espera (timesince) e
+- [x] 1.2 Cards com nome + idade (`84 a`), ⏱ tempo de espera (timesince) e
       badge `N d em tela` quando presente
-- [ ] 1.3 Testes RED→GREEN (ordenação discriminante 10/3/None nas duas
+- [x] 1.3 Testes RED→GREEN (ordenação discriminante 10/3/None nas duas
       filas; cards; FIFO existentes atualizados) + bateria completa do
       AGENTS.md
 

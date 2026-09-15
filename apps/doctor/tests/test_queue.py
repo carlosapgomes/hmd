@@ -8,7 +8,8 @@ Cobre:
   D2 (``doctor+manager`` com papel ativo ``doctor`` acessa a fila);
 - R3: abas por estado (``aguardando`` default = ``AWAITING_DOCTOR``;
   ``decididos`` = ``DOCTOR_DENIED|DOCTOR_ACCEPTED|SCHEDULER_REQUESTED``),
-  FIFO por ``created_at`` e paginação (Paginator — primeira view paginada);
+  ordenação por tempo de tela (``days_on_screen`` desc, desempate FIFO por
+  ``created_at``) e paginação (Paginator — primeira view paginada);
 - R4: filtro de subtipo (``?subtype=``) com o mesmo predicado de D2 —
   médico com subtipos S vê só casos com ≥1 tipo declarado de subtipo em S;
   generalista e admin veem tudo e filtram por qualquer subtipo;
@@ -76,12 +77,16 @@ def _apply_metadata(
     created_at: datetime | None = None,
     patient_name: str = "",
     agency_record_number: str = "",
+    patient_age: int | None = None,
+    days_on_screen: int | None = None,
 ) -> None:
     """Ajusta campos de exibição do caso (``created_at`` inclusa)."""
     Case.objects.filter(pk=case.pk).update(
         created_at=created_at or case.created_at,
         patient_name=patient_name,
         agency_record_number=agency_record_number,
+        patient_age=patient_age,
+        days_on_screen=days_on_screen,
     )
     case.refresh_from_db()
 
@@ -93,6 +98,8 @@ def _make_awaiting_case(
     created_at: datetime | None = None,
     patient_name: str = "",
     agency_record_number: str = "",
+    patient_age: int | None = None,
+    days_on_screen: int | None = None,
 ) -> Case:
     """Caso em ``AWAITING_DOCTOR`` com os tipos declarados e metadados."""
     case = _create_case_with_declared(created_by, procedure_types)
@@ -102,6 +109,8 @@ def _make_awaiting_case(
         created_at=created_at,
         patient_name=patient_name,
         agency_record_number=agency_record_number,
+        patient_age=patient_age,
+        days_on_screen=days_on_screen,
     )
     return case
 
@@ -212,7 +221,7 @@ def test_nav_hidden_for_nir(
     assert reverse("doctor:queue") not in response.content.decode()
 
 
-# ── R3: abas por estado + FIFO + paginação ────────────────────────────────
+# ── R3: abas por estado + ordem por tempo de tela + paginação ────────────
 
 
 @pytest.mark.django_db
@@ -322,11 +331,12 @@ def test_queue_paginated_fifo(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R3/R5: FIFO por ``created_at`` paginado (20/página) + contagem total.
+    """R3/R5: desempate FIFO por ``created_at`` paginado (20/página) + contagem total.
 
-    Cria 25 casos aguardando (todos do subtipo angio) com ``created_at``
-    controlado e crescente; a página 1 traz os 20 mais antigos e a página 2 os
-    5 restantes — a contagem do cabeçalho cobre o conjunto todo (25).
+    Cria 25 casos aguardando (todos do subtipo angio, TODOS sem
+    ``days_on_screen``) com ``created_at`` controlado e crescente: o
+    desempate FIFO do contrato novo põe os 20 mais antigos na página 1 e os 5
+    restantes na página 2 — a contagem do cabeçalho cobre o conjunto todo (25).
     """
     base = timezone.now()
     for index in range(25):
@@ -358,6 +368,148 @@ def test_queue_paginated_fifo(
     assert "Paciente 24" in second_body
     assert "Paciente 00" not in second_body
     assert "Página 2 de 2" in second_body
+
+
+# ── R1/R2: ordem por tempo de tela + identificação e tempo no card ────────
+
+
+@pytest.mark.django_db
+def test_queue_ordered_by_days_on_screen(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R1: ordem por ``days_on_screen`` desc (None ao fim), NÃO FIFO.
+
+    ``created_at`` CONFLITANTES: o caso sem cabeçalho é o MAIS ANTIGO e o de
+    10 dias é o MAIS RECENTE — a ordenação antiga (FIFO por ``created_at``)
+    produziria None, 3, 10 e este teste falharia.
+    """
+    base = timezone.now()
+    no_header = _make_awaiting_case(
+        nir_user,
+        (ANGIO_TYPE,),
+        created_at=base - timedelta(hours=3),
+        patient_name="Paciente Sem Cabecalho",
+    )
+    three_days = _make_awaiting_case(
+        nir_user,
+        (ANGIO_TYPE,),
+        created_at=base - timedelta(hours=2),
+        patient_name="Paciente Tres Dias",
+        days_on_screen=3,
+    )
+    ten_days = _make_awaiting_case(
+        nir_user,
+        (ANGIO_TYPE,),
+        created_at=base - timedelta(hours=1),
+        patient_name="Paciente Dez Dias",
+        days_on_screen=10,
+    )
+    login_user(user_factory("medico-sort-tela", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:queue"))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    idx_ten = body.index(str(ten_days.case_id))
+    idx_three = body.index(str(three_days.case_id))
+    idx_none = body.index(str(no_header.case_id))
+    assert idx_ten < idx_three < idx_none
+
+
+@pytest.mark.django_db
+def test_queue_card_shows_age_days_and_waiting_label(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R2: card da aba ativa com idade, «⏱ Aguardando há» e «N d em tela»."""
+    _make_awaiting_case(
+        nir_user,
+        (ANGIO_TYPE,),
+        patient_name="Paciente Identificado",
+        patient_age=84,
+        days_on_screen=6,
+    )
+    login_user(user_factory("medico-card-tela", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue")).content.decode()
+
+    assert "Paciente Identificado · 84 a" in body
+    assert "Aguardando há" in body
+    assert "6 d em tela" in body
+    # P1 da review: data absoluta pré-existente preservada junto ao rótulo relativo
+    assert "Recebido em " in body
+    # P2 da review: dias em tela como badge Bootstrap de fato
+    assert ">6 d em tela</span>" in body
+
+
+@pytest.mark.django_db
+def test_queue_decided_tab_uses_received_label(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R2: aba histórica usa «Recebido há» e NUNCA «Aguardando há»."""
+    doctor = user_factory("medico-label-aba", (DOCTOR_ROLE,))
+    decided = _make_decided_case(nir_user, doctor, (ANGIO_TYPE,), accepted=False)
+    _apply_metadata(decided, patient_name="Paciente Decidido", patient_age=84)
+    login_user(user_factory("geral-label-aba", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
+
+    assert "Paciente Decidido · 84 a" in body
+    assert "Recebido há" in body
+    assert "Aguardando há" not in body
+
+
+@pytest.mark.django_db
+def test_queue_card_zero_age_and_zero_days_on_screen(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R2 (P1 da review): ZERO é válido e DEVE exibir «0 a» e «0 d em tela»."""
+    _make_awaiting_case(
+        nir_user,
+        (ANGIO_TYPE,),
+        patient_name="Recem Nascido",
+        patient_age=0,
+        days_on_screen=0,
+    )
+    login_user(user_factory("medico-zero-tela", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue")).content.decode()
+
+    assert "Recem Nascido · 0 a" in body
+    assert "0 d em tela" in body
+
+
+@pytest.mark.django_db
+def test_queue_card_absent_age_and_days_on_screen(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R2: idade/dias ausentes NÃO geram sufixo nem badge (sem «— a»)."""
+    _make_awaiting_case(
+        nir_user,
+        (ANGIO_TYPE,),
+        patient_name="Paciente Sem Demografia",
+    )
+    login_user(user_factory("medico-sem-demo", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue")).content.decode()
+
+    assert "Paciente Sem Demografia" in body
+    assert "Paciente Sem Demografia · " not in body
+    assert "d em tela" not in body
 
 
 # ── R4: filtro de subtipo (predicado D2) ─────────────────────────────────

@@ -5,7 +5,8 @@ R1/R2: ``scheduler:queue`` em ``/scheduler/`` sob ``role_required("scheduler",
 "admin")`` — abas ``aguardando`` (default = ``SCHEDULER_REQUESTED`` **ou**
 ``AWAITING_SCHEDULING`` — pedidos novos e casos reabertos por intercorrência)
 e ``processados`` (= ``SCHEDULING_CONFIRMED|SCHEDULING_DENIED|
-FINAL_REPLY_POSTED``), FIFO por ``created_at``, paginada (``Paginator``) e
+FINAL_REPLY_POSTED``), ordenada por tempo de tela (``days_on_screen`` desc,
+desempate FIFO por ``created_at``), paginada (``Paginator``) e
 **sem filtro por unidade** (fila completa, plano §4). Cards com identificação,
 tipos declarados e unidade quando definida.
 
@@ -41,6 +42,7 @@ from urllib.parse import urlencode
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
+from django.db.models import F
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -154,6 +156,8 @@ def _queue_item(case: Case) -> dict[str, object]:
         "case_id": str(case.case_id),
         "status_label": case.get_status_display(),
         "patient_name": case.patient_name or "—",
+        "patient_age": case.patient_age,
+        "days_on_screen": case.days_on_screen,
         "agency_record_number": case.agency_record_number or "—",
         "created_at": case.created_at,
         "unit_label": unit_label_text,
@@ -172,10 +176,11 @@ def _queue_item(case: Case) -> dict[str, object]:
 
 @role_required("scheduler", "admin")
 def queue(request: HttpRequest) -> HttpResponse:
-    """Fila do agendador por estado (abas), FIFO e paginada (R2/D4).
+    """Fila do agendador por estado (abas), ordenada por tempo de tela (R2/D4).
 
-    Sem filtro por unidade (fila completa, plano §4). Aba desconhecida cai no
-    default ``aguardando``.
+    ``days_on_screen`` desc nulls-last com desempate FIFO por ``created_at`` e
+    ``case_id`` — mesma expressão da fila médica. Sem filtro por unidade (fila
+    completa, plano §4). Aba desconhecida cai no default ``aguardando``.
     """
     _require_user(request)
     tab = request.GET.get("tab", "aguardando")
@@ -184,7 +189,7 @@ def queue(request: HttpRequest) -> HttpResponse:
 
     cases = (
         Case.objects.filter(status__in=TAB_STATUSES[tab])
-        .order_by("created_at", "case_id")
+        .order_by(F("days_on_screen").desc(nulls_last=True), "created_at", "case_id")
         .prefetch_related("procedures")
     )
     page = Paginator(cases, QUEUE_PAGE_SIZE).get_page(request.GET.get("page", "1"))

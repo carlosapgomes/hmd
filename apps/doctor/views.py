@@ -2,7 +2,8 @@
 
 Slice 002 (R2–R5, D2/D5): fila única em ``/doctor/`` para papel ativo
 doctor/admin — abas por estado (``aguardando`` default = ``AWAITING_DOCTOR``;
-``decididos`` = estados pós-decisão), FIFO por ``created_at``, filtro de
+``decididos`` = estados pós-decisão), ordenada por tempo de tela
+(``days_on_screen`` desc, desempate FIFO por ``created_at``), filtro de
 subtipo no querystring e paginação (``Paginator`` — primeira view paginada do
 projeto). O access control combina o guard ``role_required`` (papel ativo)
 com ``apps.doctor.access`` (fatia por subtipo — predicado único
@@ -50,7 +51,7 @@ from urllib.parse import urlencode
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
-from django.db.models import QuerySet
+from django.db.models import F, QuerySet
 from django.http import FileResponse, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -153,7 +154,9 @@ def _accessible_cases(
             procedures__declared_by_nir=True,
             procedures__procedure_type__in=_TYPES_BY_SUBTYPE[subtype],
         ).distinct()
-    return cases.order_by("created_at", "case_id").prefetch_related("procedures")
+    return cases.order_by(
+        F("days_on_screen").desc(nulls_last=True), "created_at", "case_id"
+    ).prefetch_related("procedures")
 
 
 def _declared_types_of_case(case: Case) -> tuple[str, ...]:
@@ -209,6 +212,8 @@ def _queue_item(case: Case) -> dict[str, object]:
         "case_id": case.case_id,
         "status_label": case.get_status_display(),
         "patient_name": case.patient_name or "—",
+        "patient_age": case.patient_age,
+        "days_on_screen": case.days_on_screen,
         "agency_record_number": case.agency_record_number or "—",
         "created_at": case.created_at,
         "procedures": [
@@ -223,7 +228,11 @@ def _queue_item(case: Case) -> dict[str, object]:
 
 @role_required("doctor", "admin")
 def queue(request: HttpRequest) -> HttpResponse:
-    """Fila médica por estado (abas) com filtro de subtipo (R2–R5, D2/D5)."""
+    """Fila médica por estado (abas) com filtro de subtipo (R2–R5, D2/D5).
+
+    Ordenada por tempo de tela (``days_on_screen`` desc nulls-last, desempate
+    FIFO) em TODAS as abas — o tempo de tela persiste pós-decisão.
+    """
     user = _require_user(request)
     active_role = request.session.get("active_role", "")
     # Fatos do usuário por papel ativo computados 1× por request (P2):

@@ -33,11 +33,13 @@
           <span class="badge rounded-pill text-bg-info">{{ item.unit_label }}</span>
           {% endif %}
         </div>
-        <div class="fw-semibold">{{ item.patient_name }}</div>
+        <div class="fw-semibold">{{ item.patient_name }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}</div>
         <div class="small text-muted">
           Nº de ocorrência: <strong>{{ item.agency_record_number }}</strong>
           <span class="mx-2">·</span>
-          Recebido em {{ item.created_at|date:"d/m/Y H:i" }}
+          {% if tab == 'aguardando' %}⏱ Aguardando há {{ item.created_at|timesince }}{% else %}Recebido há {{ item.created_at|timesince }}{% endif %}
+          <span class="mx-2">·</span> Recebido em {{ item.created_at|date:"d/m/Y H:i" }}
+          {% if item.days_on_screen is not None %}<span class="mx-2">·</span><span class="badge rounded-pill text-bg-light border text-muted">{{ item.days_on_screen }} d em tela</span>{% endif %}
         </div>
         {% if item.procedures %}
         <div class="mt-2 d-flex flex-wrap align-items-center gap-2">

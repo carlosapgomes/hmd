@@ -9,7 +9,8 @@ Cobre:
   ``aguardando`` (default = ``SCHEDULER_REQUESTED`` **ou**
   ``AWAITING_SCHEDULING`` — inclui caso reaberto por intercorrência) e
   ``processados`` (= ``SCHEDULING_CONFIRMED|SCHEDULING_DENIED|
-  FINAL_REPLY_POSTED``), FIFO por ``created_at``, paginada, cards com
+  FINAL_REPLY_POSTED``), ordenação por tempo de tela (``days_on_screen`` desc,
+  desempate FIFO por ``created_at``), paginada, cards com
   identificação/tipos declarados/unidade quando definida e **sem filtro por
   unidade**;
 - R3: detalhe ``scheduler:case_detail`` — identificação real
@@ -113,6 +114,8 @@ def _apply_metadata(
     patient_name: str = "",
     patient_birth_date: date | None = None,
     agency_record_number: str = "",
+    patient_age: int | None = None,
+    days_on_screen: int | None = None,
 ) -> None:
     """Ajusta campos de exibição do caso (``created_at`` inclusa)."""
     Case.objects.filter(pk=case.pk).update(
@@ -120,6 +123,8 @@ def _apply_metadata(
         patient_name=patient_name,
         patient_birth_date=patient_birth_date,
         agency_record_number=agency_record_number,
+        patient_age=patient_age,
+        days_on_screen=days_on_screen,
     )
     case.refresh_from_db()
 
@@ -344,7 +349,7 @@ def test_manager_scheduler_composite_queues_under_scheduler_active(
     assert response.status_code == 200
 
 
-# ── R2: abas por estado + FIFO + paginação ────────────────────────────────
+# ── R2: abas por estado + ordem por tempo de tela + paginação ────────────
 
 
 @pytest.mark.django_db
@@ -463,7 +468,10 @@ def test_queue_paginated_fifo(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R2/R6: FIFO por ``created_at`` paginado (20/página)."""
+    """R2/R6: desempate FIFO por ``created_at`` paginado (20/página).
+
+    Casos sem ``days_on_screen`` mantêm o desempate FIFO do contrato novo.
+    """
     doctor = user_factory("medico-fifo-agendador", (DOCTOR_ROLE,))
     base = timezone.now()
     for index in range(25):
@@ -493,6 +501,144 @@ def test_queue_paginated_fifo(
     assert "Paciente 24" in second_body
     assert "Paciente 00" not in second_body
     assert "Página 2 de 2" in second_body
+
+
+@pytest.mark.django_db
+def test_queue_ordered_by_days_on_screen(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R1: ordem por ``days_on_screen`` desc (None ao fim), NÃO FIFO.
+
+    ``created_at`` CONFLITANTES: o caso sem cabeçalho é o MAIS ANTIGO e o de
+    10 dias é o MAIS RECENTE — a ordenação antiga (FIFO) produziria
+    None, 3, 10 e este teste falharia.
+    """
+    doctor = user_factory("medico-sort-tela-agendador", (DOCTOR_ROLE,))
+    base = timezone.now()
+    no_header = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(
+        no_header,
+        created_at=base - timedelta(hours=3),
+        patient_name="Paciente Sem Cabecalho",
+    )
+    three_days = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(
+        three_days,
+        created_at=base - timedelta(hours=2),
+        patient_name="Paciente Tres Dias",
+        days_on_screen=3,
+    )
+    ten_days = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(
+        ten_days,
+        created_at=base - timedelta(hours=1),
+        patient_name="Paciente Dez Dias",
+        days_on_screen=10,
+    )
+    login_user(user_factory("geral-sort-tela", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    response = client.get(reverse("scheduler:queue"))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    idx_ten = body.index(str(ten_days.case_id))
+    idx_three = body.index(str(three_days.case_id))
+    idx_none = body.index(str(no_header.case_id))
+    assert idx_ten < idx_three < idx_none
+
+
+@pytest.mark.django_db
+def test_queue_card_shows_age_days_and_waiting_label(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R2: card da aba ativa com idade, «⏱ Aguardando há» e «N d em tela»."""
+    doctor = user_factory("medico-card-tela-agendador", (DOCTOR_ROLE,))
+    case = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(
+        case,
+        patient_name="Paciente Identificado",
+        patient_age=84,
+        days_on_screen=6,
+    )
+    login_user(user_factory("geral-card-tela", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    assert "Paciente Identificado · 84 a" in body
+    assert "Aguardando há" in body
+    assert "6 d em tela" in body
+    # P1 da review: data absoluta pré-existente preservada junto ao rótulo relativo
+    assert "Recebido em " in body
+    # P2 da review: dias em tela como badge Bootstrap de fato
+    assert ">6 d em tela</span>" in body
+
+
+@pytest.mark.django_db
+def test_queue_processed_tab_uses_received_label(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R2: aba processados usa «Recebido há» e NUNCA «Aguardando há»."""
+    doctor = user_factory("medico-label-processado", (DOCTOR_ROLE,))
+    scheduler_user = user_factory("agendador-label-processado", (SCHEDULER_ROLE,))
+    processed = _confirmed_case(
+        2, created_by=nir_user, decided_by=doctor, scheduled_by=scheduler_user
+    )
+    _apply_metadata(processed, patient_name="Paciente Processado", patient_age=84)
+    login_user(user_factory("geral-label-processado", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue"), {"tab": "processados"}).content.decode()
+
+    assert "Paciente Processado · 84 a" in body
+    assert "Recebido há" in body
+    assert "Aguardando há" not in body
+
+
+@pytest.mark.django_db
+def test_queue_card_zero_age_and_zero_days_on_screen(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R2 (P1 da review): ZERO é válido e DEVE exibir «0 a» e «0 d em tela»."""
+    doctor = user_factory("medico-zero-tela-agendador", (DOCTOR_ROLE,))
+    case = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(case, patient_name="Recem Nascido", patient_age=0, days_on_screen=0)
+    login_user(user_factory("geral-zero-tela", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    assert "Recem Nascido · 0 a" in body
+    assert "0 d em tela" in body
+
+
+@pytest.mark.django_db
+def test_queue_card_absent_age_and_days_on_screen(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R2: idade/dias ausentes NÃO geram sufixo nem badge (sem «— a»)."""
+    doctor = user_factory("medico-sem-demo-agendador", (DOCTOR_ROLE,))
+    case = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(case, patient_name="Paciente Sem Demografia")
+    login_user(user_factory("geral-sem-demo", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    assert "Paciente Sem Demografia" in body
+    assert "Paciente Sem Demografia · " not in body
+    assert "d em tela" not in body
 
 
 @pytest.mark.django_db

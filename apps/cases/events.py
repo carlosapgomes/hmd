@@ -126,6 +126,15 @@ class CaseEventType(models.TextChoices):
         "Falha no processamento do anexo",
     )
 
+    # Encerramento administrativo (change painel-lista-encerramento, slice 001,
+    # R1): transição excepcional para CLEANED do supervisor do painel — gravado
+    # pela op pública ``Case.administratively_close`` no MESMO atomic da
+    # transição e do release forçado do lock, com motivo, autor e papel.
+    CASE_ADMINISTRATIVELY_CLOSED = (
+        "CASE_ADMINISTRATIVELY_CLOSED",
+        "Caso encerrado administrativamente",
+    )
+
 
 def case_status_event_type(state: str) -> str:
     """Resolve o tipo canônico do evento de transição para o estado-alvo.

@@ -1,10 +1,11 @@
 """Testes do serviço e do signal de notificações por marcos (slice 001, R2–R5).
 
-Cobre o conjunto FECHADO de marcos: resposta final publicada → criador (título
+Cobre o conjunto canônico de marcos: resposta final publicada → criador (título
 fixo + preview por ``payload["source"]`` com fallback), caso pronto para
 agendamento → fan-out dos usuários com papel ``scheduler`` ativos, reabertura
 por intercorrência (``AWAITING_SCHEDULING`` com ``reason`` no payload) →
-criador com preview fixo; entrada NORMAL em ``AWAITING_SCHEDULING`` (sem
+criador com preview fixo, encerramento administrativo → criador com texto
+fixo; entrada NORMAL em ``AWAITING_SCHEDULING`` (sem
 ``reason``) e eventos fora do conjunto não notificam. Idempotência por
 (``recipient``, ``event``) e fail-safe do signal (serviço que explode não
 impede a gravação do evento).

@@ -1,7 +1,7 @@
 """Serviço de notificações por marcos do caso (change dashboard-notifications-pwa, D1).
 
 ``create_milestone_notifications(event)`` traduz um evento-marco da trilha no
-conjunto FECHADO de notificações in-app de D1:
+conjunto canônico de notificações in-app de D1:
 
 - ``CASE_STATUS_FINAL_REPLY_POSTED`` → criador do caso (NIR), título fixo
   "Resposta final disponível" e preview pelo ``payload["source"]`` (mapa fixo
@@ -13,7 +13,10 @@ conjunto FECHADO de notificações in-app de D1:
   criador do caso. É assim que a reabertura por intercorrência se marca
   (``Case.reopen_scheduling`` carrega ``extra_payload={"reason": ...}``); a
   entrada NORMAL na fila (``await_scheduling_confirmation``) não carrega
-  ``reason`` e NÃO notifica.
+  ``reason`` e NÃO notifica;
+- ``CASE_ADMINISTRATIVELY_CLOSED`` → criador do caso, com título e preview
+  FIXOS "Caso encerrado administrativamente" (o motivo do encerramento é do
+  supervisor e NUNCA entra no texto da notificação).
 
 Qualquer evento fora desse conjunto devolve ``[]`` sem tocar o banco (os
 eventos de processamento/fechamento não notificam). O conteúdo é sempre texto
@@ -54,6 +57,11 @@ SCHEDULING_REOPENED_TITLE = "Caso reaberto por intercorrência"
 # O motivo da intercorrência é interno do fluxo — nunca entra no preview.
 SCHEDULING_REOPENED_PREVIEW = "Reconfirme os dados do caso"
 
+# Marco do encerramento administrativo (spec notifications): título e preview
+# FIXOS — o motivo registrado pelo supervisor nunca entra no texto.
+ADMINISTRATIVELY_CLOSED_TITLE = "Caso encerrado administrativamente"
+ADMINISTRATIVELY_CLOSED_PREVIEW = ADMINISTRATIVELY_CLOSED_TITLE
+
 # Rota de detalhe do caso por papel ativo (D2): as views de destino fazem o
 # guard de acesso REAL do caso; sem papel (ou admin) cai na home.
 NOTIFICATION_DETAIL_ROUTE_BY_ROLE: dict[str, str] = {
@@ -92,6 +100,8 @@ def create_milestone_notifications(event: CaseEvent) -> list[UserNotification]:
         and "reason" in event.payload
     ):
         return _create_scheduling_reopened_notification(event)
+    if event.event_type == CaseEventType.CASE_ADMINISTRATIVELY_CLOSED:
+        return _create_administratively_closed_notification(event)
     return []
 
 
@@ -139,6 +149,19 @@ def _create_scheduling_reopened_notification(event: CaseEvent) -> list[UserNotif
             notification_type=NotificationType.SCHEDULING_REOPENED,
             title=SCHEDULING_REOPENED_TITLE,
             body_preview=SCHEDULING_REOPENED_PREVIEW,
+        )
+    ]
+
+
+def _create_administratively_closed_notification(event: CaseEvent) -> list[UserNotification]:
+    """Encerramento administrativo → criador, com título/preview fixos (D1)."""
+    return [
+        _create_notification(
+            event=event,
+            recipient=event.case.created_by,
+            notification_type=NotificationType.ADMINISTRATIVELY_CLOSED,
+            title=ADMINISTRATIVELY_CLOSED_TITLE,
+            body_preview=ADMINISTRATIVELY_CLOSED_PREVIEW,
         )
     ]
 

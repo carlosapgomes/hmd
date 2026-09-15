@@ -128,6 +128,21 @@ def _active_lock_message(case: Case) -> str:
     return f"caso {case.case_id} está sob lock ativo de {owner} (contexto {context!r}) até {until}"
 
 
+def case_has_lock(case: Case) -> bool:
+    """Há lock operacional persistido no caso (portador, posse/lease ou contexto).
+
+    Mesma definição usada pelo snapshot do encerramento administrativo
+    (``apps/cases/closure.py::_lock_snapshot``): sem nenhum desses campos o
+    force-release é no-op e NENHUM evento de release é gravado.
+    """
+    return (
+        case.locked_by_id is not None
+        or case.locked_until is not None
+        or case.lock_token is not None
+        or case.lock_context != ""
+    )
+
+
 def _expired_payload(case: Case, *, context: str, role: str) -> dict[str, object]:
     """Payload do CASE_LOCK_EXPIRED com os dados do portador expirado."""
     return {
@@ -262,6 +277,56 @@ def release_case_lock(case: Case, token: uuid.UUID) -> None:
             payload={"context": context},
         )
         _clear_lock_fields(locked)
+
+
+# ── R4 (encerramento administrativo): release forçado ──────────────────────
+
+
+def force_release_case_lock(
+    case: Case,
+    *,
+    reason: str,
+    user: User | None,
+    role: str | None = None,
+) -> None:
+    """Libera o lock do caso à força, com o autor na trilha (R4 — encerramento
+    administrativo).
+
+    Espelha ``release_case_lock`` (re-lê a linha sob ``select_for_update``), mas
+    NÃO exige token: quem encerra o caso pode não ser o portador da lease (lock
+    travado/expirado é o caso de uso). No mesmo ``atomic``: grava
+    ``CASE_LOCK_RELEASED`` com o payload de força — motivo, ``forced``, o
+    snapshot do portador anterior (contexto/vencimento) e o autor do
+    encerramento — e limpa os seis campos de lock, COPIANDO o estado limpo de
+    volta para a instância do chamador (o ``save()`` full da transição seguinte
+    não ressuscita o lock). Caso SEM lock persistido é no-op idempotente, sem
+    evento: o ``CASE_LOCK_RELEASED`` só existe quando havia lock.
+    """
+    with transaction.atomic():
+        locked = Case.objects.select_for_update().get(pk=case.pk)
+        if not case_has_lock(locked):
+            return
+        previous_context = locked.lock_context
+        previous_until = locked.locked_until
+        _record_lock_event(
+            locked,
+            event_type=CaseEventType.CASE_LOCK_RELEASED,
+            user=user,
+            role=role,
+            payload={
+                "reason": reason,
+                "forced": True,
+                "previous_lock_context": previous_context,
+                "previous_lock_until": previous_until.isoformat()
+                if previous_until is not None
+                else None,
+                "by": user.username if user is not None else "",
+                "role": role or "",
+            },
+        )
+        _clear_lock_fields(locked)
+        for field_name in _LOCK_FIELDS:
+            setattr(case, field_name, getattr(locked, field_name))
 
 
 # ── R5: renew ──────────────────────────────────────────────────────────────

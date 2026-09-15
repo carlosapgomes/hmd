@@ -365,6 +365,37 @@ class Case(FSMModelMixin, models.Model):
     def _fsm_complete_cleaning(self) -> None:
         """Hook FSM CLEANING → CLEANED."""
 
+    @transition(
+        field="status",
+        source=[
+            CaseStatus.NEW,
+            CaseStatus.PDF_EXTRACTING,
+            CaseStatus.ANONYMIZING,
+            CaseStatus.LLM_EXTRACTING,
+            CaseStatus.LLM_SUMMARIZING,
+            CaseStatus.AWAITING_DOCTOR,
+            CaseStatus.DOCTOR_DENIED,
+            CaseStatus.DOCTOR_ACCEPTED,
+            CaseStatus.SCHEDULER_REQUESTED,
+            CaseStatus.AWAITING_SCHEDULING,
+            CaseStatus.SCHEDULING_CONFIRMED,
+            CaseStatus.SCHEDULING_DENIED,
+            CaseStatus.FAILED,
+            CaseStatus.FINAL_REPLY_POSTED,
+            CaseStatus.AWAITING_NIR_ACK,
+            CaseStatus.CLEANING,
+        ],
+        target=CaseStatus.CLEANED,
+    )
+    def _fsm_administratively_close(self) -> None:
+        """Hook FSM {todos exceto CLEANED} → CLEANED (encerramento administrativo).
+
+        Terceira transição adicionada pós-change-03 (guardrail: transições sim,
+        estados não): o supervisor do painel encerra um caso travado. A lista de
+        ``source`` é explícita (16 estados) — ``CLEANED`` fica de fora, então
+        reencerrar um caso concluído é ``TransitionNotAllowed`` sem efeito.
+        """
+
     # ── Operações públicas (tabela D4) ─────────────────────────────────────
     # Cada transição recebe ``*, user=None, role=None`` (R5): ``role`` é o
     # papel ativo (views extraem da sessão; workers passam ``role="system"``).
@@ -561,6 +592,47 @@ class Case(FSMModelMixin, models.Model):
     def complete_cleaning(self, *, user: User | None = None, role: str | None = None) -> None:
         """CLEANING → CLEANED (fim da limpeza de dados)."""
         self._run_transition(self._fsm_complete_cleaning, user=user, role=role)
+
+    def administratively_close(
+        self,
+        *,
+        user: User | None = None,
+        role: str | None = None,
+        reason_code: str,
+        reason_text: str,
+        lock_snapshot: dict[str, object],
+    ) -> None:
+        """{todos exceto CLEANED} → CLEANED (encerramento administrativo).
+
+        Transição excepcional do supervisor do painel (manager/admin). O serviço
+        ``administratively_close_case`` (apps/cases/closure.py) valida catálogo/
+        texto/papel/lease viva, força a liberação do lock operacional e roda a
+        minimização dos dados clínicos ANTES desta op — tudo no MESMO atomic.
+
+        Aqui rodam DOIS eventos: a transição (``CASE_STATUS_CLEANED``, payload
+        canônico com o ``source`` real) e a auditoria do encerramento
+        (``CASE_ADMINISTRATIVELY_CLOSED``). O ``lock_snapshot`` chega pronto do
+        serviço (colhido ANTES do force-release, que já zerou os campos de lock
+        na instância): ``{had_lock, previous_lock_context, previous_lock_until}``,
+        somado a motivo, autor e papel. Source inválido →
+        ``TransitionNotAllowed`` sem efeito (django-fsm).
+        """
+        with transaction.atomic():
+            self._run_transition(self._fsm_administratively_close, user=user, role=role)
+            CaseEvent.objects.create(
+                case_id=self.case_id,
+                event_type=CaseEventType.CASE_ADMINISTRATIVELY_CLOSED,
+                actor_type=ActorType.USER if user is not None else ActorType.SYSTEM,
+                actor=user,
+                actor_role=role or "",
+                payload={
+                    "reason_code": reason_code,
+                    "reason_text": reason_text,
+                    "by": user.username if user is not None else "",
+                    "role": role or "",
+                    **lock_snapshot,
+                },
+            )
 
 
 def case_document_upload_path(instance: CaseDocument, filename: str) -> str:

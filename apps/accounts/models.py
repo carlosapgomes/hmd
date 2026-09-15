@@ -153,11 +153,15 @@ class User(AbstractUser):
 
 
 class NotificationType(models.TextChoices):
-    """Tipo da notificação in-app — os 3 marcos do ciclo (change 11, D1)."""
+    """Tipo da notificação in-app — os 4 marcos do ciclo (change 11, D1)."""
 
     FINAL_REPLY_POSTED = "final_reply_posted", "Resposta final publicada"
     SCHEDULER_REQUESTED = "scheduler_requested", "Caso pronto para agendamento"
     SCHEDULING_REOPENED = "scheduling_reopened", "Caso reaberto por intercorrência"
+    ADMINISTRATIVELY_CLOSED = (
+        "administratively_closed",
+        "Caso encerrado administrativamente",
+    )
 
 
 class UserNotificationQuerySet(models.QuerySet["UserNotification"]):

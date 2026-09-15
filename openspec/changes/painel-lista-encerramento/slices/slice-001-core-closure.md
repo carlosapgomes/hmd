@@ -130,4 +130,20 @@ uv run python manage.py makemigrations --check --dry-run
 
 ## Deviations / learnings
 
-- (preenchido na execução)
+- Payload do release forçado = enumeração literal do design `{reason,
+  forced, previous_lock_context, previous_lock_until, by, role}` — sem as
+  chaves `expired_locked_by_*` do helper `_expired_payload` (nenhum
+  consumidor as lê; decisão registrada na review do slice).
+- `_lock_snapshot.had_lock` usava predicado próprio (régua de `_has_lock`
+  replicada); hardening do parent: `locks.py` expõe `case_has_lock` público
+  e `closure.py` o importa (fonte única).
+- Validação CLEANED/lease-viva DENTRO do atomic pós `select_for_update`
+  (entrada valida catálogo/texto/papel) — fail-closed sob corrida.
+- `reason_text` normalizado com `.strip()` no payload; labels pt-BR
+  adaptados do ats-web ("Bug do sistema", "Duplicado/reapresentação
+  manual"); pinados por teste de catálogo exato (hardening do parent).
+- Teste do manual vive em `apps/cases/tests/test_administrative_closure.py`
+  (não há arquivo de teste de manual nas expected files).
+- Hardening do parent (review P2s): teste do catálogo exato (6 pares) e
+  `TransitionNotAllowed` da op pública em caso CLEANED (exclusão FSM
+  pinnada no modelo, não só no service).

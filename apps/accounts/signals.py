@@ -1,7 +1,7 @@
 """Signals do app de accounts (change dashboard-notifications-pwa, slice 001).
 
 Um receiver em ``CaseEvent.post_save``: cada evento-marco da trilha delega o
-conjunto FECHADO de notificações de D1 ao serviço
+conjunto canônico de notificações de D1 ao serviço
 ``create_milestone_notifications`` (filtro ``created`` evita reprocessar
 updates). Notificação é suplementar: qualquer falha é logada e engolida — a
 transição do caso NUNCA falha por causa dela (R4).

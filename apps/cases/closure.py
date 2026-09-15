@@ -2,7 +2,9 @@
 
 Módulo de serviços do núcleo (``apps.cases`` — não do app de um papel): o
 fechamento é ciclo de vida do caso, consumido pelas views do doctor (negativa
-médica, slice 001) e do intake (ciência do NIR, slice 002). Segue o padrão
+médica, slice 001), do intake (ciência do NIR, slice 002) e do painel
+(encerramento administrativo, slice 001 do change painel-lista-encerramento).
+Segue o padrão
 transacional dos services existentes (``transaction.atomic()`` +
 ``select_for_update``, validações nomeadas ``ValueError`` **antes** de
 qualquer escrita e transições via ops públicas da FSM) e o padrão de resposta
@@ -18,8 +20,10 @@ from typing import TYPE_CHECKING
 
 from django.core.files.storage import default_storage
 from django.db import transaction
+from django.utils import timezone
 
 from apps.cases.communications import post_user_communication
+from apps.cases.locks import case_has_lock, force_release_case_lock
 from apps.cases.models import Case, CaseProcedure, CaseStatus, DoctorDisposition
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES, get_procedure_profile
 
@@ -179,3 +183,128 @@ def post_doctor_denial_reply(case: Case, *, user: User, role: str) -> None:
         locked.post_final_reply(user=user, role=role)
         body = DENIAL_REPLY_TEMPLATE.format(denied_items=_denial_items(denied_rows))
         post_user_communication(locked, user=user, role=role, body=body)
+
+
+# ── Encerramento administrativo (change painel-lista-encerramento, slice 001) ──
+
+# Motivo canônico da liberação FORÇADA do lock no encerramento administrativo
+# (payload do ``CASE_LOCK_RELEASED`` de ``apps/cases/locks.py``).
+FORCED_RELEASE_REASON = "administrative_closure"
+
+# Catálogo FECHADO dos motivos do encerramento administrativo: código canônico →
+# rótulo pt-BR. Código fora do catálogo é recusado pelo serviço — o conjunto é
+# contrato (o select do painel, slice 003, deriva daqui).
+ADMINISTRATIVE_CLOSURE_REASONS: dict[str, str] = {
+    "processing_error": "Erro de processamento",
+    "llm_failure": "Falha do LLM",
+    "system_bug": "Bug do sistema",
+    "stuck_lock": "Lock travado",
+    "duplicate_reprocess": "Duplicado/reapresentação manual",
+    "other": "Outro",
+}
+
+# Choices (código, rótulo) do catálogo para os formulários do painel.
+_REASON_CHOICES: list[tuple[str, str]] = list(ADMINISTRATIVE_CLOSURE_REASONS.items())
+
+# Papéis com o encerramento administrativo (defesa em profundidade: a rota do
+# painel aplica ``role_required("manager", "admin")``).
+ADMINISTRATIVE_CLOSURE_ROLES = frozenset({"manager", "admin"})
+
+# Prefixo dos contextos de lock dos workers (``worker_pdf`` /
+# ``worker_anonymization`` / ``worker_llm`` — tasks e orquestrador do pipeline):
+# base da recusa fail-closed do encerramento.
+WORKER_LOCK_CONTEXT_PREFIX = "worker_"
+
+
+def _lock_snapshot(case: Case) -> dict[str, object]:
+    """Snapshot dos campos de lock para o payload do encerramento (R1).
+
+    Colhido ANTES do ``force_release_case_lock``, que zera os campos de lock na
+    instância do caso. A régua de "havia lock" é a mesma de
+    ``apps/cases/locks.py::_has_lock`` (portador, posse/lease ou contexto): sem
+    nenhum desses campos o snapshot é vazio e nenhum release é gravado.
+    """
+    had_lock = case_has_lock(case)
+    previous_until = case.locked_until
+    return {
+        "had_lock": had_lock,
+        "previous_lock_context": case.lock_context,
+        "previous_lock_until": previous_until.isoformat() if previous_until is not None else None,
+    }
+
+
+def administratively_close_case(
+    *,
+    case: Case,
+    user: User,
+    active_role: str,
+    reason_code: str,
+    reason_text: str,
+) -> Case:
+    """Encerra administrativamente o caso (R1–R3, design D2).
+
+    Transição excepcional do supervisor do painel (manager/admin) para
+    ``CLEANED`` de QUALQUER estado não-CLEANED, com motivo auditável. Validações
+    nomeadas ``ValueError`` ANTES de qualquer escrita: catálogo, texto
+    obrigatório (não vazio) e papel ativo. Dentro do ``atomic`` (linha relida sob
+    ``select_for_update``): recusa de caso já ``CLEANED`` e recusa FAIL-CLOSED de
+    lock de worker com lease VIVA (``locked_until`` no futuro + contexto
+    ``worker_*`` — o worker em voo segue dono do caso) → e então, nesta
+    ordem: snapshot do lock → ``force_release_case_lock`` (evento de release com
+    o autor do encerramento; cópia dos campos limpos para a instância, para o
+    ``save()`` full da transição não ressuscitar o lock) → coleta dos nomes dos
+    arquivos ANTES do delete → minimização dos dados clínicos (MESMA do
+    encerramento por ciência: rows de documento/anexo + 7 campos + arquivos
+    físicos) → op pública ``Case.administratively_close`` (CASE_STATUS_CLEANED +
+    CASE_ADMINISTRATIVELY_CLOSED) → ``transaction.on_commit`` da deleção física
+    best-effort. Lock com lease EXPIRADA (worker travado) NÃO recusa — é o caso
+    de uso do motivo ``stuck_lock``. Quem chama (a view do painel, slice 003)
+    traduz ``ValueError`` em mensagem + re-render, nunca 500; o caso atualizado
+    (CLEANED, sem lock) é devolvido.
+    """
+    if reason_code not in ADMINISTRATIVE_CLOSURE_REASONS:
+        raise ValueError(f"motivo de encerramento administrativo fora do catálogo: {reason_code!r}")
+    reason_text = reason_text.strip()
+    if not reason_text:
+        raise ValueError("texto do motivo do encerramento administrativo é obrigatório")
+    if active_role not in ADMINISTRATIVE_CLOSURE_ROLES:
+        raise ValueError(
+            "encerramento administrativo restrito aos papéis manager/admin — "
+            f"papel ativo {active_role!r}"
+        )
+
+    with transaction.atomic():
+        locked = Case.objects.select_for_update().get(pk=case.pk)
+        if locked.status == CaseStatus.CLEANED:
+            raise ValueError("caso já encerrado — encerramento administrativo indisponível")
+        now = timezone.now()
+        if (
+            locked.locked_until is not None
+            and locked.locked_until > now
+            and locked.lock_context.startswith(WORKER_LOCK_CONTEXT_PREFIX)
+        ):
+            raise ValueError(
+                "caso em processamento; aguarde a task terminar ou trate o lock travado"
+            )
+        lock_snapshot = _lock_snapshot(locked)
+        force_release_case_lock(locked, reason=FORCED_RELEASE_REASON, user=user, role=active_role)
+        file_names = [
+            document.file.name for document in locked.documents.only("file") if document.file.name
+        ]
+        file_names.extend(
+            attachment.file.name
+            for attachment in locked.attachments.only("file")
+            if attachment.file.name
+        )
+        _clean_acknowledged_clinical_data(locked)
+        locked.administratively_close(
+            user=user,
+            role=active_role,
+            reason_code=reason_code,
+            reason_text=reason_text,
+            lock_snapshot=lock_snapshot,
+        )
+        transaction.on_commit(lambda: _delete_files_best_effort(file_names))
+
+    case.refresh_from_db()
+    return case

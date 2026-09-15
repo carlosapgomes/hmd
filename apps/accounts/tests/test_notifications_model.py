@@ -1,7 +1,7 @@
 """Testes do model ``UserNotification`` (change dashboard-notifications-pwa, slice 001, R1).
 
 Cobre o contrato de D1: campos exatos (pk UUID, FKs CASCADE com ``event``
-anulável, ``notification_type`` do conjunto dos 3 marcos, ``title``/``body_preview``
+anulável, ``notification_type`` do conjunto dos 4 marcos, ``title``/``body_preview``
 limitados, ``created_at`` automático, ``read_at`` nulo), idempotência estrutural
 (``UniqueConstraint(recipient, event)``), índices de consulta e ordenação
 ``-created_at``.
@@ -75,11 +75,12 @@ class TestUserNotificationFields:
         assert list(creator.notifications.all()) == [notification]
         assert list(case.notifications.all()) == [notification]
 
-    def test_notification_type_choices_are_the_three_milestones(self) -> None:
+    def test_notification_type_choices_are_the_four_milestones(self) -> None:
         assert [choice for choice, _label in NotificationType.choices] == [
             "final_reply_posted",
             "scheduler_requested",
             "scheduling_reopened",
+            "administratively_closed",
         ]
         field = UserNotification._meta.get_field("notification_type")
         assert field.choices == NotificationType.choices

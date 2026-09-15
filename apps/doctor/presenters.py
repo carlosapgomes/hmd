@@ -48,13 +48,25 @@ from django.utils.timezone import localtime
 from apps.anonymization.reidentify import reidentify, reidentify_structure, reidentify_text
 from apps.attachments.models import AttachmentStatus, CaseAttachment, ExtractionMethod, PatientMatch
 from apps.cases.events import CaseEventType
-from apps.cases.models import Case, CaseEvent, CaseProcedure, CaseStatus, DoctorDisposition
+from apps.cases.models import (
+    Case,
+    CaseEvent,
+    CaseProcedure,
+    CaseStatus,
+    DetectionStatus,
+    DoctorDisposition,
+)
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
-from apps.cases.procedures import get_declared_procedure_types
 from apps.pipeline.prior_case import lookup_prior_case_context
 
 # Perfil do catálogo por tipo (label/subtipo dos cards e seções).
 _PROFILE_BY_TYPE = {profile.procedure_type: profile for profile in PROCEDURE_PROFILES}
+# Ordem canônica do catálogo (mesma regra de ``apps/cases/procedures.py``) para
+# as rows detectadas não-declaradas do card de procedimentos; tipo fora do
+# catálogo (buraco documentado de ``bulk_create``) ordena por último.
+_CATALOG_ORDER: dict[str, int] = {
+    profile.procedure_type: index for index, profile in enumerate(PROCEDURE_PROFILES)
+}
 # Rótulo legível da disposição médica atual da row (DoctorDisposition).
 _DISPOSITION_LABELS = dict(DoctorDisposition.choices)
 
@@ -571,16 +583,21 @@ def _build_attachment_card(attachment: CaseAttachment, case: Case) -> dict[str, 
 def build_case_detail_context(case: Case) -> dict[str, object]:
     """Contexto re-identificado do detalhe do caso para o médico (puro, R2/R5).
 
-    Monta identificação real, tipos declarados com subtipo e disposição atual
-    (+ motivo/data da decisão nas rows já decididas), sumário e estrutura
+    Monta identificação real, procedimentos do caso com subtipo, origem
+    (``is_declared``), detecção (``detection``; ``pending`` antes da
+    reconciliação — o template omite o badge) e disposição atual (+ motivo/
+    data da decisão nas rows já decididas), sumário e estrutura
     re-identificados por seção, alertas consultivos da policy por procedimento
     com a sugestão do LLM2, requisitos gerais acionáveis, prior-case com motivo
     real, a flag ``can_decide`` (= estado ``AWAITING_DOCTOR``), o ator/data da
     decisão (``decision_event``, consulta dedicada) e a flag ``is_failed`` para
-    o badge de erro. A trilha de eventos saiu do detalhe médico (vive no
-    painel). A re-identificação usa exclusivamente o mapa do caso (tokens de
-    espaços alheios podem sobrar como tokens — sem vazamento). Caso sem
-    artefatos → seções vazias.
+    o badge de erro. ``declared`` carrega TODAS as rows do caso — declaradas
+    primeiro (ordem canônica do contrato) e depois as detectadas não-declaradas
+    que sobrevivem ao bypass da divergência — numa leitura única da relação. A
+    trilha de eventos saiu do detalhe médico (vive no painel). A
+    re-identificação usa exclusivamente o mapa do caso (tokens de espaços
+    alheios podem sobrar como tokens — sem vazamento). Caso sem artefatos →
+    seções vazias.
     """
     pseudonym_map = case.pseudonym_map if isinstance(case.pseudonym_map, dict) else {}
 
@@ -589,13 +606,22 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
     suggested_action = reidentify_structure(case.suggested_action, pseudonym_map)
     summary_text = reidentify_text(case, case.summary_text)
 
-    declared_types = get_declared_procedure_types(case)
+    # Leitura ÚNICA das rows (review P2): declared_by_nir deriva daqui na
+    # ordem canônica do catálogo (mesma semântica de
+    # ``get_declared_procedure_types``), sem segunda query.
+    rows = list(CaseProcedure.objects.filter(case=case))
+    rows_by_type = {row.procedure_type: row for row in rows}
+    declared_types = tuple(
+        sorted(
+            (row.procedure_type for row in rows if row.declared_by_nir),
+            key=lambda procedure_type: _CATALOG_ORDER.get(procedure_type, len(_CATALOG_ORDER)),
+        )
+    )
     policies = policy_result if isinstance(policy_result, dict) else {}
     suggestions = suggested_action if isinstance(suggested_action, dict) else {}
     procedures_suggestions = suggestions.get("procedures")
     procedures_map = procedures_suggestions if isinstance(procedures_suggestions, dict) else {}
 
-    rows = CaseProcedure.objects.filter(case=case)
     rows_by_type = {row.procedure_type: row for row in rows}
     declared: list[dict[str, object]] = []
     for procedure_type in declared_types:
@@ -607,12 +633,37 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
                 "procedure_type": procedure_type,
                 "label": _procedure_label(procedure_type),
                 "subtype": profile.doctor_subtipo if profile is not None else "",
+                "is_declared": True,
+                "detection": row.detection_status if row is not None else DetectionStatus.PENDING,
                 "disposition": disposition,
                 "disposition_label": _DISPOSITION_LABELS.get(disposition, disposition),
                 # Decisão por row (R5): motivo e data/hora exibível quando a row
                 # já foi decidida; vazios antes da decisão.
                 "reason": row.doctor_reason.strip() if row is not None else "",
                 "decided_at": _format_datetime(row.doctor_decided_at) if row is not None else "",
+            }
+        )
+    # Rows detectadas não-declaradas (bypass da divergência: a row permanece) —
+    # entram no fim do card, na ordem canônica do catálogo.
+    extra_rows = sorted(
+        (row for row in rows if not row.declared_by_nir),
+        key=lambda row: _CATALOG_ORDER.get(row.procedure_type, len(_CATALOG_ORDER)),
+    )
+    for row in extra_rows:
+        profile = _PROFILE_BY_TYPE.get(row.procedure_type)
+        declared.append(
+            {
+                "procedure_type": row.procedure_type,
+                "label": _procedure_label(row.procedure_type),
+                "subtype": profile.doctor_subtipo if profile is not None else "",
+                "is_declared": False,
+                "detection": row.detection_status,
+                "disposition": row.doctor_disposition,
+                "disposition_label": _DISPOSITION_LABELS.get(
+                    row.doctor_disposition, row.doctor_disposition
+                ),
+                "reason": row.doctor_reason.strip(),
+                "decided_at": _format_datetime(row.doctor_decided_at),
             }
         )
 

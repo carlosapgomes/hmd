@@ -33,7 +33,14 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.attachments.models import AttachmentStatus, CaseAttachment, ExtractionMethod, PatientMatch
-from apps.cases.models import Case, CaseDocument, CaseProcedure, CaseStatus, DoctorDisposition
+from apps.cases.models import (
+    Case,
+    CaseDocument,
+    CaseProcedure,
+    CaseStatus,
+    DetectionStatus,
+    DoctorDisposition,
+)
 from apps.cases.procedures import record_doctor_procedure_decisions
 from apps.doctor.presenters import build_case_detail_context
 
@@ -105,11 +112,11 @@ def _apply_demographics(
 
 
 _IDENTIFICATION_CARD_START = "<!-- Identificação do paciente -->"
-_IDENTIFICATION_CARD_END = "<!-- Procedimentos declarados -->"
+_IDENTIFICATION_CARD_END = "<!-- Procedimentos do caso -->"
 # Ordem de leitura clínica do detalhe (design D2): quadro clínico antes do
 # consultivo da automação.
 _CLINICAL_ORDER = (
-    "Procedimentos declarados",
+    "Procedimentos do caso",
     "Sumário clínico",
     "Estrutura extraída",
     "Alertas consultivos",
@@ -595,7 +602,7 @@ def test_detail_200_awaiting_with_reidentified_cards(
     # Cards por seção (R5).
     for card_title in (
         "Identificação do paciente",
-        "Procedimentos declarados",
+        "Procedimentos do caso",
         "Alertas consultivos",
         "Requisitos gerais acionáveis",
         "Prior-case",
@@ -1197,3 +1204,160 @@ def test_detail_failed_case_shows_error_badge(
         body,
     )
     assert "Trilha de eventos" not in body
+
+
+# ── detected-procedures-visible (slice 002): origem × detecção no card ─────
+
+_PROCEDURES_CARD_START = "<!-- Procedimentos do caso -->"
+_PROCEDURES_CARD_END = "<!-- Sumário clínico -->"
+_ANGIO_TYPE = "angio_art_perif"
+
+
+def _procedures_card(body: str) -> str:
+    """Recorte do card de procedimentos do caso (asserts escopados por card)."""
+    _, card = body.split(_PROCEDURES_CARD_START, 1)
+    card, _ = card.split(_PROCEDURES_CARD_END, 1)
+    return card
+
+
+@pytest.mark.django_db
+def test_presenter_procedure_rows_include_origin_and_detection(
+    user_factory: Callable[..., User],
+) -> None:
+    """R1/D1: contexto ``declared`` traz TODAS as rows com origem e detecção.
+
+    Declarada (canônica, primeiro) + detectada não-declarada que sobreviveu ao
+    bypass; a detecção ``pending`` (caso sem reconciliação) é exposta crua para
+    o template omitir o badge.
+    """
+    owner = user_factory("dono-rows-origem", ("nir",))
+    case = _create_case_with_declared(owner, (_ANGIO_TYPE,))
+    _advance_to_awaiting_doctor(case)
+    CaseProcedure.objects.filter(case=case).update(
+        detection_status=DetectionStatus.NOT_DETECTED,
+    )
+    CaseProcedure.objects.create(
+        case=case,
+        procedure_type=ANGIO_TYPE,
+        declared_by_nir=False,
+        detection_status=DetectionStatus.DETECTED,
+    )
+
+    context = cast(dict[str, Any], build_case_detail_context(case))
+
+    rows = cast(list[dict[str, Any]], context["declared"])
+    assert [row["procedure_type"] for row in rows] == [_ANGIO_TYPE, ANGIO_TYPE]
+    assert rows[0]["is_declared"] is True
+    assert rows[0]["detection"] == DetectionStatus.NOT_DETECTED
+    assert rows[1]["is_declared"] is False
+    assert rows[1]["detection"] == DetectionStatus.DETECTED
+
+
+@pytest.mark.django_db
+def test_detail_procedure_card_shows_declared_and_detected(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2/D1: row coincidente exibe «Declarado» + «Detectado» + disposição."""
+    case = _make_awaiting_case_with_artifacts(nir_user)
+    CaseProcedure.objects.filter(case=case).update(
+        detection_status=DetectionStatus.DETECTED,
+    )
+    doctor = user_factory("geral-origem-detectada", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:case_detail", args=[case.case_id]))
+    body = response.content.decode()
+
+    assert response.status_code == 200
+    card = _procedures_card(body)
+    assert "Arteriografia periférica" in card
+    assert re.search(r'class="badge[^"]*">Declarado</span>', card)
+    assert re.search(r'class="badge[^"]*">Detectado</span>', card)
+    assert "Disposição: Pendente" in card
+
+
+@pytest.mark.django_db
+def test_detail_procedure_card_shows_detected_without_declaration(
+    client: Client,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2/D1: detectada não-declarada (bypass) visível com a origem própria."""
+    owner = user_factory("dono-bypass-rows", ("nir",))
+    case = _create_case_with_declared(owner, (_ANGIO_TYPE,))
+    _advance_to_awaiting_doctor(case)
+    CaseProcedure.objects.filter(case=case).update(
+        detection_status=DetectionStatus.NOT_DETECTED,
+    )
+    CaseProcedure.objects.create(
+        case=case,
+        procedure_type=ANGIO_TYPE,
+        declared_by_nir=False,
+        detection_status=DetectionStatus.DETECTED,
+    )
+    doctor = user_factory("geral-origem-bypass", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:case_detail", args=[case.case_id]))
+    body = response.content.decode()
+
+    assert response.status_code == 200
+    card = _procedures_card(body)
+    assert "Angioplastia arterial periférica (membros)" in card
+    assert "Não detectado" in card
+    assert "Arteriografia periférica" in card
+    assert "Detectado na extração" in card
+
+
+@pytest.mark.django_db
+def test_detail_procedure_extra_row_shows_detection_badge(
+    client: Client,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2/D1 (review P1): a row detectada não-declarada também carrega o badge
+    de detecção («Detectado») — origem E detecção para toda row reconciliada."""
+    owner = user_factory("dono-bypass-badge", ("nir",))
+    case = _create_case_with_declared(owner, (_ANGIO_TYPE,))
+    _advance_to_awaiting_doctor(case)
+    CaseProcedure.objects.filter(case=case).update(
+        detection_status=DetectionStatus.NOT_DETECTED,
+    )
+    CaseProcedure.objects.create(
+        case=case,
+        procedure_type=ANGIO_TYPE,
+        declared_by_nir=False,
+        detection_status=DetectionStatus.DETECTED,
+    )
+    doctor = user_factory("geral-badge-extra", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:case_detail", args=[case.case_id])).content.decode()
+    card = _procedures_card(body)
+
+    assert "Detectado na extração" in card
+    assert 'text-bg-success">Detectado</span>' in card
+
+
+@pytest.mark.django_db
+def test_detail_procedure_row_pending_has_no_detection_badge(
+    client: Client,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2/D1 (review P2): row ainda não reconciliada ('pending') exibe apenas
+    a origem — nenhum badge de detecção no card."""
+    owner = user_factory("dono-pending-badge", ("nir",))
+    case = _create_case_with_declared(owner, (_ANGIO_TYPE,))
+    _advance_to_awaiting_doctor(case)
+    CaseProcedure.objects.filter(case=case).update(
+        detection_status=DetectionStatus.PENDING,
+    )
+    doctor = user_factory("geral-badge-pending", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:case_detail", args=[case.case_id])).content.decode()
+    card = _procedures_card(body)
+
+    assert "Declarado" in card
+    assert "Detectado" not in card
+    assert "Não detectado" not in card

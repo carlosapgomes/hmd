@@ -67,10 +67,10 @@
       </div>
     </div>
 
-    <!-- Procedimentos declarados -->
+    <!-- Procedimentos do caso -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-white">
-        <h2 class="h5 mb-0">Procedimentos declarados</h2>
+        <h2 class="h5 mb-0">Procedimentos do caso</h2>
       </div>
       <div class="card-body">
         {% if declared %}
@@ -79,6 +79,16 @@
           <li class="list-group-item px-0 d-flex flex-wrap align-items-center gap-2">
             <span class="fw-semibold">{{ procedure.label }}</span>
             <span class="badge rounded-pill text-bg-light border text-muted">{{ procedure.subtype }}</span>
+            {% if procedure.is_declared %}
+            <span class="badge rounded-pill text-bg-secondary">Declarado</span>
+            {% else %}
+            <span class="badge rounded-pill text-bg-info">Detectado na extração</span>
+            {% endif %}
+            {% if procedure.detection == 'detected' %}
+            <span class="badge rounded-pill text-bg-success">Detectado</span>
+            {% elif procedure.detection == 'not_detected' %}
+            <span class="badge rounded-pill text-bg-warning">Não detectado</span>
+            {% endif %}
             <span class="small text-muted ms-auto">Disposição: {{ procedure.disposition_label }}</span>
           </li>
           {% endfor %}

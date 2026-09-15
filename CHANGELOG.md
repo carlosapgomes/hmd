@@ -4,6 +4,20 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.12] — 2026-09-15
+
+**Procedimentos declarados × detectados visíveis nos detalhes** — 1 change
+(27º archive). Suíte 1458 → **1466**. Sem migrations (deploy direto).
+
+- **`detected-procedures-visible`** — o detalhe do NIR e o card
+  «Procedimentos do caso» do detalhe médico exibem TODAS as rows de
+  procedimento com origem (Declarado / Detectado na extração) e detecção
+  pós-reconciliação (Detectado / Não detectado; sem reconciliação apenas a
+  origem). Na retenção por divergência, o NIR decide «Liberar caso» com o
+  resumo declarados × detectados ao lado — antes ia às cegas (caso real em
+  dev: angio_art_perif declarada × art_perif detectada). Row detectada
+  não-declarada sobrevive ao bypass e segue visível ao médico.
+
 ## [0.1.11] — 2026-09-15
 
 **Correções de UX das filas** — 1 change (26º archive) + fix de template.

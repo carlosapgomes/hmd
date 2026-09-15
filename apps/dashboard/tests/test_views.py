@@ -9,19 +9,24 @@ render zero-PHI e rótulos de unidade da fonte única): esses usuários passam a
 logar com papel gerencial (R3). As fixtures dirigem casos aos estados reais
 pelas operações públicas da FSM.
 
-Slice 003 do change painel-lista-encerramento (R1/R2, D1/D3): a lista de casos
-do período sob as métricas (escopo ativos/todos, status, busca de 3+ caracteres
-por nº de ocorrência ou prefixo do uid, paginação preservando filtros), o
-invariante próprio da lista (nome E data de nascimento do paciente ausentes; nº
-de ocorrência PRESENTE) e as rotas de encerramento administrativo
-(``admin_close_confirm``/``admin_close``) com 403 paramétrico, 404 e recusas
-sem efeito no caso.
+Slice 003 do change painel-lista-encerramento (R1/R2, D1/D3): as rotas de
+encerramento administrativo (``admin_close_confirm``/``admin_close``) com 403
+paramétrico, 404 e recusas sem efeito no caso.
+
+Slice 002 do change painel-ats-parity (R1/R2, D2/D5b): a lista ganha paridade com
+o dashboard do ats-web — filtros que compõem por AND (``scope``/``status``/
+``procedure_type``/``q``/``date_from``/``date_to``), default SEM filtros
+explícitos = hoje/hoje + escopo ``todos`` (todas as situações, inclusive
+``CLEANED``), cards com a identificação do paciente (política corrigida pelo
+dono: zero-PHI vale para o perímetro EXTERNO/LLM — a UI interna de funcionários
+mostra o paciente) e o detail REAL do caso (``dashboard:case_detail``) que
+hospeda a ação de encerramento administrativo.
 """
 
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from urllib.parse import urlencode
 
 import pytest
@@ -33,6 +38,7 @@ from apps.accounts.models import Role, User
 from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS
 from apps.cases.events import CaseEventType
 from apps.cases.models import Case, CaseProcedure, CaseStatus, DoctorDisposition, SchedulingUnit
+from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.dashboard.case_labels import CASE_NEXT_STEP_LABELS, CASE_RESULT_LABELS
 from apps.dashboard.views import CASE_LIST_PAGE_SIZE, CLOSE_SUCCESS_MESSAGE
 
@@ -48,6 +54,8 @@ RECORD_NUMBER = "33345"
 # Data de nascimento da fixture zero-PHI (nenhum formato pode vazar na página).
 PATIENT_BIRTH_DATE = date(1970, 5, 20)
 PATIENT_BIRTH_DATE_TEXTS = ("20/05/1970", "1970-05-20")
+# Unidade de origem do cabeçalho SESAB (change sesab-header-extraction).
+ORIGIN_UNIT = "HELN - HOSPITAL ESTADUAL DO LESTE NORTE"
 
 # Rótulos configurados do cenário de override (change unit-labels-env, R5).
 CONFIGURED_UNIT_LABELS = {1: "Hemodinâmica HGRS", 2: "Unidade Satélite"}
@@ -151,14 +159,17 @@ def test_valid_period_is_respected(client: Client) -> None:
     assert response.context["period"] == "30d"
 
 
-# ── R3: render zero-PHI ────────────────────────────────────────────────────
+# ── R3: dados de paciente — métricas sem, lista com (política corrigida) ──
 
 
 @pytest.mark.django_db
-def test_dashboard_renders_zero_phi(client: Client) -> None:
-    """R5/R1: a página NÃO renderiza nome nem data de nascimento do paciente; o nº
-    de ocorrência (dado do CASO) identifica o card na lista — invariante próprio
-    da lista, pinado aqui com nº presente (não-vacuidade do card).
+def test_metrics_section_has_no_patient_data(client: Client) -> None:
+    """R3/D2 (política corrigida do dono): a SEÇÃO DE MÉTRICAS segue sem dados
+    de paciente (nome, nº de registro, nascimento) — o invariante próprio da
+    lista é REVERTIDO: o card passa a exibir a identificação do paciente.
+
+    Não-vacuidade dupla: nome e nº de ocorrência estão na PÁGINA (card) e
+    ausentes no trecho de métricas (antes do card da lista).
     """
     creator = _make_user("gestor-zero-phi")
     case = _confirmed_case(creator, SchedulingUnit.UNIT_1)
@@ -170,13 +181,17 @@ def test_dashboard_renders_zero_phi(client: Client) -> None:
 
     response = client.get(reverse("dashboard:home"))
     content = response.content.decode()
+    metrics_section = content.split("Casos do período")[0]
 
     assert response.status_code == 200
-    assert PATIENT_NAME not in content
-    for birth_date_text in PATIENT_BIRTH_DATE_TEXTS:
-        assert birth_date_text not in content
-    # Não-vacuidade: o card existe e é identificado pelo nº de ocorrência do caso.
+    # A lista identifica o paciente (flip do invariante).
+    assert PATIENT_NAME in content
     assert RECORD_NUMBER in content
+    # As métricas continuam sem qualquer dado de paciente.
+    assert PATIENT_NAME not in metrics_section
+    assert RECORD_NUMBER not in metrics_section
+    for birth_date_text in PATIENT_BIRTH_DATE_TEXTS:
+        assert birth_date_text not in metrics_section
     assert "Painel gerencial" in content
 
 
@@ -262,7 +277,7 @@ def test_navbar_panel_link_absent_for_anonymous(client: Client) -> None:
     assert reverse("dashboard:home") not in response.content.decode()
 
 
-# ── R1: lista de casos do período (painel-lista-encerramento, slice 003) ───
+# ── R1: lista de casos — filtros e default (painel-ats-parity, slice 002) ──
 
 
 def _short_id(case: Case) -> str:
@@ -292,33 +307,51 @@ def _cleaned_case(creator: User) -> Case:
     return case
 
 
+def _at(day: date, hour: int = 12, minute: int = 0) -> datetime:
+    """Momento local determinístico do dia (fronteira de meia-noite evitada)."""
+    naive = datetime.combine(day, time(hour=hour, minute=minute))
+    return timezone.make_aware(naive, timezone.get_current_timezone())
+
+
+def _pin_created_at(case: Case, moment: datetime) -> None:
+    """Fixa ``created_at`` sem passar pela FSM (a fonte imutável do painel)."""
+    Case.objects.filter(pk=case.pk).update(created_at=moment)
+
+
+def _detail_url(case: Case) -> str:
+    """URL do detalhe do caso no painel (change painel-ats-parity, slice 002)."""
+    return reverse("dashboard:case_detail", args=[case.case_id])
+
+
 @pytest.mark.django_db
-def test_list_default_shows_active_cases_newest_first(client: Client) -> None:
-    """R1/spec: sem filtros, a lista traz os casos ATIVOS do período em ordem de
-    criação decrescente — casos ``CLEANED`` ficam de fora."""
-    creator = _make_user("gestor-lista-ativos")
-    now = timezone.now()
-    older = Case.objects.create(created_by=creator)
-    newer = Case.objects.create(created_by=creator)
-    # Período 7d pinado: backdates de horas quebrariam "hoje" se o teste
-    # rodasse entre 00:00 e 02:00 local (fase de review do slice 003).
-    Case.objects.filter(pk=older.pk).update(created_at=now - timedelta(hours=2))
-    Case.objects.filter(pk=newer.pk).update(created_at=now - timedelta(hours=1))
-    cleaned = _cleaned_case(creator)
+def test_list_default_shows_today_in_all_states(client: Client) -> None:
+    """R1/D2/gate 1: sem filtros, a lista traz os casos de HOJE em TODOS os
+    estados (incluindo ``CLEANED``) e deixa o de ONTEM fora — o default aplica
+    hoje/hoje + escopo ``todos`` e NÃO herda o ``period`` das métricas."""
+    creator = _make_user("gestor-lista-default")
+    today = timezone.localdate()
+    yesterday_case = Case.objects.create(created_by=creator)
+    _pin_created_at(yesterday_case, _at(today - timedelta(days=1)))
+    today_active = Case.objects.create(created_by=creator)
+    _pin_created_at(today_active, _at(today, hour=11))
+    today_cleaned = _cleaned_case(creator)
+    _pin_created_at(today_cleaned, _at(today, hour=10))
     client.force_login(creator)
 
-    response = client.get(reverse("dashboard:home"), {"period": "7d"})
+    response = client.get(reverse("dashboard:home"))
     listed = [item["case_id"] for item in response.context["cases"]]
 
     assert response.status_code == 200
-    assert listed == [newer.case_id, older.case_id]
-    assert cleaned.case_id not in listed
-    assert response.context["scope"] == "ativos"
+    assert listed == [today_active.case_id, today_cleaned.case_id]
+    assert response.context["scope"] == "todos"
+    assert response.context["date_from"] == today.isoformat()
+    assert response.context["date_to"] == today.isoformat()
 
 
 @pytest.mark.django_db
 def test_list_scope_todos_includes_cleaned_cases(client: Client) -> None:
-    """R1/spec: ``?scope=todos`` inclui os casos encerrados do período."""
+    """R1/spec: ``?scope=todos`` inclui os casos encerrados (filtro explícito →
+    a janela de datas do default não se aplica)."""
     creator = _make_user("gestor-lista-todos")
     active = Case.objects.create(created_by=creator)
     cleaned = _cleaned_case(creator)
@@ -333,8 +366,9 @@ def test_list_scope_todos_includes_cleaned_cases(client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_list_invalid_scope_falls_back_to_active(client: Client) -> None:
-    """R1: escopo desconhecido cai no default seguro ``ativos`` (encerrado fora)."""
+def test_list_invalid_scope_falls_back_to_default_scope(client: Client) -> None:
+    """R1/D2: escopo desconhecido cai no default da paridade (``todos``) — o caso
+    encerrado criado HOJE aparece (valor inválido não vira filtro)."""
     creator = _make_user("gestor-lista-escopo-invalido")
     cleaned = _cleaned_case(creator)
     client.force_login(creator)
@@ -342,8 +376,8 @@ def test_list_invalid_scope_falls_back_to_active(client: Client) -> None:
     response = client.get(reverse("dashboard:home"), {"scope": "tudo"})
 
     assert response.status_code == 200
-    assert response.context["scope"] == "ativos"
-    assert cleaned.case_id not in {item["case_id"] for item in response.context["cases"]}
+    assert response.context["scope"] == "todos"
+    assert cleaned.case_id in {item["case_id"] for item in response.context["cases"]}
 
 
 @pytest.mark.django_db
@@ -417,22 +451,204 @@ def test_list_search_shorter_than_three_chars_is_ignored(client: Client) -> None
 
 
 @pytest.mark.django_db
-def test_list_respects_selected_period(client: Client) -> None:
-    """R1/spec: a lista usa a MESMA janela do período selecionado nas métricas."""
-    creator = _make_user("gestor-lista-periodo")
-    yesterday = Case.objects.create(created_by=creator)
-    Case.objects.filter(pk=yesterday.pk).update(created_at=timezone.now() - timedelta(days=1))
-    today = Case.objects.create(created_by=creator)
+def test_list_date_from_opens_the_window(client: Client) -> None:
+    """R1/spec/gate 1: ``?date_from=`` (ISO) abre a janela — com filtro
+    explícito o caso de ontem entra junto dos de hoje (default não se aplica)."""
+    creator = _make_user("gestor-lista-date-from")
+    today = timezone.localdate()
+    yesterday = today - timedelta(days=1)
+    yesterday_case = Case.objects.create(created_by=creator)
+    _pin_created_at(yesterday_case, _at(yesterday))
+    today_case = Case.objects.create(created_by=creator)
+    _pin_created_at(today_case, _at(today))
     client.force_login(creator)
 
-    today_response = client.get(reverse("dashboard:home"), {"period": "hoje"})
-    week_response = client.get(reverse("dashboard:home"), {"period": "7d"})
+    response = client.get(reverse("dashboard:home"), {"date_from": yesterday.isoformat()})
+    listed = {item["case_id"] for item in response.context["cases"]}
 
-    assert [item["case_id"] for item in today_response.context["cases"]] == [today.case_id]
-    assert {item["case_id"] for item in week_response.context["cases"]} == {
-        today.case_id,
-        yesterday.case_id,
-    }
+    assert response.status_code == 200
+    assert listed == {yesterday_case.case_id, today_case.case_id}
+    assert response.context["date_from"] == yesterday.isoformat()
+    assert response.context["date_to"] == ""
+
+
+@pytest.mark.django_db
+def test_list_date_to_bounds_the_window(client: Client) -> None:
+    """R1/spec: ``?date_to=`` fecha a janela (só o caso de ontem, sem default)."""
+    creator = _make_user("gestor-lista-date-to")
+    today = timezone.localdate()
+    yesterday = today - timedelta(days=1)
+    yesterday_case = Case.objects.create(created_by=creator)
+    _pin_created_at(yesterday_case, _at(yesterday))
+    today_case = Case.objects.create(created_by=creator)
+    _pin_created_at(today_case, _at(today))
+    client.force_login(creator)
+
+    response = client.get(reverse("dashboard:home"), {"date_to": yesterday.isoformat()})
+    listed = [item["case_id"] for item in response.context["cases"]]
+
+    assert response.status_code == 200
+    assert listed == [yesterday_case.case_id]
+    assert response.context["date_to"] == yesterday.isoformat()
+    assert response.context["date_from"] == ""
+
+
+@pytest.mark.django_db
+def test_list_invalid_iso_dates_are_ignored(client: Client) -> None:
+    """R1/D2: data ISO inválida é tratada como ausente (sem 500 e sem filtro
+    fantasma) — sem outro filtro explícito, o default hoje/hoje volta a valer."""
+    creator = _make_user("gestor-lista-data-invalida")
+    today = timezone.localdate()
+    yesterday_case = Case.objects.create(created_by=creator)
+    _pin_created_at(yesterday_case, _at(today - timedelta(days=1)))
+    today_case = Case.objects.create(created_by=creator)
+    _pin_created_at(today_case, _at(today))
+    client.force_login(creator)
+
+    response = client.get(
+        reverse("dashboard:home"), {"date_from": "14/09/2026", "date_to": "2026-13-45"}
+    )
+    listed = [item["case_id"] for item in response.context["cases"]]
+
+    assert response.status_code == 200
+    assert listed == [today_case.case_id]
+    assert response.context["date_from"] == today.isoformat()
+    assert response.context["date_to"] == today.isoformat()
+
+
+@pytest.mark.django_db
+def test_list_inverted_dates_are_swapped(client: Client) -> None:
+    """R1/D2: ``from > to`` normaliza por swap (sem intervalo vazio silencioso)."""
+    creator = _make_user("gestor-lista-datas-invertidas")
+    today = timezone.localdate()
+    yesterday = today - timedelta(days=1)
+    yesterday_case = Case.objects.create(created_by=creator)
+    _pin_created_at(yesterday_case, _at(yesterday))
+    today_case = Case.objects.create(created_by=creator)
+    _pin_created_at(today_case, _at(today))
+    client.force_login(creator)
+
+    response = client.get(
+        reverse("dashboard:home"),
+        {"date_from": today.isoformat(), "date_to": yesterday.isoformat()},
+    )
+    listed = {item["case_id"] for item in response.context["cases"]}
+
+    assert response.status_code == 200
+    assert listed == {yesterday_case.case_id, today_case.case_id}
+    assert response.context["date_from"] == yesterday.isoformat()
+    assert response.context["date_to"] == today.isoformat()
+
+
+@pytest.mark.django_db
+def test_list_procedure_type_filter_and_dropdown(client: Client) -> None:
+    """R1/spec: ``?procedure_type=`` filtra pelo tipo DECLARADO pelo NIR e o
+    formulário oferece o dropdown com os tipos do catálogo."""
+    creator = _make_user("gestor-lista-tipo")
+    perif = Case.objects.create(created_by=creator)
+    CaseProcedure.objects.create(case=perif, procedure_type="art_perif", declared_by_nir=True)
+    cardiaco = Case.objects.create(created_by=creator)
+    CaseProcedure.objects.create(case=cardiaco, procedure_type="cat_cardiaco", declared_by_nir=True)
+    # Row de tipo NÃO declarado pelo NIR não casa o filtro.
+    undeclared = Case.objects.create(created_by=creator)
+    CaseProcedure.objects.create(case=undeclared, procedure_type="art_perif", declared_by_nir=False)
+    client.force_login(creator)
+
+    response = client.get(reverse("dashboard:home"), {"procedure_type": "art_perif"})
+    content = response.content.decode()
+
+    assert response.status_code == 200
+    assert [item["case_id"] for item in response.context["cases"]] == [perif.case_id]
+    assert response.context["procedure_type"] == "art_perif"
+    for profile in PROCEDURE_PROFILES:
+        assert f'value="{profile.procedure_type}"' in content
+        assert profile.label in content
+
+    ignored = client.get(reverse("dashboard:home"), {"procedure_type": "nao_existe"})
+
+    assert ignored.context["procedure_type"] == ""
+    assert len(ignored.context["cases"]) == 3
+
+
+@pytest.mark.django_db
+def test_list_search_by_patient_name_composes_with_dates(client: Client) -> None:
+    """R1/spec/gate 2: ``?q=`` casa o NOME do paciente (novo) e COMPÕE por AND
+    com a janela de datas — homônimo de ontem não aparece no default de hoje."""
+    creator = _make_user("gestor-busca-nome")
+    today = timezone.localdate()
+    target = Case.objects.create(created_by=creator, patient_name="Maria da Silva")
+    _pin_created_at(target, _at(today))
+    outside = Case.objects.create(created_by=creator, patient_name="Silva Antunes")
+    _pin_created_at(outside, _at(today - timedelta(days=1)))
+    other = Case.objects.create(created_by=creator, patient_name="João Souza")
+    _pin_created_at(other, _at(today))
+    client.force_login(creator)
+
+    response = client.get(reverse("dashboard:home"), {"q": "silva"})
+    listed = [item["case_id"] for item in response.context["cases"]]
+
+    assert response.status_code == 200
+    # Filtro explícito preserva o que veio: sem data informada NÃO há janela de
+    # datas (o default hoje/hoje só vale quando nada é explícito).
+    assert listed == [target.case_id, outside.case_id]
+    assert other.case_id not in listed
+
+    # Gate 2: compondo com a data, o homônimo de ONTEM não vaza.
+    bounded = client.get(reverse("dashboard:home"), {"q": "silva", "date_from": today.isoformat()})
+    bounded_listed = [item["case_id"] for item in bounded.context["cases"]]
+
+    assert bounded_listed == [target.case_id]
+    assert outside.case_id not in bounded_listed
+    assert other.case_id not in bounded_listed
+
+
+@pytest.mark.django_db
+def test_list_card_shows_patient_identity_and_details_button(client: Client) -> None:
+    """R2/spec: o card traz nome, idade, unidade de origem, exames, fase e
+    data/hora de inserção, com o botão [Detalhes] (paridade ats-web)."""
+    creator = _make_user("gestor-card-identidade")
+    today = timezone.localdate()
+    case = Case.objects.create(created_by=creator, agency_record_number=RECORD_NUMBER)
+    _pin_created_at(case, _at(today, hour=8))
+    case.patient_name = PATIENT_NAME
+    case.patient_age = 84
+    case.origin_unit = ORIGIN_UNIT
+    case.save(update_fields=["patient_name", "patient_age", "origin_unit"])
+    CaseProcedure.objects.create(case=case, procedure_type="art_perif", declared_by_nir=True)
+    client.force_login(creator)
+
+    response = client.get(reverse("dashboard:home"))
+    content = response.content.decode()
+
+    assert response.status_code == 200
+    assert f'<span class="case-patient-name">{PATIENT_NAME}</span>' in content
+    assert "84 a" in content
+    assert ORIGIN_UNIT in content
+    assert RECORD_NUMBER in content
+    assert "Arteriografia periférica" in content
+    assert CASE_NEXT_STEP_LABELS[str(CaseStatus.NEW)] in content
+    assert _at(today, hour=8).strftime("%d/%m/%Y %H:%M") in content
+    assert reverse("dashboard:case_detail", args=[case.case_id]) in content
+
+
+@pytest.mark.django_db
+def test_list_card_zero_age_and_missing_identity_placeholder(client: Client) -> None:
+    """R2: idade ``0`` é válida (``0 a`` EXIBE) e caso sem identificação mostra
+    ``—`` no lugar do nome, sem sufixo de idade."""
+    creator = _make_user("gestor-card-zero")
+    newborn = Case.objects.create(created_by=creator, patient_name="RN de Ana", patient_age=0)
+    Case.objects.create(created_by=creator)  # sem nome/idade
+    client.force_login(creator)
+
+    response = client.get(reverse("dashboard:home"))
+    content = response.content.decode()
+
+    assert response.status_code == 200
+    assert f'<span class="case-patient-name">{newborn.patient_name}</span>' in content
+    assert "0 a" in content
+    assert '<span class="case-patient-name">—</span>' in content
+    # Só o recém-nascido tem idade: o caso sem demografia não ganha sufixo.
+    assert content.count(" a</span>") == 1
 
 
 @pytest.mark.django_db
@@ -458,9 +674,10 @@ def test_list_card_shows_case_data_and_next_step(client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_list_close_action_only_for_not_cleaned_cases(client: Client) -> None:
-    """R1/spec: só o caso ATIVO oferece a ação de encerramento administrativo."""
-    creator = _make_user("gestor-lista-acao")
+def test_list_card_has_no_close_action_which_lives_in_detail(client: Client) -> None:
+    """R2/spec: a ação de encerramento SAI do card e passa a viver no DETALHE —
+    disponível para caso ativo e ausente em ``CLEANED``."""
+    creator = _make_user("gestor-acao-detalhe")
     active = Case.objects.create(created_by=creator)
     cleaned = _cleaned_case(creator)
     client.force_login(creator)
@@ -469,26 +686,89 @@ def test_list_close_action_only_for_not_cleaned_cases(client: Client) -> None:
     content = response.content.decode()
 
     assert response.status_code == 200
-    assert reverse("dashboard:admin_close_confirm", args=[active.case_id]) in content
+    assert reverse("dashboard:admin_close_confirm", args=[active.case_id]) not in content
     assert reverse("dashboard:admin_close_confirm", args=[cleaned.case_id]) not in content
-    # Não-vacuidade: os DOIS cards estão na lista (escopo todos).
+    # Não-vacuidade: os DOIS cards estão na lista (escopo todos) com [Detalhes].
     assert _short_id(active) in content
     assert _short_id(cleaned) in content
+    assert reverse("dashboard:case_detail", args=[cleaned.case_id]) in content
+
+    active_detail = client.get(_detail_url(active)).content.decode()
+    cleaned_detail = client.get(_detail_url(cleaned)).content.decode()
+
+    assert reverse("dashboard:admin_close_confirm", args=[active.case_id]) in active_detail
+    assert reverse("dashboard:admin_close_confirm", args=[cleaned.case_id]) not in cleaned_detail
+
+
+@pytest.mark.django_db
+def test_period_links_preserve_list_filters(client: Client) -> None:
+    """R1/D2: trocar o período das MÉTRICAS não descarta os filtros da lista."""
+    client.force_login(_make_user("gestor-periodo-filtros"))
+    today = timezone.localdate().isoformat()
+
+    filtered = client.get(
+        reverse("dashboard:home"), {"procedure_type": "art_perif", "date_from": today}
+    )
+    body = filtered.content.decode()
+
+    assert filtered.status_code == 200
+    # O link troca APENAS o período: o escopo (default ``todos`` de um filtro
+    # explícito) e os filtros da lista viajam na query string. O ``&`` depois do
+    # período é literal do template (não escapado); o valor da query string é
+    # escapado pelo autoescape.
+    assert f"?period=7d&scope=todos&amp;procedure_type=art_perif&amp;date_from={today}" in body
+
+    clean = client.get(reverse("dashboard:home"))
+
+    # Sem filtros escolhidos o link carrega o DEFAULT resolvido (hoje/hoje +
+    # todos) — paridade ats-web: clicar no período preserva a janela vigente.
+    assert (
+        f"?period=7d&scope=todos&amp;date_from={today}&amp;date_to={today}"
+        in clean.content.decode()
+    )
+
+
+@pytest.mark.django_db
+def test_metrics_period_is_independent_from_list_dates(client: Client) -> None:
+    """R1/D2: o ``period`` continua mandando nas MÉTRICAS enquanto a lista usa as
+    datas próprias (default hoje) — réguas separadas, molde ats-web."""
+    creator = _make_user("gestor-metricas-periodo")
+    today = timezone.localdate()
+    yesterday_case = _confirmed_case(creator, SchedulingUnit.UNIT_1)
+    _pin_created_at(yesterday_case, _at(today - timedelta(days=1)))
+    client.force_login(creator)
+
+    response = client.get(reverse("dashboard:home"), {"period": "7d"})
+
+    assert response.status_code == 200
+    assert response.context["period"] == "7d"
+    assert response.context["summary"]["total"] == 1
+    assert response.context["cases"] == []
 
 
 @pytest.mark.django_db
 def test_list_pagination_preserves_filters(client: Client) -> None:
     """R1/spec: 25 casos por página com navegação que PRESERVA os filtros vigentes."""
     creator = _make_user("gestor-lista-paginacao")
-    base = timezone.now()
+    today = timezone.localdate()
+    base = _at(today, hour=12)
     for index in range(CASE_LIST_PAGE_SIZE + 1):
         case = Case.objects.create(created_by=creator, agency_record_number=f"AR-{index:02d}")
-        # ``created_at`` crescente de AR-00 (mais antigo) a AR-25 (mais novo).
-        Case.objects.filter(pk=case.pk).update(
-            created_at=base - timedelta(seconds=CASE_LIST_PAGE_SIZE - index)
-        )
+        CaseProcedure.objects.create(case=case, procedure_type="art_perif", declared_by_nir=True)
+        # ``created_at`` crescente de AR-00 (mais antigo) a AR-25 (mais novo),
+        # pinado no MEIO do dia (meia-noite não vira a página de lugar).
+        Case.objects.filter(pk=case.pk).update(created_at=base + timedelta(seconds=index))
     client.force_login(creator)
-    filters = {"period": "7d", "scope": "ativos", "q": "AR-"}
+    # Ordem de ``_PRESERVED_FILTERS`` (a do link gerado): period, scope, status,
+    # procedure_type, q, date_from, date_to — vazios são omitidos.
+    filters = {
+        "period": "7d",
+        "scope": "todos",
+        "procedure_type": "art_perif",
+        "q": "AR-",
+        "date_from": today.isoformat(),
+        "date_to": today.isoformat(),
+    }
 
     first = client.get(reverse("dashboard:home"), filters)
     first_body = first.content.decode()
@@ -513,6 +793,124 @@ def test_list_pagination_preserves_filters(client: Client) -> None:
     assert "AR-00" in second_body
     assert "AR-25" not in second_body
     assert "Página 2 de 2" in second_body
+
+
+# ── R2: detalhe do caso no painel (change painel-ats-parity, slice 002) ────
+
+
+@pytest.mark.django_db
+def test_case_detail_shows_full_identity_and_procedures(client: Client) -> None:
+    """R2/spec: o detalhe traz a identificação completa (nome, idade, sexo,
+    raça/cor, unidade de origem, nº de ocorrência, inserção e fase) e os
+    procedimentos declarados, com a ação de encerramento disponível."""
+    creator = _make_user("gestor-detalhe")
+    today = timezone.localdate()
+    case = Case.objects.create(created_by=creator, agency_record_number=RECORD_NUMBER)
+    _pin_created_at(case, _at(today, hour=8, minute=30))
+    case.patient_name = PATIENT_NAME
+    case.patient_age = 84
+    case.patient_gender = "F"
+    case.patient_race = "Parda"
+    case.origin_unit = ORIGIN_UNIT
+    case.save(
+        update_fields=[
+            "patient_name",
+            "patient_age",
+            "patient_gender",
+            "patient_race",
+            "origin_unit",
+        ]
+    )
+    CaseProcedure.objects.create(case=case, procedure_type="art_perif", declared_by_nir=True)
+    client.force_login(creator)
+
+    response = client.get(_detail_url(case))
+    content = response.content.decode()
+
+    assert response.status_code == 200
+    assert f'<span class="case-patient-name">{PATIENT_NAME}</span>' in content
+    assert '<span class="case-patient-age">84 a</span>' in content
+    assert '<span class="case-patient-gender">F</span>' in content
+    assert '<span class="case-patient-race">Parda</span>' in content
+    assert f'<span class="case-patient-origin">{ORIGIN_UNIT}</span>' in content
+    assert RECORD_NUMBER in content
+    assert _at(today, hour=8, minute=30).strftime("%d/%m/%Y %H:%M") in content
+    assert CASE_NEXT_STEP_LABELS[str(CaseStatus.NEW)] in content
+    assert "Arteriografia periférica" in content
+    # Ação de encerramento do caso ativo vive AQUI (saiu do card).
+    assert reverse("dashboard:admin_close_confirm", args=[case.case_id]) in content
+
+
+@pytest.mark.django_db
+def test_case_detail_cleaned_offers_no_close_action(client: Client) -> None:
+    """R2/spec: caso ``CLEANED`` no detalhe não oferece o encerramento, mas a
+    identificação continua visível."""
+    creator = _make_user("gestor-detalhe-cleaned")
+    cleaned = _cleaned_case(creator)
+    cleaned.patient_name = PATIENT_NAME
+    cleaned.save(update_fields=["patient_name"])
+    client.force_login(creator)
+
+    response = client.get(_detail_url(cleaned))
+    content = response.content.decode()
+
+    assert response.status_code == 200
+    assert PATIENT_NAME in content
+    assert CASE_NEXT_STEP_LABELS[str(CaseStatus.CLEANED)] in content
+    assert reverse("dashboard:admin_close_confirm", args=[cleaned.case_id]) not in content
+
+
+@pytest.mark.django_db
+def test_case_detail_carries_list_filters(client: Client) -> None:
+    """R2/D2: os filtros vigentes da lista viajam para o detalhe — voltar ao
+    painel e encerrar preservam o contexto."""
+    creator = _make_user("gestor-detalhe-filtros")
+    case = Case.objects.create(created_by=creator)
+    client.force_login(creator)
+    today = timezone.localdate().isoformat()
+    filters = {"period": "hoje", "scope": "todos", "date_from": today}
+
+    response = client.get(_detail_url(case), {"scope": "todos", "date_from": today})
+    content = response.content.decode()
+    expected_qs = urlencode(filters).replace("&", "&amp;")
+
+    assert response.status_code == 200
+    assert f"{reverse('dashboard:home')}?{expected_qs}" in content
+    assert f"?{expected_qs}" in content
+
+
+@pytest.mark.django_db
+def test_case_detail_404_for_unknown_case(client: Client) -> None:
+    """R2/spec: caso inexistente → 404 sem vazar informação."""
+    client.force_login(_make_user("gestor-detalhe-404"))
+
+    response = client.get(reverse("dashboard:case_detail", args=[uuid.uuid4()]))
+
+    assert response.status_code == 404
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("role", NON_MANAGEMENT_ROLES)
+def test_case_detail_403_for_other_roles(client: Client, role: str) -> None:
+    """R2/spec: papel ativo fora de manager/admin → 403 no detalhe."""
+    creator = _make_user(f"gestor-detalhe-origem-{role}")
+    case = Case.objects.create(created_by=creator)
+    client.force_login(_make_user(f"fora-detalhe-{role}", role))
+
+    response = client.get(_detail_url(case))
+
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_case_detail_anonymous_redirects_to_login(client: Client) -> None:
+    """R2: anônimo → redirect ao login (composição do guard por papel)."""
+    case = Case.objects.create(created_by=_make_user("gestor-detalhe-anonimo"))
+
+    response = client.get(_detail_url(case))
+
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith(reverse("login"))
 
 
 # ── R2: rota/UI do encerramento administrativo ────────────────────────────

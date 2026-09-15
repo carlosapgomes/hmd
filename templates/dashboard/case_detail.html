@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+{% block title %}Caso {% if agency_record_number %}{{ agency_record_number }}{% else %}uid {{ short_id }}{% endif %} — {{ app_display_name }}{% endblock %}
+
+{% block content %}
+<!-- Detalhe do caso no painel (change painel-ats-parity, slice 002, R2/D2):
+     destino do botão [Detalhes] da lista. Mostra a identificação COMPLETA do
+     paciente — a política de PHI foi corrigida pelo dono: zero-PHI vale para o
+     perímetro EXTERNO (LLM); a UI interna de funcionários mostra o paciente —
+     a fase do fluxo, os procedimentos declarados e a ação de encerramento
+     administrativo (casos ≠ CLEANED). A trilha de eventos com rótulos legíveis
+     entra neste mesmo template no slice 003. -->
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="h4 mb-0">Detalhes do caso</h1>
+  <a href="{{ back_url }}" class="btn btn-sm btn-outline-secondary">Voltar ao painel</a>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header d-flex flex-wrap align-items-center gap-2">
+    <span>Identificação do paciente</span>
+    <span class="badge rounded-pill text-bg-secondary ms-auto">{{ status_label }}</span>
+  </div>
+  <div class="card-body">
+    <dl class="row mb-0">
+      <dt class="col-sm-3">Paciente</dt>
+      <dd class="col-sm-9"><span class="case-patient-name">{{ patient_name|default:"—" }}</span></dd>
+      <dt class="col-sm-3">Idade</dt>
+      <dd class="col-sm-9"><span class="case-patient-age">{% if patient_age is not None %}{{ patient_age }} a{% else %}—{% endif %}</span></dd>
+      <dt class="col-sm-3">Sexo</dt>
+      <dd class="col-sm-9"><span class="case-patient-gender">{{ patient_gender|default:"—" }}</span></dd>
+      <dt class="col-sm-3">Raça/Cor</dt>
+      <dd class="col-sm-9"><span class="case-patient-race">{{ patient_race|default:"—" }}</span></dd>
+      <dt class="col-sm-3">Unidade de origem</dt>
+      <dd class="col-sm-9"><span class="case-patient-origin">{{ origin_unit|default:"—" }}</span></dd>
+      <dt class="col-sm-3">Nº de ocorrência</dt>
+      <dd class="col-sm-9 font-monospace">{% if agency_record_number %}{{ agency_record_number }}{% else %}uid {{ short_id }}{% endif %}</dd>
+      <dt class="col-sm-3">Inserido em</dt>
+      <dd class="col-sm-9">{{ created_at|date:"d/m/Y H:i" }}</dd>
+      <dt class="col-sm-3">Fase</dt>
+      <dd class="col-sm-9">{{ status_label }} — {{ next_step_label }}</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">Procedimentos declarados</div>
+  <ul class="list-group list-group-flush">
+    {% for label in procedure_labels %}
+    <li class="list-group-item">{{ label }}</li>
+    {% empty %}
+    <li class="list-group-item text-muted">—</li>
+    {% endfor %}
+  </ul>
+</div>
+
+{% if can_close %}
+<div class="card">
+  <div class="card-header">Encerramento administrativo</div>
+  <div class="card-body">
+    <p class="small text-muted mb-2">
+      O encerramento é terminal: o caso sai das filas operacionais, os dados
+      clínicos são minimizados e o criador é notificado.
+    </p>
+    <a href="{% url 'dashboard:admin_close_confirm' case_id %}{% if filter_qs %}?{{ filter_qs }}{% endif %}"
+       class="btn btn-sm btn-outline-danger">Encerrar administrativamente</a>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

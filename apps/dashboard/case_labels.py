@@ -11,6 +11,7 @@ de cobertura em vez de aparecer sem rótulo.
 from __future__ import annotations
 
 from apps.cases.models import CaseStatus
+from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 
 # Próximo passo operacional por estado (R1/D1), no estilo do ats-web
 # ("Pendente: <papel>"): o card responde "quem age agora" mesmo quando o caso
@@ -42,3 +43,10 @@ CASE_RESULT_LABELS: dict[str, str] = {
     CaseStatus.SCHEDULING_CONFIRMED: "Agendado",
     CaseStatus.SCHEDULING_DENIED: "Agendamento negado",
 }
+
+# Opções do filtro «Tipo de exame» da lista (change painel-ats-parity, slice 002,
+# R1/D2): o par (valor, label) na ORDEM CANÔNICA do catálogo — o dropdown do
+# painel e o filtro da consulta bebem desta fonte única, sem lista paralela.
+PROCEDURE_TYPE_OPTIONS: tuple[tuple[str, str], ...] = tuple(
+    (profile.procedure_type, profile.label) for profile in PROCEDURE_PROFILES
+)

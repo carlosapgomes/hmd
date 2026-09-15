@@ -11,12 +11,12 @@
 
 ## 2. Slice 002 — Lista do painel com paridade ats-web
 
-- [ ] 2.1 Filtros `date_from`/`date_to` + `procedure_type` (dropdown 13) +
+- [x] 2.1 Filtros `date_from`/`date_to` + `procedure_type` (dropdown 13) +
       `q` por nome; default hoje/todos os estados; métricas independentes
-- [ ] 2.2 Cards com nome+idade+unidade+exames+fase+data/hora+[Detalhes];
+- [x] 2.2 Cards com nome+idade+unidade+exames+fase+data/hora+[Detalhes];
       rota+view `dashboard:case_detail` (identificação completa +
       procedimentos + encerramento admin); encerramento sai do card
-- [ ] 2.3 Testes RED→GREEN (default discriminante, AND de filtros, busca
+- [x] 2.3 Testes RED→GREEN (default discriminante, AND de filtros, busca
       por nome, cards, detail/guards/404, métricas pinadas) + bateria
 
 ## 3. Slice 003 — Trilha legível no detail + remoção NIR/médico

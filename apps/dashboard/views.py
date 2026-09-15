@@ -14,23 +14,31 @@ doctor/scheduler. Anônimo segue redirecionado ao login. A condição do link da
 navbar (``templates/base.html``) é a MESMA desta rota — UI e rota não divergem.
 
 Slice 003 do change painel-lista-encerramento (R1/R2, D1/D3): abaixo das
-métricas entra a LISTA de casos do período — cards identificados pelo nº de
-ocorrência (dado do CASO) ou uid curto, com status, tipos declarados, criação,
-resultado imutável e próximo passo, e a ação de encerramento administrativo
-apenas fora de ``CLEANED``. Filtros SSR puros (``scope``/``status``/``q``),
-busca só a partir de 3 caracteres (``icontains`` no nº de ocorrência ou
-``istartswith`` no uid) e paginação de 25 que preserva os filtros. O
-encerramento tem confirmação em página própria (``admin_close_confirm``) e
-POST (``admin_close``) que delega ao serviço ``administratively_close_case``.
-A **seção de métricas** continua zero-PHI; o invariante próprio da lista é a
-ausência de NOME e de DATA DE NASCIMENTO do paciente (o nº de ocorrência
-identifica o caso).
+métricas entra a LISTA de casos do período, com status, tipos declarados,
+criação, resultado imutável e próximo passo. O encerramento administrativo tem
+confirmação em página própria (``admin_close_confirm``) e POST
+(``admin_close``) que delega ao serviço ``administratively_close_case``.
+
+Slice 002 do change painel-ats-parity (R1/R2, D2/D5b) — paridade com o
+dashboard do ats-web: a lista ganha a identificação do paciente (política
+corrigida pelo dono: zero-PHI vale para o PERÍMETRO EXTERNO/LLM — a UI interna
+de funcionários mostra o paciente) e filtros que compõem por AND
+(``scope``/``status``/``procedure_type``/``q``/``date_from``/``date_to``).
+Sem NENHUM filtro de lista explícito o default é hoje/hoje + escopo ``todos``
+(molde ``_resolve_list_defaults`` do ats-web) — o ``period`` segue mandando
+APENAS nas métricas. A ação de encerramento sai do card e passa a viver no
+detalhe real do caso (``dashboard:case_detail``), que mostra a identificação
+completa e os procedimentos declarados. Filtros SSR puros, busca só a partir
+de 3 caracteres (nome do paciente OU nº de ocorrência OU prefixo do uid) e
+paginação de 25 que preserva os filtros. A **seção de métricas** continua
+zero-PHI (apenas contagens, tempos e labels).
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable, Mapping
+from datetime import date
 from typing import Any
 from urllib.parse import urlencode
 
@@ -52,11 +60,10 @@ from apps.cases.models import Case, CaseEvent, CaseStatus, SchedulingUnit
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.units import unit_label
 
-from .case_labels import CASE_NEXT_STEP_LABELS, CASE_RESULT_LABELS
+from .case_labels import CASE_NEXT_STEP_LABELS, CASE_RESULT_LABELS, PROCEDURE_TYPE_OPTIONS
 from .metrics import (
     DEFAULT_PERIOD,
     VALID_PERIODS,
-    cases_in_period,
     compute_avg_time_to_decision,
     compute_by_procedure_type,
     compute_by_unit,
@@ -73,12 +80,18 @@ _PERIOD_LABELS: dict[str, str] = {
     "tudo": "Tudo",
 }
 
-# Escopos da lista (R1/D1): ``ativos`` é o default (= tudo exceto CLEANED).
+# Escopos da lista (R1/D2): ``todos`` é o default da paridade ats-web — casos
+# de hoje em TODOS os estados, inclusive ``CLEANED``.
+ACTIVE_SCOPE = "ativos"
+DEFAULT_SCOPE = "todos"
 CASE_SCOPES: tuple[tuple[str, str], ...] = (
-    ("ativos", "Ativos"),
-    ("todos", "Todos (inclui encerrados)"),
+    (ACTIVE_SCOPE, "Ativos"),
+    (DEFAULT_SCOPE, "Todos (inclui encerrados)"),
 )
-DEFAULT_SCOPE = "ativos"
+_SCOPE_VALUES: frozenset[str] = frozenset(value for value, _ in CASE_SCOPES)
+_PROCEDURE_TYPE_VALUES: frozenset[str] = frozenset(
+    procedure_type for procedure_type, _ in PROCEDURE_TYPE_OPTIONS
+)
 
 # Paginação da lista (R1/D1): SSR puro, sem partial/HTMX.
 CASE_LIST_PAGE_SIZE = 25
@@ -86,8 +99,17 @@ CASE_LIST_PAGE_SIZE = 25
 # Busca server-side (R1/D1): termos mais curtos que isto são ignorados.
 MIN_SEARCH_LENGTH = 3
 
-# Filtros preservados na paginação e no retorno pós-encerramento (R1/R2).
-_PRESERVED_FILTERS: tuple[str, ...] = ("period", "scope", "status", "q")
+# Filtros preservados na paginação, nos links de período e no retorno
+# pós-encerramento (R1/R2). A ORDEM define a da query string gerada.
+_PRESERVED_FILTERS: tuple[str, ...] = (
+    "period",
+    "scope",
+    "status",
+    "procedure_type",
+    "q",
+    "date_from",
+    "date_to",
+)
 
 # Resultado do card quando não há desfecho atribuível (mesmo travessão das métricas).
 RESULT_NONE_LABEL = "—"
@@ -107,28 +129,105 @@ def _require_user(request: HttpRequest) -> User:
     return user
 
 
-def _resolve_filters(params: Mapping[str, str]) -> dict[str, str]:
-    """Filtros validados da lista (R1): período/escopo/status com default seguro.
+def _parse_iso_date(value: str) -> str:
+    """Data ISO (``YYYY-MM-DD``) válida ou ``""`` — inválida = ausente (R1/D2).
 
-    Valor ausente ou fora do conjunto aceito nunca quebra nem vaza: cai no
-    default (``hoje``/``ativos``/sem status). O termo de busca é preservado como
-    veio — a decisão de filtrar (``MIN_SEARCH_LENGTH``) é da consulta.
+    O formulário manda ``type=date`` (sempre ISO), mas a rota é pública para o
+    papel gerencial: valor torto vira ausente em vez de erro de banco.
+    """
+    try:
+        return date.fromisoformat(value.strip()).isoformat()
+    except (AttributeError, TypeError, ValueError):
+        return ""
+
+
+def _valid_scope(value: str) -> str:
+    """Escopo válido ou ``""`` (valor desconhecido é tratado como ausente)."""
+    return value if value in _SCOPE_VALUES else ""
+
+
+def _valid_status(value: str) -> str:
+    """Status válido ou ``""`` (valor fora das choices é tratado como ausente)."""
+    return value if value in CaseStatus.values else ""
+
+
+def _valid_procedure_type(value: str) -> str:
+    """Tipo de exame do catálogo ou ``""`` (fora do catálogo = ausente)."""
+    return value if value in _PROCEDURE_TYPE_VALUES else ""
+
+
+def _has_explicit_list_filters(params: Mapping[str, str]) -> bool:
+    """Há algum filtro de LISTA com valor VÁLIDO na query? (R1/D2)
+
+    Os filtros da lista são ``scope``, ``status``, ``procedure_type``, ``q``,
+    ``date_from`` e ``date_to`` (o ``period`` é das MÉTRICAS e não conta aqui).
+
+    Só valores válidos contam: escopo/status/tipo desconhecido cai fora e não
+    derruba o default. O termo de busca conta como preenchido mesmo com menos de
+    ``MIN_SEARCH_LENGTH`` (o usuário filtrou; a consulta é que ignora o termo) e
+    datas inválidas não contam.
+    """
+    return bool(
+        _valid_scope(params.get("scope", ""))
+        or _valid_status(params.get("status", ""))
+        or _valid_procedure_type(params.get("procedure_type", ""))
+        or params.get("q", "").strip()
+        or _parse_iso_date(params.get("date_from", ""))
+        or _parse_iso_date(params.get("date_to", ""))
+    )
+
+
+def _resolve_filters(params: Mapping[str, str]) -> dict[str, str]:
+    """Filtros validados da lista (R1/D2) — período das métricas + filtros da lista.
+
+    O ``period`` é a régua das MÉTRICAS (ausente/inválido → ``hoje``) e segue
+    independente da lista. Os filtros da lista são validados um a um (valor
+    inválido vira ausente) e compõem por AND na consulta.
+
+    **Default da paridade ats-web**: sem NENHUM filtro de lista explícito, a
+    janela é hoje/hoje e o escopo é ``todos`` (recebidos hoje em todos os
+    estados, inclusive ``CLEANED``); qualquer filtro explícito preserva o que
+    veio — datas ausentes continuam ausentes. ``from > to`` normaliza por swap
+    e data inválida é tratada como ausente.
     """
     period = params.get("period", DEFAULT_PERIOD)
     if period not in VALID_PERIODS:
         period = DEFAULT_PERIOD
-    scope = params.get("scope", DEFAULT_SCOPE)
-    if scope not in {value for value, _ in CASE_SCOPES}:
+    scope = _valid_scope(params.get("scope", ""))
+    date_from = _parse_iso_date(params.get("date_from", ""))
+    date_to = _parse_iso_date(params.get("date_to", ""))
+    if date_from and date_to and date_from > date_to:
+        date_from, date_to = date_to, date_from
+    if _has_explicit_list_filters(params):
+        scope = scope or DEFAULT_SCOPE
+    else:
         scope = DEFAULT_SCOPE
-    status = params.get("status", "")
-    if status not in CaseStatus.values:
-        status = ""
-    return {"period": period, "scope": scope, "status": status, "q": params.get("q", "")}
+        date_from = date_to = timezone.localdate().isoformat()
+    return {
+        "period": period,
+        "scope": scope,
+        "status": _valid_status(params.get("status", "")),
+        "procedure_type": _valid_procedure_type(params.get("procedure_type", "")),
+        "q": params.get("q", ""),
+        "date_from": date_from,
+        "date_to": date_to,
+    }
 
 
 def _filter_params(filters: Mapping[str, str]) -> list[tuple[str, str]]:
     """Pares (nome, valor) dos filtros vigentes não vazios (R1/R2)."""
     return [(key, filters[key]) for key in _PRESERVED_FILTERS if filters.get(key)]
+
+
+def _list_filter_params(filters: Mapping[str, str]) -> list[tuple[str, str]]:
+    """Filtros da LISTA vigentes, SEM o ``period`` (R2/D2).
+
+    Alimenta os links do seletor de período das métricas: trocar o período não
+    descarta datas/tipo/status/busca da lista.
+    """
+    return [
+        (key, filters[key]) for key in _PRESERVED_FILTERS if key != "period" and filters.get(key)
+    ]
 
 
 def _dashboard_url(filters: Mapping[str, str]) -> str:
@@ -139,21 +238,38 @@ def _dashboard_url(filters: Mapping[str, str]) -> str:
 
 
 def _list_cases(filters: Mapping[str, str]) -> QuerySet[Case]:
-    """Casos da lista (R1): janela do período, escopo, status e busca (3+ chars).
+    """Casos da lista (R1/D2): janela de datas, escopo, status, tipo e busca.
 
-    A busca casa o nº de ocorrência (``icontains``) OU o prefixo do uid
-    (``istartswith`` — o backend Postgres emite o ``::text`` sozinho); as rows
+    Compoem por AND na ordem do formulário: janela ``date_from``/``date_to``
+    sobre ``created_at`` (a régua PRÓPRIA da lista — o ``period`` manda só nas
+    métricas), escopo ``ativos`` (≠ ``CLEANED``) quando escolhido, status, tipo
+    DECLARADO pelo NIR (``distinct`` sobre as rows) e o termo de busca (3+
+    caracteres) casando nome do paciente OU nº de ocorrência OU prefixo do uid
+    (``istartswith`` — o backend Postgres emite o ``::text`` sozinho). As rows
     de procedimento vêm pré-carregadas (sem N+1 por card) e a ordem é
     ``created_at`` decrescente (D1).
     """
-    cases = cases_in_period(filters["period"])
-    if filters["scope"] == DEFAULT_SCOPE:
+    cases = Case.objects.all()
+    if filters["date_from"]:
+        cases = cases.filter(created_at__date__gte=filters["date_from"])
+    if filters["date_to"]:
+        cases = cases.filter(created_at__date__lte=filters["date_to"])
+    if filters["scope"] == ACTIVE_SCOPE:
         cases = cases.exclude(status=CaseStatus.CLEANED)
     if filters["status"]:
         cases = cases.filter(status=filters["status"])
+    if filters["procedure_type"]:
+        cases = cases.filter(
+            procedures__declared_by_nir=True,
+            procedures__procedure_type=filters["procedure_type"],
+        ).distinct()
     term = filters["q"].strip()
     if len(term) >= MIN_SEARCH_LENGTH:
-        cases = cases.filter(Q(agency_record_number__icontains=term) | Q(case_id__istartswith=term))
+        cases = cases.filter(
+            Q(patient_name__icontains=term)
+            | Q(agency_record_number__icontains=term)
+            | Q(case_id__istartswith=term)
+        )
     return cases.order_by("-created_at").prefetch_related("procedures")
 
 
@@ -176,16 +292,22 @@ def _result_label(*, outcome: str, administratively_closed: bool) -> str:
 
 
 def _case_card(case: Case, *, outcome: str, administratively_closed: bool) -> dict[str, Any]:
-    """Card D1 da lista: identifica o CASO (nº de ocorrência ou uid curto) e seu
-    andamento — status, tipos declarados, criação, resultado e próximo passo.
+    """Card da lista (R2/D2): identificação do paciente + andamento do caso.
 
-    NUNCA carrega nome nem data de nascimento do paciente (invariante próprio da
-    lista): os campos vêm só do caso e das rows de procedimento.
+    A política de PHI foi corrigida pelo dono (2026-09-15): zero-PHI vale para o
+    PERÍMETRO EXTERNO (LLM); a UI interna de funcionários mostra o paciente. O
+    card traz nome (``—`` quando ausente), idade (``0`` é válida), unidade de
+    origem, nº de ocorrência (ou uid curto), status + próximo passo, tipos
+    declarados, data/hora de inserção e o resultado imutável. A ação de
+    encerramento administrativo vive no DETALHE do caso (slice 002), não aqui.
     """
     declared_types = [row.procedure_type for row in case.procedures.all() if row.declared_by_nir]
     return {
         "case_id": case.case_id,
         "short_id": str(case.case_id)[:8],
+        "patient_name": case.patient_name,
+        "patient_age": case.patient_age,
+        "origin_unit": case.origin_unit,
         "agency_record_number": case.agency_record_number,
         "status_label": case.get_status_display(),
         "procedure_labels": _procedure_labels(declared_types),
@@ -194,7 +316,6 @@ def _case_card(case: Case, *, outcome: str, administratively_closed: bool) -> di
             outcome=outcome, administratively_closed=administratively_closed
         ),
         "next_step_label": CASE_NEXT_STEP_LABELS[case.status],
-        "can_close": case.status != CaseStatus.CLEANED,
     }
 
 
@@ -239,7 +360,8 @@ def _close_context(
         "reason_choices": list(ADMINISTRATIVE_CLOSURE_REASONS.items()),
         "submitted_reason_code": reason_code,
         "submitted_reason_text": reason_text,
-        "filters": filters,
+        # Campos ocultos: só filtros com valor (vazios não viajam na query).
+        "filters": {key: value for key, value in filters.items() if value},
         "back_url": _dashboard_url(filters),
     }
 
@@ -276,17 +398,71 @@ def home(request: HttpRequest) -> HttpResponse:
             "unit_2": unit_label(SchedulingUnit.UNIT_2),
         },
         "avg_time": format_duration(compute_avg_time_to_decision(period)),
-        # Lista de casos do período (R1) — cards sem dados de paciente.
+        # Lista de casos (R1/R2) — cards com a identificação do paciente
+        # (política corrigida: o zero-PHI é do perímetro externo).
         "cases": _case_cards(page.object_list),
         "page_obj": page,
         "filter_qs": urlencode(_filter_params(filters)),
+        "list_qs": urlencode(_list_filter_params(filters)),
         "scope": filters["scope"],
         "status": filters["status"],
+        "procedure_type": filters["procedure_type"],
+        "procedure_type_options": PROCEDURE_TYPE_OPTIONS,
         "q": filters["q"],
+        "date_from": filters["date_from"],
+        "date_to": filters["date_to"],
         "scope_options": CASE_SCOPES,
         "status_options": CaseStatus.choices,
     }
     return render(request, "dashboard/home.html", context)
+
+
+def _case_detail_context(case: Case, *, filters: Mapping[str, str]) -> dict[str, Any]:
+    """Contexto do detalhe do caso no painel (R2/D2).
+
+    Identificação completa (nome, idade, sexo, raça/cor, unidade de origem, nº de
+    ocorrência ou uid curto, inserção e fase/status), procedimentos declarados e
+    o destino do encerramento administrativo (casos ≠ ``CLEANED``) com os
+    filtros da lista preservados no retorno. A trilha de eventos com rótulos
+    legíveis entra neste MESMO template no slice 003.
+    """
+    declared_types = [row.procedure_type for row in case.procedures.all() if row.declared_by_nir]
+    return {
+        "case_id": case.case_id,
+        "short_id": str(case.case_id)[:8],
+        "patient_name": case.patient_name,
+        "patient_age": case.patient_age,
+        "patient_gender": case.patient_gender,
+        "patient_race": case.patient_race,
+        "origin_unit": case.origin_unit,
+        "agency_record_number": case.agency_record_number,
+        "created_at": timezone.localtime(case.created_at),
+        "status_label": case.get_status_display(),
+        "next_step_label": CASE_NEXT_STEP_LABELS[case.status],
+        "procedure_labels": _procedure_labels(declared_types),
+        "can_close": case.status != CaseStatus.CLEANED,
+        "filter_qs": urlencode(_filter_params(filters)),
+        "back_url": _dashboard_url(filters),
+    }
+
+
+@role_required("manager", "admin")
+def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    """Detalhe do caso no painel (R2/D2) — exclusivo manager/admin.
+
+    Ponto de entrada do botão [Detalhes] da lista: identificação completa do
+    paciente, procedimentos declarados e a ação de encerramento administrativo
+    (casos ≠ ``CLEANED``; o fluxo das rotas ``admin_close_confirm``/
+    ``admin_close`` não muda). Caso inexistente → 404; papel ativo fora de
+    manager/admin → 403 (``role_required``); anônimo → redirect ao login.
+    """
+    filters = _resolve_filters(request.GET)
+    case = get_object_or_404(Case.objects.prefetch_related("procedures"), case_id=case_id)
+    return render(
+        request,
+        "dashboard/case_detail.html",
+        _case_detail_context(case, filters=filters),
+    )
 
 
 @role_required("manager", "admin")

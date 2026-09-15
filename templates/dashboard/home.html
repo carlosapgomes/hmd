@@ -3,17 +3,21 @@
 
 {% block content %}
 <!-- Painel gerencial (change dashboard-notifications-pwa, slice 003, D3):
-     métricas agregadas ZERO-PHI — nenhum nome/nº de registro/idade de paciente.
+     a SEÇÃO DE MÉTRICAS é zero-PHI — apenas contagens, tempos médios e labels.
      A tabela por tipo conta PROCEDIMENTOS (rows), não casos: o somatório das
-     linhas difere do total de casos do resumo (esperado). A lista de casos
-     abaixo das métricas (change painel-lista-encerramento, slice 003, R1/D1)
-     identifica o CASO pelo nº de ocorrência (ou uid curto) e NUNCA exibe nome
-     nem data de nascimento do paciente. -->
+     linhas difere do total de casos do resumo (esperado).
+     A lista abaixo das métricas (change painel-ats-parity, slice 002, R1/R2/D2)
+     tem paridade com o dashboard do ats-web: cards com a identificação do
+     paciente (política corrigida pelo dono — zero-PHI vale para o perímetro
+     EXTERNO/LLM; a UI interna de funcionários mostra o paciente), filtros de
+     data/tipo/status/busca compondo por AND, default sem filtros = HOJE em
+     todos os estados, e o botão [Detalhes] (o encerramento administrativo vive
+     no detalhe). -->
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
   <h1 class="h4 mb-0">Painel gerencial</h1>
   <nav class="btn-group" aria-label="Período das métricas">
     {% for option in period_options %}
-    <a href="?period={{ option.value }}"
+    <a href="?period={{ option.value }}{% if list_qs %}&{{ list_qs }}{% endif %}"
        class="btn btn-sm {% if option.value == period %}btn-primary{% else %}btn-outline-secondary{% endif %}"
        {% if option.value == period %}aria-current="page"{% endif %}>{{ option.label }}</a>
     {% endfor %}
@@ -131,11 +135,11 @@
   </div>
 </div>
 
-<!-- Lista de casos do período (change painel-lista-encerramento, slice 003,
-     R1/D1): SSR puro, filtros na query string, 25/página. O card identifica o
-     CASO pelo nº de ocorrência (dado do caso) ou uid curto — nome e data de
-     nascimento do paciente NÃO aparecem. A ação de encerramento administrativo
-     só existe fora de CLEANED (R2). -->
+<!-- Lista de casos (change painel-ats-parity, slice 002, R1/R2): SSR puro, filtros
+     na query string, 25/página. Default sem filtros explícitos = HOJE + todos os
+     estados (molde ats-web). O card traz a identificação do paciente, a fase, os
+     exames declarados, a data/hora de inserção e o botão [Detalhes]; o
+     encerramento administrativo vive no detalhe do caso. -->
 <div class="card mt-3">
   <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
     <span>Casos do período</span>
@@ -160,9 +164,28 @@
         </select>
       </div>
       <div>
+        <label class="form-label mb-0 small" for="list-procedure-type">Tipo de exame</label>
+        <select class="form-select form-select-sm" id="list-procedure-type" name="procedure_type">
+          <option value="">Todos</option>
+          {% for value, label in procedure_type_options %}
+          <option value="{{ value }}"{% if value == procedure_type %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="form-label mb-0 small" for="list-date-from">De</label>
+        <input type="date" class="form-control form-control-sm" id="list-date-from"
+               name="date_from" value="{{ date_from }}">
+      </div>
+      <div>
+        <label class="form-label mb-0 small" for="list-date-to">Até</label>
+        <input type="date" class="form-control form-control-sm" id="list-date-to"
+               name="date_to" value="{{ date_to }}">
+      </div>
+      <div>
         <label class="form-label mb-0 small" for="list-q">Busca</label>
         <input type="search" class="form-control form-control-sm" id="list-q" name="q"
-               value="{{ q }}" placeholder="Nº de ocorrência ou início do uid"
+               value="{{ q }}" placeholder="Nome, nº de ocorrência ou início do uid"
                title="Termos com menos de 3 caracteres são ignorados">
       </div>
       <button type="submit" class="btn btn-sm btn-outline-secondary">Filtrar</button>
@@ -172,38 +195,42 @@
     <table class="table table-sm align-middle mb-0">
       <thead>
         <tr>
-          <th scope="col">Caso</th>
-          <th scope="col">Status</th>
+          <th scope="col">Paciente</th>
+          <th scope="col">Fase</th>
           <th scope="col">Procedimentos</th>
-          <th scope="col">Criado em</th>
+          <th scope="col">Inserido em</th>
           <th scope="col">Resultado</th>
-          <th scope="col">Próximo passo</th>
-          <th scope="col"><span class="visually-hidden">Ações</span></th>
+          <th scope="col" class="text-end">Ações</th>
         </tr>
       </thead>
       <tbody>
         {% for item in cases %}
         <tr>
-          <td class="font-monospace small">
-            {% if item.agency_record_number %}{{ item.agency_record_number }}{% else %}uid {{ item.short_id }}{% endif %}
+          <td>
+            <div class="fw-semibold">
+              <span class="case-patient-name">{{ item.patient_name|default:"—" }}</span>{% if item.patient_age is not None %}<span class="text-muted small"> · {{ item.patient_age }} a</span>{% endif %}
+            </div>
+            <div class="small text-muted">
+              {% if item.origin_unit %}<span class="case-origin-unit">{{ item.origin_unit }}</span> · {% endif %}Nº de ocorrência: <strong>{% if item.agency_record_number %}{{ item.agency_record_number }}{% else %}uid {{ item.short_id }}{% endif %}</strong>
+            </div>
           </td>
-          <td class="small">{{ item.status_label }}</td>
+          <td class="small">
+            <span class="badge rounded-pill text-bg-secondary">{{ item.status_label }}</span>
+            <div class="mt-1">{{ item.next_step_label }}</div>
+          </td>
           <td class="small">
             {% if item.procedure_labels %}{{ item.procedure_labels|join:" · " }}{% else %}—{% endif %}
           </td>
-          <td class="small">{{ item.created_at|date:"d/m/Y H:i" }}</td>
+          <td class="small text-nowrap">{{ item.created_at|date:"d/m/Y H:i" }}</td>
           <td class="small">{{ item.result_label }}</td>
-          <td class="small">{{ item.next_step_label }}</td>
           <td class="text-end">
-            {% if item.can_close %}
-            <a href="{% url 'dashboard:admin_close_confirm' item.case_id %}{% if filter_qs %}?{{ filter_qs }}{% endif %}"
-               class="btn btn-sm btn-outline-danger">Encerrar administrativamente</a>
-            {% endif %}
+            <a href="{% url 'dashboard:case_detail' item.case_id %}{% if filter_qs %}?{{ filter_qs }}{% endif %}"
+               class="btn btn-sm btn-outline-secondary">Detalhes</a>
           </td>
         </tr>
         {% empty %}
         <tr>
-          <td colspan="7" class="text-muted small">
+          <td colspan="6" class="text-muted small">
             Nenhum caso no período com os filtros selecionados.
           </td>
         </tr>

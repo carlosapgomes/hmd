@@ -8,7 +8,7 @@ Confirmar, negar e reabrir o agendamento de casos aceitos pelo médico nas duas 
 
 ### Requirement: Fila do agendador completa
 
-O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos prontos para agendamento (estados `SCHEDULER_REQUESTED` e `AWAITING_SCHEDULING` — pedidos novos e casos reabertos por intercorrência), ordenada por **tempo de tela** — `days_on_screen` (descendente, casos sem o campo ao fim), desempate FIFO por `created_at` — paginada, **sem diferenciação por unidade**, com aba de casos processados do agendamento; os cards exibem nome e idade do paciente (quando presentes), nº de ocorrência, tempo de espera e o tempo de tela oficial quando presente. Outros papéis ativos recebem 403; anônimo é redirecionado ao login.
+O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos prontos para agendamento (estados `SCHEDULER_REQUESTED` e `AWAITING_SCHEDULING` — pedidos novos e casos reabertos por intercorrência), ordenada por **tempo de tela** — `days_on_screen` (descendente, casos sem o campo ao fim), desempate FIFO por `created_at` — paginada, **sem diferenciação por unidade**, com aba de casos processados do agendamento; os cards exibem nome e idade do paciente (quando presentes), nº de ocorrência, tempo de espera e o tempo de tela oficial quando presente. Outros papéis ativos recebem 403; anônimo é redirecionado ao login. Os cards NÃO exibem o identificador interno do caso (uid).
 
 #### Scenario: Agendador vê a fila completa
 
@@ -39,6 +39,12 @@ O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos pronto
 - **GIVEN** um caso já processado pelo agendamento com nome e idade
 - **WHEN** o agendador acessa a aba processados
 - **THEN** o card exibe o rótulo «Recebido há …» e NÃO exibe «Aguardando», com a idade junto do nome
+
+#### Scenario: Cards sem o identificador interno do caso
+
+- **GIVEN** casos com uid interno e nº de ocorrência
+- **WHEN** a fila é renderizada
+- **THEN** nenhum card exibe o uid do caso — o nº de ocorrência (com `—` quando ausente) e a identificação do paciente são os identificadores do card
 
 ### Requirement: Confirmação de agendamento com unidade e resposta final
 

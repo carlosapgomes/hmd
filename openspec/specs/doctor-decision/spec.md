@@ -21,7 +21,7 @@ subtipo e `admin` veem `Todas` e qualquer subtipo). Os cards SHALL exibir a
 identificação do paciente (nome e idade quando presentes), nº de ocorrência,
 tempo de espera (desde `created_at`) e o tempo de tela oficial do cabeçalho
 (dias em tela) quando presente. Outros papéis ativos
-recebem 403.
+recebem 403. Os cards NÃO exibem o identificador interno do caso (uid).
 
 #### Scenario: Médico de subtipo filtra a fila
 
@@ -58,6 +58,12 @@ recebem 403.
 - **GIVEN** um caso decidido com nome e idade
 - **WHEN** o médico acessa a aba decididos
 - **THEN** o card exibe o rótulo «Recebido há …» (sem «Aguardando», que não faz sentido em histórico) e a idade junto do nome
+
+#### Scenario: Cards sem o identificador interno do caso
+
+- **GIVEN** casos com uid interno e nº de ocorrência
+- **WHEN** a fila é renderizada
+- **THEN** nenhum card exibe o uid do caso — o nº de ocorrência (com `—` quando ausente) e a identificação do paciente são os identificadores do card
 
 ### Requirement: Access control por subtipo no conjunto declarado
 

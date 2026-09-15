@@ -50,13 +50,25 @@
           {% endif %}
         {% endif %}
 
-        <h2 class="h6 text-muted text-uppercase mb-2">Procedimentos declarados</h2>
-        {% if procedure_labels %}
-        <div class="d-flex flex-wrap gap-2 mb-3">
-          {% for label in procedure_labels %}
-          <span class="badge rounded-pill text-bg-light border">{{ label }}</span>
+        <h2 class="h6 text-muted text-uppercase mb-2">Procedimentos do caso</h2>
+        {% if procedure_rows %}
+        <ul class="list-unstyled mb-3">
+          {% for row in procedure_rows %}
+          <li class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="fw-semibold">{{ row.label }}</span>
+            {% if row.is_declared %}
+            <span class="badge rounded-pill text-bg-secondary">Declarado</span>
+            {% else %}
+            <span class="badge rounded-pill text-bg-info">Detectado na extração</span>
+            {% endif %}
+            {% if row.detection == 'detected' %}
+            <span class="badge rounded-pill text-bg-success">Detectado</span>
+            {% elif row.detection == 'not_detected' %}
+            <span class="badge rounded-pill text-bg-warning">Não detectado</span>
+            {% endif %}
+          </li>
           {% endfor %}
-        </div>
+        </ul>
         {% else %}
         <p class="text-muted">Nenhum tipo declarado.</p>
         {% endif %}
@@ -181,6 +193,24 @@
             sumarização mantendo os procedimentos declarados) — a ação fica registrada
             na trilha com o motivo.
           </p>
+          {% if procedure_rows %}
+          <div class="mb-3 small">
+            <div>
+              <strong>Declarados:</strong>
+              {% for row in declared_procedure_rows %}
+              <span class="badge rounded-pill text-bg-light border">{{ row.label }}{% if row.detection == 'not_detected' %} — não detectado{% elif row.detection == 'detected' %} — detectado{% endif %}</span>
+              {% endfor %}
+            </div>
+            {% if detected_extra_procedure_rows %}
+            <div class="mt-1">
+              <strong>Detectados na extração:</strong>
+              {% for row in detected_extra_procedure_rows %}
+              <span class="badge rounded-pill text-bg-info">{{ row.label }}</span>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </div>
+          {% endif %}
           <form method="post" action="{% url 'intake:gate_release' case.case_id %}"
                 class="d-inline">
             {% csrf_token %}

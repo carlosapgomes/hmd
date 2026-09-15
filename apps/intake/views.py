@@ -56,7 +56,13 @@ from apps.accounts.models import User
 from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS, acknowledge_case_receipt
 from apps.cases.events import CaseEventType
 from apps.cases.locks import CaseLockConflictError
-from apps.cases.models import Case, CaseDocument, CaseStatus, DoctorDisposition
+from apps.cases.models import (
+    Case,
+    CaseDocument,
+    CaseStatus,
+    DetectionStatus,
+    DoctorDisposition,
+)
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.units import unit_label
 
@@ -138,6 +144,37 @@ def _declared_types_from_rows(case: Case) -> list[str]:
     exibição é resolvida por ``_procedure_labels``.
     """
     return [row.procedure_type for row in case.procedures.all() if row.declared_by_nir]
+
+
+def _procedure_rows(case: Case) -> list[dict[str, object]]:
+    """Rows de procedimento do caso: origem + detecção (D1/D2 do change
+    ``detected-procedures-visible``).
+
+    Uma row por ``CaseProcedure`` do prefetch (sem query extra): ``label`` do
+    catálogo (fallback ao tipo bruto — defensivo), ``is_declared`` (origem NIR)
+    e ``detection`` ∈ {``detected``, ``not_detected``, ``None``} — ``None``
+    enquanto o pipeline não reconciliou (``pending``), quando a UI exibe apenas
+    a origem. Ordem canônica do catálogo; tipo fora do catálogo ao fim.
+    """
+    rows_by_type = {row.procedure_type: row for row in case.procedures.all()}
+    ordered_types = [
+        procedure_type
+        for procedure_type in _PROCEDURE_LABELS_BY_TYPE
+        if procedure_type in rows_by_type
+    ]
+    ordered_types.extend(sorted(set(rows_by_type) - set(_PROCEDURE_LABELS_BY_TYPE)))
+    return [
+        {
+            "label": _PROCEDURE_LABELS_BY_TYPE.get(procedure_type, procedure_type),
+            "is_declared": rows_by_type[procedure_type].declared_by_nir,
+            "detection": (
+                rows_by_type[procedure_type].detection_status
+                if rows_by_type[procedure_type].detection_status != DetectionStatus.PENDING
+                else None
+            ),
+        }
+        for procedure_type in ordered_types
+    ]
 
 
 def _administrative_closure_result(case: Case) -> tuple[str, str] | None:
@@ -354,6 +391,7 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     communications = list(case.communication_messages.select_related("author"))
 
     procedure_decisions = _procedure_decisions(case)
+    procedure_rows = _procedure_rows(case)
     # Resposta final em destaque (R1): a última comunicação autoral da thread
     # quando o fechamento/agendamento já publicou a resposta final. Mensagens
     # ``system`` (sem autor) nunca são a resposta final.
@@ -370,8 +408,16 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         "status_label": case.get_status_display(),
         "documents": documents,
         "attachments": attachments,
-        "procedure_labels": _procedure_labels(_declared_types_from_rows(case)),
         "communications": communications,
+        "procedure_rows": procedure_rows,
+        # Resumo do card de divergência (R2/D2): declarados (com detecção no
+        # template) e detectados que NÃO foram declarados (rows extras).
+        "declared_procedure_rows": [row for row in procedure_rows if row["is_declared"]],
+        "detected_extra_procedure_rows": [
+            row
+            for row in procedure_rows
+            if not row["is_declared"] and row["detection"] == DetectionStatus.DETECTED
+        ],
         "has_outcome": bool(procedure_decisions),
         "procedure_decisions": procedure_decisions,
         "scheduling": _scheduling_context(case),

@@ -75,7 +75,8 @@ fluxo de trabalho do supervisor.
   (models/notifications/migration) + `templates/accounts/manual.html`,
   aborts nas 3 tasks (`apps/intake/tasks.py`, `apps/anonymization/tasks.py`,
   `apps/pipeline/orchestrator.py`) e gates nos atomics do pipeline
-  (`apps/pipeline/policy.py`, `llm2_service.py`, `prior_case.py`),
+  (`apps/pipeline/policy.py`, `llm1_service.py`, `llm2_service.py`,
+  `prior_case.py`),
   `apps/dashboard` (views/urls/métricas/templates), `apps/intake` (Meus
   casos).
 - Amends declarados de testes existentes: "Página sem dados de paciente"

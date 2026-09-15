@@ -61,7 +61,7 @@ paciente" (MODIFIED dashboard) tem o THEN escopado à **seção de métricas**
 aparece" — o repo historicamente trata o nº de ocorrência como registro no
 painel; a lista o exibe deliberadamente); o requisito novo da lista carrega
 o invariante próprio — **nome E data de nascimento do paciente não aparecem
-na lista** (pinados nos testes do slice 002; o amend de `test_views.py`
+na lista** (pinados nos testes do slice 003; o amend de `test_views.py`
 troca o pino de `agency_record_number` para `patient_name` +
 `patient_birth_date` e atualiza o docstring). Flip futuro (backlog 1-2) =
 editar UM requisito + presenter.
@@ -151,11 +151,16 @@ reason_code, reason_text) -> Case`.
   (senão a recusa de lease viva do service aborta a intercalação em vez do
   write): intake — seam em `evaluate_regulation_report`/
   `_extract_document_text` (~206-216, antes do atomic ~218);
-  anonymization — seam antes de `start_anonymization`/do atomic (~144/160);
+  anonymization — seam imediatamente antes do atomic (~160, APÓS
+  `start_anonymization` e o porteiro de texto vazio — seam em ~144 nunca
+  fica verde: o save full da self-transition em ~144 ressuscitaria a linha
+  CLEANED antes do gate);
   pipeline — seam no stub do cliente LLM cuja chamada intercala o
   encerramento (padrão dos testes existentes com clientes fake), cobrindo
-  llm1 (status permanece CLEANED, `structured_data` segue zerado),
-  policy/llm2/prior_case e o handler de erro.
+  llm1 (status permanece CLEANED, `structured_data` segue zerado) e o
+  handler de erro; policy/prior_case rodam ANTES da chamada llm2 no
+  orquestrador, então são testados por chamada direta com o caso já
+  CLEANED (formulação do slice-002 R2).
 - Notificação ao criador: **novo `NotificationType`
   `ADMINISTRATIVELY_CLOSED = "administratively_closed"`** (23 chars <
   max_length 30; choices congeladas na migration `0004` → **migration
@@ -237,4 +242,4 @@ encerrados.
 
 - **Owner**: a lista deve mostrar dados do paciente (nome/registro, como
   ats-web)? Default desta proposta: NÃO (postura da spec vigente). Flip =
-  ajuste pontual no slice 002 antes da execução.
+  ajuste pontual no slice 003 antes da execução.

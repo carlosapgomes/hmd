@@ -80,6 +80,10 @@ confirmação; NIR vê o resultado; métrica nova coerente no painel.
   ao criador (e NÃO ao outro NIR).
 - Amends: `test_views.py` (página sem nome E sem data de nascimento;
   docstring atualizado) e `test_metrics.py` (chave nova) verdes.
+- `templates/accounts/manual.html`: bullet do Painel atualizado (deixa de
+  dizer "apenas números e rótulos" — passa a descrever a lista de casos por
+  nº de ocorrência + encerramento administrativo), em paridade com o ajuste
+  de Purpose declarado no design (arquivamento).
 
 ## Out of Scope
 
@@ -97,6 +101,7 @@ confirmação; NIR vê o resultado; métrica nova coerente no painel.
 - apps/dashboard/tests/test_metrics.py (amend declarado)
 - templates/dashboard/home.html
 - templates/dashboard/admin_close_confirm.html (novo)
+- templates/accounts/manual.html (bullet do Painel)
 - apps/intake/views.py (presenter de Meus casos é INLINE aqui)
 - templates/intake/my_cases.html (render do resultado)
 - apps/intake/tests/test_my_cases.py (resultado administrativo — seguir

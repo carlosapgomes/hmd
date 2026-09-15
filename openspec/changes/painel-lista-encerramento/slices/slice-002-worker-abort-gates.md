@@ -77,9 +77,11 @@ a intercalação em vez do write)
   INTERCALA `administratively_close_case` → a task prossegue o passo →
   nada gravado (sem `extracted_text`, sem evento de retenção, sem
   ressurreição de status).
-- anonymization: idem (seam antes de `start_anonymization`/do atomic,
-  ~144/160) → `anonymized_text`/`pseudonym_map`/status/lock seguem
-  limpos após o passo retornar.
+- anonymization: idem (seam imediatamente antes do atomic ~160, APÓS
+  `start_anonymization` — seam em ~144 nunca fica verde: o save full da
+  self-transition ressuscitaria a linha CLEANED antes do gate) →
+  `anonymized_text`/`pseudonym_map`/status/lock seguem limpos após o
+  passo retornar.
 - pipeline llm1: seam no stub do cliente LLM (padrão dos testes com
   clientes fake) que INTERCALA o encerramento durante a chamada →
   `structured_data` segue zerado, nenhum evento LLM1 gravado, status

@@ -14,7 +14,7 @@
 - "Meus casos": presenter INLINE em `apps/intake/views.py` (~284-293 — NÃO
   existe `apps/intake/presenters.py`); template
   `templates/intake/my_cases.html` (hoje sem resultado por caso).
-- Serviço do slice 001 disponível (import direto); SSR puro do repo
+- Serviços dos slices 001/002 disponíveis (import direto); SSR puro do repo
   (confirmação em página própria; proibido `HttpResponseForbidden(render)`
   aninhado).
 - Paginação/busca: precedentes em `apps/doctor/views.py` (~241) e
@@ -91,6 +91,8 @@ confirmação; NIR vê o resultado; métrica nova coerente no painel.
 - apps/dashboard/views.py
 - apps/dashboard/urls.py
 - apps/dashboard/metrics.py
+- apps/dashboard/case_labels.py (novo — mapa 17 estados → pt-BR,
+  fonte canônica do "próximo passo", teste de cobertura completa)
 - apps/dashboard/tests/test_views.py (novos + amend declarado)
 - apps/dashboard/tests/test_metrics.py (amend declarado)
 - templates/dashboard/home.html

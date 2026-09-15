@@ -79,7 +79,8 @@ Casos já em `CLEANED` SHALL ser rejeitados.
 
 - **GIVEN** um caso com lease de worker EXPIRADA, encerrado
   administrativamente
-- **WHEN** um passo do pipeline em voo tenta persistir resultados clínicos
+- **WHEN** um passo em voo (task de processamento ou passo do pipeline)
+  tenta persistir resultados clínicos
 - **THEN** a escrita é abortada pelo status `CLEANED` e os campos clínicos
   seguem zerados
 

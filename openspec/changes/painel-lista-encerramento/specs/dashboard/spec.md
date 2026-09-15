@@ -46,7 +46,8 @@ painel"). Casos encerrados administrativamente SHALL sair da contagem de
 - **GIVEN** casos encerrados administrativamente dentro do período
 - **WHEN** o painel é aberto
 - **THEN** a métrica de encerramentos administrativos reflete a contagem do
-  período e esses casos não aparecem como "em andamento"
+  período, esses casos não aparecem como "em andamento" e seguem contados
+  como encerrados
 
 ## ADDED Requirements
 

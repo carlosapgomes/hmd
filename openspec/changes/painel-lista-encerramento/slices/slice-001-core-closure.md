@@ -50,18 +50,20 @@ abort de escrita pós-encerramento nos workers.
 - `ADMINISTRATIVE_CLOSURE_REASONS` + `_REASON_CHOICES` em `closure.py`.
 - Hook PRIVADO `_fsm_administratively_close` (`source=` todos exceto
   `CLEANED`) + op PÚBLICA `Case.administratively_close(*, user, role,
-  reason_code, reason_text)` via `_run_transition`, gravando
+  reason_code, reason_text, lock_snapshot)` via `_run_transition`, gravando
   `CASE_ADMINISTRATIVELY_CLOSED` com payload `{reason_code, reason_text,
   by, role, had_lock, previous_lock_context, previous_lock_until}`.
-- `force_release_case_lock(case, *, reason)` público no `locks.py`:
-  espelha `release_case_lock` (select_for_update + MUTA a mesma instância)
-  e grava `CASE_LOCK_RELEASED` com payload de força.
+- `force_release_case_lock(case, *, reason, user)` público no `locks.py`:
+  espelha `release_case_lock` (re-lê sob select_for_update e COPIA os
+  campos limpos de volta para a instância do chamador) e grava
+  `CASE_LOCK_RELEASED` com payload no padrão `_expired_payload` + autor.
 - `administratively_close_case(*, case, user, active_role, reason_code,
   reason_text) -> Case` em `closure.py`: validações (catálogo, texto,
   CLEANED, papel, **lease viva → `ValueError`** com
   `timezone.now()` aware e prefixo `worker_`); atomic na ordem: snapshot
-  do lock → force-release → coletar `file.name` → minimização (helper do
-  MESMO módulo) → op pública → `on_commit(_delete_files_best_effort)`.
+  do lock (dict `lock_snapshot`) → force-release → coletar `file.name` →
+  minimização (helper do MESMO módulo) → op pública (recebe
+  `lock_snapshot`) → `on_commit(_delete_files_best_effort)`.
 
 ### R2 — Notificação (tipo novo + migration + manual)
 
@@ -71,22 +73,11 @@ abort de escrita pós-encerramento nos workers.
 - Gatilho em `create_milestone_notifications`: título e preview FIXOS
   "Caso encerrado administrativamente" (sem `reason_text`, sem PHI);
   destinatário `case.created_by`.
-- Amend do teste-invariante (4 marcos) + docstring do módulo (deixa de
-  dizer "conjunto FECHADO") + `templates/accounts/manual.html` (enumera o
-  4º marco).
+- Amend do teste-invariante (4 marcos) + docstrings que dizem "conjunto
+  FECHADO" (`apps/accounts/notifications.py` E `apps/accounts/signals.py`)
+  + `templates/accounts/manual.html` (enumera o 4º marco).
 
-### R3 — Abort de escrita pós-encerramento (workers)
-
-- Nas 3 tasks/orchestrator (`apps/intake/tasks.py`,
-  `apps/anonymization/tasks.py`, `apps/pipeline/orchestrator`): após cada
-  `refresh_from_db` pré-passo e no `except`, retornar sem persistir quando
-  `status == CLEANED` (handler de erro NÃO chama `fail_processing`).
-- Nos atomics de escrita clínica (`apps/pipeline/policy.py`,
-  `apps/pipeline/llm2_service.py`, `apps/pipeline/prior_case.py`):
-  re-ler o caso dentro do atomic e retornar sem persistir quando
-  `CLEANED`.
-
-### R4 — Testes (`apps/cases/tests/test_administrative_closure.py` novo)
+### R3 — Testes (`apps/cases/tests/test_administrative_closure.py` novo)
 
 - Encerra de TODOS os estados não-CLEANED (parametrizado; inclui FAILED e
   AWAITING_NIR_ACK) → CLEANED; **eventos: exatamente +2** (+1 release
@@ -104,14 +95,11 @@ abort de escrita pós-encerramento nos workers.
 - Notificação: tipo novo, destinatário criador, título/preview fixos SEM
   motivo; invariante dos 4 tipos verde; manual atualizado (assert do texto
   do 4º marco no HTML).
-- Worker-zumbi: lease expirada → encerra → passo de escrita do pipeline
-  (policy E llm2) roda → retorna sem persistir, campos seguem zerados,
-  sem evento de falha (uma task representativa de cada arquivo + os 2
-  serviços de pipeline).
 
 ## Out of Scope
 
-- Rota/UI (slice 002); painel; Meus casos; métrica; índices de busca.
+- Aborts/gates de workers (slice 002); rota/UI (slice 003); painel; Meus
+  casos; métrica; índices de busca.
 
 ## Expected files
 
@@ -124,15 +112,9 @@ abort de escrita pós-encerramento nos workers.
 - apps/accounts/notifications.py
 - apps/accounts/migrations/0005_*.py (novo)
 - apps/accounts/tests/test_notifications_model.py (amend do invariante)
+- apps/accounts/signals.py (docstring do conjunto)
 - templates/accounts/manual.html (4º marco)
-- apps/intake/tasks.py (abort)
-- apps/anonymization/tasks.py (abort)
-- apps/pipeline/orchestrator.py (abort)
-- apps/pipeline/policy.py (gate no atomic)
-- apps/pipeline/llm2_service.py (gate no atomic)
-- apps/pipeline/prior_case.py (gate no atomic)
-- allowed incidental: testes existentes das tasks/pipeline se o gate exigir
-  fixture mínima (declarar no Deviations)
+- allowed incidental: NENHUM
 
 ## Verification (RED → GREEN, mesmo comando)
 
@@ -145,9 +127,10 @@ uv run python manage.py makemigrations --check --dry-run
 
 ## Acceptance criteria
 
-- Paramétrico dos estados verde; eventos/payload/minimização-com-arquivo/
-  lock-sem-ressurreição/notificação fixa/recusas/aborts pinados; suíte
-  completa verde; ruff/format/mypy; `makemigrations --check` limpo.
+- Paramétrico dos estados verde; eventos/payload (com lock_snapshot)/
+  minimização-com-arquivo/lock-sem-ressurreição/notificação fixa/recusas
+  pinados; suíte completa verde; ruff/format/mypy; `makemigrations --check`
+  limpo.
 
 ## Deviations / learnings
 

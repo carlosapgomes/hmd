@@ -117,5 +117,9 @@ ponta a ponta em dev). Referência de padrão: `/projects/dev/ats-web`.
    (jargão técnico → rótulos legíveis, SEM alterar nomenclaturas/estrutura
    internas — padrão ats-web); (d) trilha em card collapsible (Bootstrap),
    não expandida por padrão.
-5. Painel/dahsboard lista de casos + encerramento administrativo: change
-   `painel-lista-encerramento` (plano validado, aguardando revisão/execução).
+5. ~~Painel lista de casos + encerramento administrativo~~ **CONCLUÍDO**
+   (change `painel-lista-encerramento` arquivado 2026-09-14; 3 slices;
+   lista zero-PHI por nº de ocorrência, encerramento admin com minimização
+   rows+arquivos, gates anti-worker-zumbi, 4º marco de notificação).
+   Pendências de UI registradas nos desvios do slice 003 (status=CLEANED ×
+   scope ativos; card compor "Agendado · Encerrado administrativamente").

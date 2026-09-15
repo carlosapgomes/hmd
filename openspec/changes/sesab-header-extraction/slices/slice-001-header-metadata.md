@@ -18,6 +18,10 @@
   `extracted_text`/`agency_record_number` no atomic (~214-229) com
   refresh/gate in-atomic (slice 002 do painel-lista-encerramento — a ordem
   dos gates NÃO muda; metadados entram no MESMO write do texto).
+- `apps/intake/services.py`: `_RESUBMIT_CLEARED_FIELDS` (~380-387) zera
+  texto/nº/gate no reenvio de documentos (`resubmit_case_documents`
+  ~575, `update_fields` na MESMA transação) — os metadados novos precisam
+  entrar nessa lista (design D4).
 - `apps/cases/models.py` `Case`: `patient_name`/`patient_birth_date`
   existem; minimização `_CLEANED_EMPTY_VALUES` (apps/cases/closure.py ~65)
   NÃO deve tocar os campos novos (decisão D6: sobrevivem ao CLEANED por
@@ -53,13 +57,18 @@ persiste nos campos novos do caso; cabeçalho ausente não é erro.
   blank/default ""), `days_on_screen` (PositiveSmallIntegerField null).
 - Migration única; `makemigrations --check` limpo.
 
-### R3 — Persistência no worker pdf
+### R3 — Persistência no worker pdf e limpeza no reenvio
 
 - `_extract_and_decide`: no MESMO atomic que grava `extracted_text`/
   `agency_record_number` (após o gate CLEANED vigente), persiste os 4
   metadados de `extract_header_metadata(texto_extraído)`. Nenhum evento com
   os valores. Writer único: metadados só aqui (linkage `patient_name`
   continua só da anonimização).
+- `apps/intake/services.py`: os 4 metadados entram em
+  `_RESUBMIT_CLEARED_FIELDS` (`None` inteiros / `""` chars) — reenvio de
+  documentos zera metadados do PDF anterior na MESMA transação vigente
+  (`resubmit_case_documents`, `update_fields`); novo PDF corrompido não
+  deixa metadados órfãos.
 
 ### R4 — Testes (RED→GREEN)
 
@@ -70,7 +79,9 @@ persiste nos campos novos do caso; cabeçalho ausente não é erro.
   «Indígena»/«Não informado» (acentuado/composto) capturada pelo enum;
   worker persiste os 4 campos no caso; cabeçalho ausente → caso processado
   normal com campos vazios; eventos sem os valores; CLEANED preserva os 4
-  campos (regressão da minimização).
+  campos (regressão da minimização); **reenvio de documentos com metadados
+  prévios** → campos zerados na transação do reenvio (incluindo cenário em
+  que o novo PDF falha antes de extrair).
 - Bateria: `TEST_DB_PORT=55435 uv run pytest -q apps/intake` + suíte cheia
   + ruff/mypy/`makemigrations --check`.
 
@@ -80,7 +91,10 @@ persiste nos campos novos do caso; cabeçalho ausente não é erro.
    `extracted_text`, DEPOIS do gate CLEANED in-atomic vigente (nenhum write
    novo fora do atomic/gate).
 2. `apps/cases/closure.py`: `_CLEANED_EMPTY_VALUES` permanece IDÊNTICO
-   (campos novos sobrevivem por decisão D6 — teste pinnando a paridade).
+   (campos novos sobrevivem por decisão D6 — teste pinnando a paridade);
+   `apps/intake/services.py`: `_RESUBMIT_CLEARED_FIELDS` contém os 4 campos
+   com o valor vazio correto por tipo (`None`/`""`) — teste de reenvio com
+   PDF corrompido pinnando a limpeza.
 
 ## Out of scope
 

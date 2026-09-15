@@ -112,6 +112,13 @@ anonimização (writer único por campo)
   («sobrescrito pela extração») popula o campo corretamente.
 - Reprocessamento: extração determinística é estável (mesmo texto) — o
   linkage e os metadados re-persistem iguais.
+- **Reenvio de documentos** (`_RESUBMIT_CLEARED_FIELDS`,
+  `apps/intake/services.py`): os 4 metadados entram na lista (derivados do
+  documento corrente, mesma classe de `extracted_text`/`agency_record_number`
+  — `None` para os inteiros, `""` para os chars), zerados na MESMA transação
+  vigente do reenvio; se o novo PDF falhar, não restam metadados órfãos do
+  documento anterior. `patient_name` NÃO entra (writer único da anonimação —
+  D4; residual pré-existente do contrato vigente, fora de escopo).
 
 ## D5 — Tokenização fechada pelo mecanismo existente
 

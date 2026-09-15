@@ -8,7 +8,8 @@
 - [ ] 1.2 Campos `patient_age`/`patient_gender`/`patient_race`/
       `days_on_screen` em `Case` + migration única
 - [ ] 1.3 Worker pdf persiste os metadados no mesmo atomic do
-      `extracted_text` (após o gate CLEANED vigente); eventos sem valores
+      `extracted_text` (após o gate CLEANED vigente); eventos sem valores;
+      reenvio de documentos zera os 4 metadados (`_RESUBMIT_CLEARED_FIELDS`)
 - [ ] 1.4 Testes RED→GREEN (extração pura, worker, cabeçalho ausente,
       CLEANED preserva) + bateria local
 

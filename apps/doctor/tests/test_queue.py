@@ -913,3 +913,33 @@ def test_queue_card_without_occurrence_has_no_uid(
     assert "Paciente Sem Ocorrencia" in card
     assert f"Caso {case.case_id}" not in card
     assert str(case.case_id) not in _card_visible_text(card)
+
+
+@pytest.mark.django_db
+def test_queue_cards_close_anchor(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """Cada card da fila médica é um link que fecha antes do card seguinte.
+
+    Regressão do bug real em dev (2026-09-15): o card abria
+    ``<a class="list-group-item…">`` mas fechava com ``</div>`` — HTML
+    malformado desde 9214587 distorce a lista (cards sem fundo/limites).
+    """
+    first = _make_awaiting_case(nir_user, (ANGIO_TYPE,), patient_name="Paciente Um")
+    second = _make_awaiting_case(nir_user, (ANGIO_TYPE,), patient_name="Paciente Dois")
+    login_user(user_factory("medico-anchor-close", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue")).content.decode()
+
+    anchor = '<a class="list-group-item list-group-item-action py-3"'
+    first_open = body.find(f'{anchor}\n         href="/doctor/case/{first.case_id}/"')
+    second_open = body.find(f'{anchor}\n         href="/doctor/case/{second.case_id}/"')
+    assert first_open > 0 and second_open > first_open
+    # O fechamento do PRIMEIRO card deve vir antes da abertura do segundo:
+    # sem isso, o <a> aberto engole os cards seguintes (distorção em cascata).
+    # ``find`` devolve -1 quando não acha — exigir fechamento real (> 0).
+    first_close = body.find("</a>", first_open)
+    assert 0 < first_close < second_open

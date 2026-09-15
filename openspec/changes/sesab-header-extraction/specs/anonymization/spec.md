@@ -20,9 +20,15 @@ Antes da anonimização, o sistema SHALL extrair deterministicamente (regex) do 
 
 #### Scenario: Nome do cabeçalho padrão SESAB é extraído do layout desalinhado
 
-- **GIVEN** um relatório real SESAB cujo texto linear traz o nome na linha de demografia (linha anterior ao rótulo `Paciente:` sozinho, com `Idade: N a.` na mesma linha) repetido por página
+- **GIVEN** um relatório real SESAB cujo texto linear traz o nome na linha de demografia (linha anterior ao rótulo `Paciente:` sozinho, com `Idade:`, `Sexo:` e `Raça/Cor:` juntos na mesma linha) repetido por página
 - **WHEN** a pré-extração determinística executa
 - **THEN** `patient_name` fica populado com o nome completo e TODAS as ocorrências do nome (em todas as páginas) recebem o mesmo token `<PESSOA_N>` na anonimização
+
+#### Scenario: Demografia clínica órfã não gera nome
+
+- **GIVEN** um texto clínico contendo «…Idade: 79a.» SEM os marcadores de sexo e raça/cor na mesma linha, seguido de uma linha «Paciente:»
+- **WHEN** a pré-extração determinística executa
+- **THEN** nenhum nome é extraído dessa menção (a âncora exige a linha de demografia completa) e o texto segue ao LLM como está
 
 #### Scenario: Nome social presente vira candidato PESSOA próprio
 
@@ -32,6 +38,6 @@ Antes da anonimização, o sistema SHALL extrair deterministicamente (regex) do 
 
 #### Scenario: Campos vazios do cabeçalho não geram candidatos
 
-- **GIVEN** um relatório SESAB real com `Nome Social:` vazio e sem data de nascimento
+- **GIVEN** um relatório SESAB real com `Nome Social:` vazio (rótulo sozinho precedido por texto clínico) e sem data de nascimento
 - **WHEN** a pré-extração determinística executa
-- **THEN** não há candidato de nome social nem de nascimento e o linkage do nome civil é populado normalmente
+- **THEN** não há candidato de nome social nem de nascimento e o linkage do nome civil é populado normalmente (a captura do nome social restringe-se ao valor na mesma linha do rótulo)

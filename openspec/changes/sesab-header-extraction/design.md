@@ -32,45 +32,68 @@ aparecem no `extracted_text` nas linhas do cabeçalho (L3/L87/L173); o
 `_PATIENT_NAME_FIELD_PATTERN` atual (valor na mesma linha do rótulo) nunca
 casa — por isso o nome vai ao LLM em claro.
 
-## D1 — Nome do paciente: âncora na linha de demografia (deterministic.py)
+## D1 — Nome do paciente: âncora na linha de demografia COMPLETA (deterministic.py)
 
-`extract_patient_name` ganha a âncora do cabeçalho padrão, ANTES dos
-rótulos existentes (que permanecem para outros layouts):
+A âncora anti-falso-positivo é a **linha de demografia canônica do cabeçalho**:
+linha que contém, NA MESMA LINHA e nesta ordem, os três marcadores
+`Idade:\s*(\d+)\s*a\.?`, `Sexo:\s*([FM])` e `Ra[çc]a/Cor:\s*(enum)` — uma
+menção clínica isolada de idade (ex. «História clínica Idade: 79a.») NÃO casa.
+O pattern da linha de demografia tem **fonte única em
+`apps/intake/pdf_utils.py`** (D3) e é importado pelo `deterministic.py`
+(mesma direção do reuso vigente de `extract_agency_record_number`).
 
-- Procura linha com `Idade:\s*(\d+)\s*a\.?` cuja linha SEGUINTE seja o
-  rótulo `Paciente:` sozinho (fold, dois-pontos opcionais);
+`extract_patient_name` ganha a âncora, ANTES dos rótulos existentes (que
+permanecem para outros layouts):
+
+- linha que casa a demografia canônica E cuja linha SEGUINTE é o rótulo
+  `Paciente:` sozinho (fold, dois-pontos opcionais);
 - nome = prefixo da linha até ` - Idade:` (ou `Idade:`), strip;
-- validação: ≥ 2 palavras com letras; senão descarta a ocorrência e segue
-  (páginas repetidas dão múltiplas chances — todas devem concordar no valor
-  fold; divergência → primeira válida vence, como todo o determinístico).
+- validação: ≥ 2 palavras com letras; senão descarta e segue (páginas
+  repetidas dão múltiplas chances).
+
+Fixture adversarial obrigatória: demografia clínica órfã («…Idade: 79a.» sem
+Sexo+Raça/Cor na mesma linha, seguida de «Paciente:») NÃO gera nome.
 
 Primeira ocorrência válida vence (paridade com os rótulos existentes).
 `patient_birth_date` permanece pelo pattern vigente (layout que o traga);
 o relatório SESAB real não o tem — campo documentado como não-populado.
 
-## D2 — Nome social: candidato PESSOA, não linkage
+## D2 — Nome social: candidato PESSOA, não linkage (captura conservadora)
 
-`DeterministicExtraction` ganha `social_name: str | None`. Captura (nessa
-ordem): valor na mesma linha após `Nome Social:` quando o rótulo não está
-sozinho; senão linha ANTERIOR ao rótulo sozinho `Nome Social:` (simetria do
-desalinhamento), validada ≥ 1 palavra alfabética e diferente do nome civil
-(fold). Vira candidato PESSOA em `_deterministic_candidates` (token próprio:
-`<PESSOA_N>` distinto do nome civil — valores distintos, tokens distintos) e
-NÃO alimenta linkage. Corpus real tem o campo vazio — a fixture sintética
-versionada cobre o caso preenchido; aceite operacional documenta a
-limitação (se o layout real preenchido divergir, calibra com PDF real).
+`DeterministicExtraction` ganha `social_name: str | None`. Captura
+**apenas o valor na MESMA linha após `Nome Social:`** quando o rótulo tem
+valor à direita; validação: ≥ 1 palavra alfabética (≥ 2 letras, sem
+dígitos/símbolos) e diferente do nome civil (fold). Rótulo sozinho/valor
+vazio → `None` — **sem fallback de linha anterior** (especulativo e
+propenso a capturar texto clínico não-nominal; o corpus real tem o campo
+vazio e não calibra o desalinhamento). Limitação documentada: se o layout
+real preenchido divergir (valor desalinhado), fica NÃO-capturado — o aceite
+operacional com PDF real é o detector. Vira candidato PESSOA em
+`_deterministic_candidates` (token próprio distinto) e NÃO alimenta
+linkage. Fixture sintética versionada cobre preenchido-na-mesma-linha e
+vazio-após-texto-clínico.
 
 ## D3 — Metadados do cabeçalho (intake/pdf_utils.py, molde ats-web)
 
-`extract_header_metadata(text) -> HeaderMetadata` (dataclass congelável):
-- `age`: `Idade:\s*(\d+)\s*a` (primeira ocorrência da linha de demografia);
-- `gender`: `Sexo:\s*([FM])` na mesma linha;
-- `race`: `Ra[çc]a/Cor:\s*([A-Za-zà-ÿ]+)` na mesma linha;
+`extract_header_metadata(text) -> HeaderMetadata` (dataclass congelável),
+por parsing **linha a linha da linha de demografia canônica** (os três
+marcadores NA MESMA LINHA, na ordem — anti-falso-positivo clínico):
+- `age`: `Idade:\s*(\d+)\s*a\.?`;
+- `gender`: `Sexo:\s*([FM])`;
+- `race`: `Ra[çc]a/Cor:\s*(enum)` — **enumeração explícita do padrão IBGE +
+  ausência** (`Branca|Preta|Parda|Amarela|Indígena|Não informado`,
+  case-insensitive/acentuação tolerante) — captura livre de «primeira
+  palavra» engoliria mal ou rejeitaria acentuados/compostos;
 - `days_on_screen`: `Dias em tela:\s*(\d+)` — **maior** ocorrência (molde
-  ats-web `extract_regulation_days_on_screen`);
+  ats-web `extract_regulation_days_on_screen`); termo administrativo do
+  cabeçalho, improvável em texto clínico;
 - ausentes → `None` (campos nullable). Abertura/Data Adm. Unid./Dias Unid.
   ficam NO TEXTO (não persistem — sem uso previsto; decisão de mínimo
   necessário).
+
+O pattern da linha de demografia canônica vive AQUI (fonte única) e é
+importado por `apps/anonymization/deterministic.py` para a âncora do nome
+(D1).
 
 Campos novos em `Case`: `patient_age` (PositiveSmallIntegerField null),
 `patient_gender` (CharField(16) blank), `patient_race` (CharField(32)

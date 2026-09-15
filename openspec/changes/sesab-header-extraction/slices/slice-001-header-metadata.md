@@ -35,11 +35,16 @@ persiste nos campos novos do caso; cabeçalho ausente não é erro.
 
 - `HeaderMetadata` (dataclass congelável: `age: int | None`,
   `gender: str | None`, `race: str | None`, `days_on_screen: int | None`) e
-  `extract_header_metadata(text) -> HeaderMetadata`: idade/sexo/raça da
-  linha de demografia (`Idade:\s*(\d+)\s*a\.?`, `Sexo:\s*([FM])`,
-  `Ra[çc]a/Cor:\s*([A-Za-zà-ÿ]+)`); dias em tela = MAIOR
-  `Dias em tela:\s*(\d+)` (molde ats-web); ausentes → `None`. Função pura,
-  zero I/O.
+  `extract_header_metadata(text) -> HeaderMetadata`.
+- **Linha de demografia canônica** (pattern com fonte única AQUI, exportado
+  para o `deterministic.py` do slice 002): linha que contém NA MESMA LINHA,
+  nesta ordem, `Idade:\s*(\d+)\s*a\.?`, `Sexo:\s*([FM])` e
+  `Ra[çc]a/Cor:\s*(enum IBGE: Branca|Preta|Parda|Amarela|Indígena|Não
+  informado, case/acentuação tolerantes)`. Idade/sexo/raça extraídos SOMENTE
+  dessa linha (menção clínica órfã de idade NÃO casa — os três marcadores
+  juntos são a âncora).
+- `days_on_screen`: MAIOR `Dias em tela:\s*(\d+)` do texto (molde ats-web).
+  Ausentes → `None`. Função pura, zero I/O.
 
 ### R2 — Campos do caso + migration
 
@@ -60,9 +65,12 @@ persiste nos campos novos do caso; cabeçalho ausente não é erro.
 
 - Novos (RED): extração pura com fixture do layout real (nome na linha de
   demografia, dias em tela em 2 páginas → maior valor, sexo/raça); campos
-  ausentes → `None`s; worker persiste os 4 campos no caso; cabeçalho
-  ausente → caso processado normal com campos vazios; eventos sem os
-  valores; CLEANED preserva os 4 campos (regressão da minimização).
+  ausentes → `None`s; **adversariais**: menção clínica órfã «…Idade: 79a.»
+  SEM Sexo+Raça/Cor na mesma linha → `age/gender/race` `None`; raça
+  «Indígena»/«Não informado» (acentuado/composto) capturada pelo enum;
+  worker persiste os 4 campos no caso; cabeçalho ausente → caso processado
+  normal com campos vazios; eventos sem os valores; CLEANED preserva os 4
+  campos (regressão da minimização).
 - Bateria: `TEST_DB_PORT=55435 uv run pytest -q apps/intake` + suíte cheia
   + ruff/mypy/`makemigrations --check`.
 

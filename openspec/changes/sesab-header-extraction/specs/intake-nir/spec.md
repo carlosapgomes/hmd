@@ -4,7 +4,7 @@
 
 ### Requirement: Extração assíncrona no cluster pdf
 
-A criação SHALL enfileirar o processamento do caso no cluster `pdf` (django-q2); o processamento SHALL extrair o texto de cada documento com PyMuPDF na ordem declarada, concatenando em `Case.extracted_text` (fonte única de texto), remover a marca d'água característica e extrair o número de ocorrência para `agency_record_number` quando presente. O processamento SHALL ainda extrair os metadados do cabeçalho padrão SESAB (repetido por página) quando presentes — idade (`Idade: N a.` na linha de demografia), sexo, raça/cor e dias em tela (maior ocorrência de `Dias em tela: N`) — persistindo-os nos campos do caso (`patient_age`/`patient_gender`/`patient_race`/`days_on_screen`), sem carregar esses valores em eventos. Campos ausentes do cabeçalho ficam vazios no caso. O ciclo SHALL percorrer `NEW → PDF_EXTRACTING → ANONYMIZING` com eventos de ator sistema, operando sob lock do caso (contexto de worker). Falha de extração (documento ilegível/corrompido) SHALL levar o caso a `FAILED` com motivo na trilha.
+A criação SHALL enfileirar o processamento do caso no cluster `pdf` (django-q2); o processamento SHALL extrair o texto de cada documento com PyMuPDF na ordem declarada, concatenando em `Case.extracted_text` (fonte única de texto), remover a marca d'água característica e extrair o número de ocorrência para `agency_record_number` quando presente. O processamento SHALL ainda extrair os metadados do cabeçalho padrão SESAB (repetido por página) quando presentes — idade, sexo e raça/cor extraídos SOMENTE da linha de demografia canônica (os marcadores `Idade:`, `Sexo:` e `Raça/Cor:` juntos na mesma linha, na ordem; raça restrita à enumeração IBGE + «Não informado») e dias em tela (maior ocorrência de `Dias em tela: N`) — persistindo-os nos campos do caso (`patient_age`/`patient_gender`/`patient_race`/`days_on_screen`), sem carregar esses valores em eventos. Campos ausentes do cabeçalho ficam vazios no caso; menções clínicas isoladas de idade/sexo NÃO são metadados. O ciclo SHALL percorrer `NEW → PDF_EXTRACTING → ANONYMIZING` com eventos de ator sistema, operando sob lock do caso (contexto de worker). Falha de extração (documento ilegível/corrompido) SHALL levar o caso a `FAILED` com motivo na trilha.
 
 #### Scenario: Processamento feliz leva o caso a ANONYMIZING
 
@@ -35,3 +35,9 @@ A criação SHALL enfileirar o processamento do caso no cluster `pdf` (django-q2
 - **GIVEN** um documento sem o cabeçalho padrão (texto legítimo, sem `Idade:`/`Dias em tela:`)
 - **WHEN** a task de processamento executa
 - **THEN** o caso é processado normalmente com os campos de metadados vazios (sem erro)
+
+#### Scenario: Menção clínica de idade não vira metadado
+
+- **GIVEN** um relatório cujo texto clínico contém «…Idade: 79a.» SEM os marcadores de sexo e raça/cor na mesma linha
+- **WHEN** a extração de metadados executa
+- **THEN** nenhum campo de metadado é populado por essa menção (a âncora exige a linha de demografia completa)

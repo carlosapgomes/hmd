@@ -36,20 +36,26 @@ candidato PESSOA próprio; o linkage do caso popula.
 
 ### R1 — Âncora do cabeçalho padrão em `extract_patient_name`
 
-- Antes dos patterns vigentes (que permanecem para outros layouts): procurar
-  linha com `Idade:\s*(\d+)\s*a\.?` cuja linha SEGUINTE seja `Paciente:`
-  (sozinho, fold); nome = prefixo da linha até ` - Idade:` (strip);
-  validação ≥ 2 palavras com letras. Primeira válida vence.
+- Antes dos patterns vigentes (que permanecem para outros layouts):
+  importar do `apps/intake/pdf_utils.py` (fonte única, slice 001 R1) o
+  pattern da **linha de demografia canônica** (`Idade`+`Sexo`+`Raça/Cor`
+  NA MESMA LINHA, na ordem) e procurar linha que casa E cuja linha
+  SEGUINTE é `Paciente:` sozinho (fold, dois-pontos opcionais); nome =
+  prefixo da linha até ` - Idade:` (strip); validação ≥ 2 palavras com
+  letras. Primeira válida vence. Menção clínica órfã de idade SEM os três
+  marcadores nunca casa (âncora tripla).
 
-### R2 — Nome social como candidato PESSOA (sem linkage)
+### R2 — Nome social como candidato PESSOA (sem linkage, captura conservadora)
 
 - `DeterministicExtraction` ganha `social_name: str | None` (default
-  `None`). Captura: valor na mesma linha após `Nome Social:` quando o
-  rótulo não está sozinho; senão linha ANTERIOR ao rótulo sozinho
-  (simetria do desalinhamento), validada ≥ 1 palavra alfabética e ≠ nome
-  civil (fold). Ausente/vazio → `None`.
+  `None`). Captura APENAS o valor na MESMA linha após `Nome Social:`
+  (quando o rótulo tem valor à direita), validado: ≥ 1 palavra alfabética
+  (≥ 2 letras, sem dígitos/símbolos) e ≠ nome civil (fold). **SEM fallback
+  de linha anterior** (especulativo; rótulo sozinho/vazio → `None`).
 - `_deterministic_candidates`: `social_name` vira candidato PESSOA (todas
   as ocorrências folded) — token próprio distinto (valores distintos).
+- Limitação documentada: valor desalinhado (linha anterior/seguinte) fica
+  NÃO-capturado — aceite operacional com PDF real é o detector.
 
 ### R3 — Linkage e anonimização end-to-end (mecanismo existente)
 
@@ -66,13 +72,16 @@ candidato PESSOA próprio; o linkage do caso popula.
   repetidas), expected PESSOA 100%; entrada com nome social preenchido;
   entrada com nome social vazio.
 - Novos (RED): extração do layout real (uma e múltiplas páginas); nome
-  ausente → `None` (rótulos sozinhos não geram); nome social mesma
-  linha/linha anterior/vazio; tokenização de TODAS as ocorrências (3
-  páginas → mesmo `<PESSOA_1>`); nome social com token próprio; texto
-  anonimizado SEM o nome (varredura folded); linkage persistido
-  (`patient_name` no caso); nascimento não extraído do SESAB real
-  (`patient_birth_date` None) e pattern vigente intacto (regressão:
-  layout com `Nascimento:` persiste a data).
+  ausente → `None` (rótulos sozinhos não geram); **adversariais**:
+  «…Idade: 79a.» clínica órfã (sem Sexo+Raça/Cor na mesma linha, mesmo
+  seguida de «Paciente:») NÃO gera nome; nome social mesma-linha
+  preenchido/vazio-após-texto-clínico (rótulo sozinho não captura a linha
+  anterior); tokenização de TODAS as ocorrências (3 páginas → mesmo
+  `<PESSOA_1>`); nome social com token próprio; texto anonimizado SEM o
+  nome (varredura folded); linkage persistido (`patient_name` no caso);
+  nascimento não extraído do SESAB real (`patient_birth_date` None) e
+  pattern vigente intacto (regressão: layout com `Nascimento:` persiste a
+  data).
 - Aceite operacional (local, documentado no slice — NÃO no CI): corpus
   REAL do piloto (dev) → recall PESSOA 100%, `patient_name` do caso real
   populado, `anonymized_text` sem o nome.
@@ -81,14 +90,16 @@ candidato PESSOA próprio; o linkage do caso popula.
 
 ## Gates para o reviewer (2 linhas)
 
-1. `apps/anonymization/deterministic.py`: a âncora nova só produz nome com
-   as DUAS validações (linha seguinte = `Paciente:` sozinho E prefixo com
-   ≥ 2 palavras) — teste provando que linha de demografia ÓRFÃ (sem o
-   rótulo na linha seguinte, ex. menção de idade em texto clínico) NÃO
-   gera nome.
+1. `apps/anonymization/deterministic.py`: a âncora nova exige a linha de
+   demografia canônica COMPLETA (os três marcadores `Idade`+`Sexo`+
+   `Raça/Cor` na mesma linha, pattern importado de `pdf_utils`) E o rótulo
+   `Paciente:` sozinho na linha seguinte E prefixo com ≥ 2 palavras — teste
+   adversarial provando que «…Idade: 79a.» clínica órfã (sem Sexo/Raça na
+   mesma linha, mesmo seguida de «Paciente:») NÃO gera nome NEM metadados.
 2. `social_name` NÃO aparece em nenhum write de campo do `Case` (só
-   candidatos PESSOA no núcleo) — sweep de writers de `patient_name`
-   permanece `anonymize_case_text` (writer único).
+   candidatos PESSOA no núcleo, captura restrita à mesma linha do rótulo —
+   sem fallback) — sweep de writers de `patient_name` permanece
+   `anonymize_case_text` (writer único).
 
 ## Out of scope
 

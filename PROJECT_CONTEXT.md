@@ -92,3 +92,30 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run p
 ```
 
 Projeto de referência (padrões, somente-leitura): `/projects/dev/ats-web`.
+
+## Backlog pós-piloto (fase 2 — dono, 2026-09-15, E2E dev validado)
+
+Cada item abaixo é um change próprio (dono enumerou após validar o fluxo
+ponta a ponta em dev). Referência de padrão: `/projects/dev/ats-web`.
+
+1. **Cards das filas** (todas as filas): hoje mostram só o UID do caso.
+   Devem exibir nome do paciente, data de nascimento, idade e **tempo de
+   tela** (waiting time), ordenados pelo tempo de tela (mais tempo esperando
+   primeiro). Padrão: cards do ats-web em todas as filas.
+2. **Detalhe do caso (médico)**: identificação do paciente só mostra o UID.
+   Deve exibir nome, data de nascimento e demais detalhes do paciente
+   (re-identificação já existe no presenter — falta a UI).
+3. **Ordem dos cards no detalhe (médico)**: "Sumário clínico" e "Estrutura
+   extraída" devem vir ANTES do card "Alertas consultivos" e logo depois de
+   "Procedimentos declarados" (hoje as infos extraídas chegam depois dos
+   comentários da automação; o médico quer o quadro clínico primeiro, depois
+   o consultivo).
+4. **Trilha de eventos**: (a) NIR e médico NÃO veem a trilha — em erro,
+   basta badge/ícone de erro; (b) a trilha passa a viver nos detalhes da
+   listagem de cards do painel (dashboard, change `painel-lista-encerramento`
+   em andamento); (c) vocabulário da trilha simplificado para o supervisor
+   (jargão técnico → rótulos legíveis, SEM alterar nomenclaturas/estrutura
+   internas — padrão ats-web); (d) trilha em card collapsible (Bootstrap),
+   não expandida por padrão.
+5. Painel/dahsboard lista de casos + encerramento administrativo: change
+   `painel-lista-encerramento` (plano validado, aguardando revisão/execução).

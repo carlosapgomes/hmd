@@ -12,13 +12,13 @@
 
 ## 2. Slice 002 — Meus casos do NIR com identificação do paciente
 
-- [ ] 2.1 Items com `patient_name`/`patient_age`; card com nome (`—` quando
+- [x] 2.1 Items com `patient_name`/`patient_age`; card com nome (`—` quando
       ausente) + idade; ordenação histórica preservada
-- [ ] 2.2 Testes RED→GREEN (identificação, ausência, escopo por criador) +
+- [x] 2.2 Testes RED→GREEN (identificação, ausência, escopo por criador) +
       bateria completa
 
 ## 3. Encerramento
 
-- [ ] 3.1 E2E no dev: filas do caso real (nome/84 a/6 d em tela/sort) e
+- [x] 3.1 E2E no dev: filas do caso real (nome/84 a/6 d em tela/sort) e
       meus casos do NIR identificado
-- [ ] 3.2 Archive do change (sync specs main + Purposes)
+- [x] 3.2 Archive do change (sync specs main + Purposes)

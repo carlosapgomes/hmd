@@ -58,6 +58,10 @@
             {% endif %}
           {% endif %}
         </div>
+        <!-- Identificação do paciente (queue-cards-wait-time, R1/D3): o NIR é o
+             criador do caso e manuseia o relatório físico; nome/idade vêm do
+             cabeçalho SESAB (— / idade omitida quando ausentes; «0 a» exibe). -->
+        <div class="fw-semibold">{{ item.patient_name|default:"—" }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}</div>
         <div class="small text-muted">
           Nº de ocorrência: <strong>{{ item.agency_record_number }}</strong>
           <span class="mx-2">·</span>

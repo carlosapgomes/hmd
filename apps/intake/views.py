@@ -325,6 +325,8 @@ def my_cases(request: HttpRequest) -> HttpResponse:
             {
                 "case": case,
                 "status_label": case.get_status_display(),
+                "patient_name": case.patient_name,
+                "patient_age": case.patient_age,
                 "procedure_labels": _procedure_labels(_declared_types_from_rows(case)),
                 "agency_record_number": case.agency_record_number or "—",
                 "admin_closure_result": closure_result[0] if closure_result else "",

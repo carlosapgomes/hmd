@@ -16,12 +16,15 @@ vazamento.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator
+from datetime import timedelta
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS, administratively_close_case
@@ -397,3 +400,130 @@ def test_administrative_closure_result_is_scoped_to_creator(
 
     assert str(case.case_id) not in active_body
     assert ADMIN_CLOSURE_REASON_TEXT not in active_body
+
+
+# ── R1/R2: identificação do paciente nos cards (queue-cards-wait-time) ────
+
+AGE_SUFFIX_IN_CARD = re.compile(r"\d+ a</div>")
+
+
+def _card_slice(body: str, case_id: object) -> str:
+    """Fatia o HTML do card do caso (do href até o ``</a>`` que fecha o link).
+
+    O escopo por card evita asserts por contagem global (ex.: ``—`` de outros
+    cards ou do próprio «Nº de ocorrência: —»). O card é um único ``<a>`` sem
+    âncoras aninhadas, então o primeiro ``</a>`` após o ``case_id`` o fecha.
+    """
+    start = body.index(str(case_id))
+    end = body.index("</a>", start)
+    return body[start:end]
+
+
+def _identification_line(card: str) -> str:
+    """Conteúdo da linha ``fw-semibold`` do card (nome + idade)."""
+    match = re.search(r'<div class="fw-semibold">(.*?)</div>', card, re.S)
+    assert match is not None, "linha de identificação (fw-semibold) ausente no card"
+    return match.group(1).strip()
+
+
+@pytest.mark.django_db
+def test_card_shows_patient_name_and_age(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R1/R2: card identifica o paciente com nome e idade extraídos do cabeçalho."""
+    case = _create_case(nir_user, pdf_factory)
+    case.patient_name = "Paciente Identificado"
+    case.patient_age = 84
+    case.save(update_fields=["patient_name", "patient_age"])
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases")).content.decode()
+
+    card = _card_slice(body, case.case_id)
+    assert _identification_line(card) == "Paciente Identificado · 84 a"
+
+
+@pytest.mark.django_db
+def test_card_without_identification_shows_dash_and_omits_age(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R1/R2: caso sem identificação → ``—`` no nome e SEM sufixo de idade.
+
+    Asserts escopados ao card (não contagem global de ``—``, que existe no
+    «Nº de ocorrência: —» do próprio card).
+    """
+    case = _create_case(nir_user, pdf_factory)
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases")).content.decode()
+
+    card = _card_slice(body, case.case_id)
+    assert _identification_line(card) == "—"
+    assert AGE_SUFFIX_IN_CARD.search(card) is None
+
+
+@pytest.mark.django_db
+def test_card_shows_zero_age(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R2: idade ``0`` é válida e EXIBE ``0 a`` (``is not None``, não truthiness)."""
+    case = _create_case(nir_user, pdf_factory)
+    case.patient_name = "Paciente Zero"
+    case.patient_age = 0
+    case.save(update_fields=["patient_name", "patient_age"])
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases")).content.decode()
+
+    card = _card_slice(body, case.case_id)
+    assert _identification_line(card) == "Paciente Zero · 0 a"
+
+
+@pytest.mark.django_db
+def test_list_ordering_created_at_desc_preserved(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R2 (pin): a ordem histórica ``-created_at`` segue valendo (mais novo primeiro)."""
+    older = _create_case(nir_user, pdf_factory)
+    newer = _create_case(nir_user, pdf_factory)
+    now = timezone.now()
+    Case.objects.filter(pk=older.pk).update(created_at=now - timedelta(days=2))
+    Case.objects.filter(pk=newer.pk).update(created_at=now)
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases")).content.decode()
+
+    assert body.index(str(newer.case_id)) < body.index(str(older.case_id))
+
+
+@pytest.mark.django_db
+def test_foreign_case_identification_not_leaked(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R2 (pin reforçado): identificação de caso alheio não vaza na lista."""
+    own_case = _create_case(nir_user, pdf_factory)
+    own_case.patient_name = "Paciente Do Criador"
+    own_case.save(update_fields=["patient_name"])
+    other_nir = user_factory("nir-alheio-ident", NIR_ROLE)
+    foreign_case = _create_case(other_nir, pdf_factory)
+    foreign_case.patient_name = "Paciente Alheio"
+    foreign_case.save(update_fields=["patient_name"])
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases")).content.decode()
+
+    assert str(own_case.case_id) in body
+    assert "Paciente Do Criador" in body
+    assert str(foreign_case.case_id) not in body
+    assert "Paciente Alheio" not in body

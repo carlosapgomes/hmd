@@ -130,13 +130,17 @@ fundamento do cabeçalho (acima) já fornece nome/idade/sexo/raça/dias-em-tela
    quadro clínico (Procedimentos declarados → Sumário clínico → Estrutura
    extraída) antes de Alertas consultivos; Decisões registradas entre o
    quadro e o consultivo; ordem pinnada por índices no HTML.
-4. **Trilha de eventos**: (a) NIR e médico NÃO veem a trilha — em erro,
-   basta badge/ícone de erro; (b) a trilha passa a viver nos detalhes da
-   listagem de cards do painel (dashboard, change `painel-lista-encerramento`
-   em andamento); (c) vocabulário da trilha simplificado para o supervisor
-   (jargão técnico → rótulos legíveis, SEM alterar nomenclaturas/estrutura
-   internas — padrão ats-web); (d) trilha em card collapsible (Bootstrap),
-   não expandida por padrão.
+4. ~~Trilha de eventos~~ **CONCLUÍDO** (change `painel-ats-parity`,
+   2026-09-15): trilha com rótulos legíveis (EVENT_LABELS cobrindo 100% do
+   enum, anti-drift) em card collapsible fechado no DETALHE do caso no
+   painel; NIR/médico sem trilha (badge «Falha no processamento» em
+   FAILED; decision_event médico preservado).
+
+**BACKLOG PÓS-PILOTO CONCLUÍDO** (itens 1-4; 25º archive). Política de PHI
+corrigida pelo dono: **zero-PHI é exigência do perímetro EXTERNO (LLMs/
+serviços de terceiros — tokenização/guard)**; a UI interna (funcionários)
+mostra identificação completa (painel incluído; métricas seguem contagens
+por natureza). Release liberada para preparação (dono).
 5. ~~Painel lista de casos + encerramento administrativo~~ **CONCLUÍDO**
    (change `painel-lista-encerramento` arquivado 2026-09-14; 3 slices;
    lista zero-PHI por nº de ocorrência, encerramento admin com minimização

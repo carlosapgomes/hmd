@@ -30,7 +30,7 @@ O NIR (papel ativo `nir`) SHALL criar um caso enviando de 1 a N arquivos PDF que
 
 ### Requirement: Extração assíncrona no cluster pdf
 
-A criação SHALL enfileirar o processamento do caso no cluster `pdf` (django-q2); o processamento SHALL extrair o texto de cada documento com PyMuPDF na ordem declarada, concatenando em `Case.extracted_text` (fonte única de texto), remover a marca d'água característica e extrair o número de ocorrência para `agency_record_number` quando presente. O processamento SHALL ainda extrair os metadados do cabeçalho padrão SESAB (repetido por página) quando presentes — idade, sexo e raça/cor extraídos SOMENTE da linha de demografia canônica (os marcadores `Idade:`, `Sexo:` e `Raça/Cor:` juntos na mesma linha, na ordem; raça restrita à enumeração IBGE + «Não informado») e dias em tela (maior ocorrência do marcador `Dias em tela`, com o valor na mesma linha OU na linha imediatamente seguinte quando o rótulo está sozinho — layout real do cabeçalho) — persistindo-os nos campos do caso (`patient_age`/`patient_gender`/`patient_race`/`days_on_screen`), sem carregar esses valores em eventos. Campos ausentes do cabeçalho ficam vazios no caso; menções clínicas isoladas de idade/sexo NÃO são metadados. O ciclo SHALL percorrer `NEW → PDF_EXTRACTING → ANONYMIZING` com eventos de ator sistema, operando sob lock do caso (contexto de worker). Falha de extração (documento ilegível/corrompido) SHALL levar o caso a `FAILED` com motivo na trilha.
+A criação SHALL enfileirar o processamento do caso no cluster `pdf` (django-q2); o processamento SHALL extrair o texto de cada documento com PyMuPDF na ordem declarada, concatenando em `Case.extracted_text` (fonte única de texto), remover a marca d'água característica e extrair o número de ocorrência para `agency_record_number` quando presente. O processamento SHALL ainda extrair os metadados do cabeçalho padrão SESAB (repetido por página) quando presentes — idade (`Idade: N a.` na linha de demografia), sexo, raça/cor e dias em tela (maior ocorrência de `Dias em tela: N`, com o valor na mesma linha OU na linha imediatamente seguinte quando o rótulo está sozinho — layout real do cabeçalho) e a **unidade de origem** (`Unid. Origem:`, valor na mesma linha OU na linha imediatamente seguinte) — persistindo-os nos campos do caso (`patient_age`/`patient_gender`/`patient_race`/`days_on_screen`/`origin_unit`), sem carregar esses valores em eventos. Campos ausentes do cabeçalho ficam vazios no caso. O ciclo SHALL percorrer `NEW → PDF_EXTRACTING → ANONYMIZING` com eventos de ator sistema, operando sob lock do caso (contexto de worker). Falha de extração (documento ilegível/corrompido) SHALL levar o caso a `FAILED` com motivo na trilha.
 
 #### Scenario: Processamento feliz leva o caso a ANONYMIZING
 
@@ -56,17 +56,23 @@ A criação SHALL enfileirar o processamento do caso no cluster `pdf` (django-q2
 - **WHEN** a task de processamento executa
 - **THEN** o caso fica com `patient_age`=79, `patient_gender`, `patient_race` e `days_on_screen`=6 (maior ocorrência) populados, e nenhum evento carrega esses valores
 
-#### Scenario: Cabeçalho sem metadados deixa campos vazios
-
-- **GIVEN** um documento sem o cabeçalho padrão (texto legítimo, sem `Idade:`/`Dias em tela:`)
-- **WHEN** a task de processamento executa
-- **THEN** o caso é processado normalmente com os campos de metadados vazios (sem erro)
-
 #### Scenario: Menção clínica de idade não vira metadado
 
 - **GIVEN** um relatório cujo texto clínico contém «…Idade: 79a.» SEM os marcadores de sexo e raça/cor na mesma linha
 - **WHEN** a extração de metadados executa
 - **THEN** nenhum campo de metadado é populado por essa menção (a âncora exige a linha de demografia completa)
+
+#### Scenario: Unidade de origem do cabeçalho popula o caso
+
+- **GIVEN** um relatório com `Unid. Origem:` sozinho e o nome da unidade na linha imediatamente seguinte
+- **WHEN** a task de processamento executa
+- **THEN** o caso fica com `origin_unit` populado com o nome da unidade; rótulo sem valor deixa o campo vazio
+
+#### Scenario: Cabeçalho sem metadados deixa campos vazios
+
+- **GIVEN** um documento sem o cabeçalho padrão (texto legítimo, sem `Idade:`/`Dias em tela:`)
+- **WHEN** a task de processamento executa
+- **THEN** o caso é processado normalmente com os campos de metadados vazios (sem erro)
 
 ### Requirement: Gate de regulação retém documento fora do padrão
 
@@ -102,7 +108,7 @@ O NIR SHALL conseguir revisar casos retidos pelo gate na tela de detalhe, com du
 
 ### Requirement: Meus casos e detalhe do NIR
 
-O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com status, tipos declarados, indicador de retenção pelo gate e a identificação do paciente (nome e idade quando presentes — o NIR é o criador do caso); o detalhe de um caso SHALL exibir documentos (com visualização do PDF), trilha de eventos e comunicações. Acesso a caso criado por outro usuário SHALL ser negado.
+O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com status, tipos declarados, indicador de retenção pelo gate e a identificação do paciente (nome e idade quando presentes — o NIR é o criador do caso); o detalhe de um caso SHALL exibir documentos (com visualização do PDF) e comunicações — **sem a trilha de eventos** (a trilha vive no painel; caso `FAILED` exibe badge de erro «Falha no processamento»). Acesso a caso criado por outro usuário SHALL ser negado.
 
 #### Scenario: Lista mostra apenas casos do próprio NIR
 
@@ -120,10 +126,16 @@ O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com s
 
 - **GIVEN** um caso do próprio NIR em processamento
 - **WHEN** abre o detalhe
-- **THEN** vê os PDFs enviados (servidos de forma segura), a trilha de eventos e as comunicações do caso
+- **THEN** vê os PDFs enviados (servidos de forma segura) e as comunicações do caso, sem a trilha de eventos
 
 #### Scenario: Card de meus casos identifica o paciente
 
 - **GIVEN** um caso criado pelo NIR com nome e idade extraídos do cabeçalho
 - **WHEN** o NIR abre meus casos
 - **THEN** o card exibe o nome do paciente e a idade (`84 a`); caso sem identificação exibe `—` no lugar do nome e omite a idade
+
+#### Scenario: Caso FAILED exibe badge de erro no detalhe do NIR
+
+- **GIVEN** um caso do próprio NIR em `FAILED`
+- **WHEN** o NIR abre o detalhe
+- **THEN** um badge de erro «Falha no processamento» é exibido, sem a trilha de eventos nem o motivo técnico

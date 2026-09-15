@@ -127,6 +127,7 @@ Usuários provisionados com `ad_upn` (UPN completo `cpf@dominio`) SHALL autentic
 - **GIVEN** um usuário não-superusuário sem `ad_upn`, com senha local correta
 - **WHEN** submete login
 - **THEN** o login é negado com mensagem genérica
+
 ### Requirement: Registro de conselho profissional opcional e consistente
 
 O usuário pode registrar conselho profissional (`CRM` ou `COREN`) e número. Os dois campos SHALL ser preenchidos juntos ou deixados vazios juntos; combinação parcial é rejeitada na validação do modelo.
@@ -251,9 +252,10 @@ O formulário de seleção de papel SHALL submeter a chave crua (não o rótulo)
 Superfícies cobertas: badge de papel ativo (`base.html`), seleção de papel
 (`accounts/switch_role.html`), lista de papéis da home da conta
 (`accounts/home.html`) e do perfil (`accounts/profile.html`), e as menções a
-papel nas trilhas de eventos e comunicações dos detalhes de caso
-(`doctor/case_detail.html`, `intake/case_detail.html`,
-`scheduler/case_detail.html`).
+papel nas comunicações dos detalhes de caso (`intake/case_detail.html`,
+`scheduler/case_detail.html`) e na trilha de eventos do **detalhe do caso no
+painel** (`dashboard/case_detail.html`) — os detalhes de NIR e médico não
+exibem mais trilha (change `painel-ats-parity`; a trilha vive no painel).
 
 #### Scenario: Badge de papel ativo mostra o rótulo
 
@@ -285,20 +287,20 @@ papel nas trilhas de eventos e comunicações dos detalhes de caso
 #### Scenario: Papel desconhecido exibe a própria chave
 
 - **GIVEN** uma trilha de eventos cujo `actor_role` é `system`
-- **WHEN** o detalhe do caso é renderizado
+- **WHEN** o detalhe do caso é renderizado no painel
 - **THEN** o papel do evento exibe `system`, sem erro
 
 #### Scenario: Trilha e comunicações mostram o rótulo do papel
 
 - **GIVEN** um caso com evento decidido por `doctor` e comunicação postada por
   `manager`
-- **WHEN** o detalhe do caso é renderizado em qualquer visão
-- **THEN** a trilha exibe "papel médico" e a comunicação exibe o badge
-  "supervisor" (não as chaves)
+- **WHEN** o detalhe do caso é renderizado: trilha no painel, comunicações no NIR
+- **THEN** a trilha do painel exibe "papel médico" e a comunicação do NIR exibe
+  o badge "supervisor" (não as chaves)
 
 #### Scenario: Troca de papel continua funcionando por chave
 
-- **GIVEN** um usuário autenticado com papéis `doctor` e `manager` e papel
+- **GIVEN** um usuário autenticado com os papéis `doctor` e `manager` e papel
   ativo `doctor`
 - **WHEN** seleciona o botão rotulado "supervisor" na tela de seleção
 - **THEN** a sessão passa a indicar `manager` como papel ativo

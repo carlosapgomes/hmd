@@ -32,7 +32,7 @@
 
 ## 4. Encerramento
 
-- [ ] 4.1 E2E no dev: painel com cards completos, filtros (data/tipo/nome),
+- [x] 4.1 E2E no dev: painel com cards completos, filtros (data/tipo/nome),
       detail com trilha legível, NIR/médico sem trilha + badge de erro
-- [ ] 4.2 Archive do change (sync specs main + Purposes; PROJECT_CONTEXT:
+- [x] 4.2 Archive do change (sync specs main + Purposes; PROJECT_CONTEXT:
       política PHI UI interna vs perímetro externo; backlog concluído)

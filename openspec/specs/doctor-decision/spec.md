@@ -81,7 +81,7 @@ nunca apenas no template.
 
 ### Requirement: Presenter re-identificado sob papel autorizado
 
-O detalhe do caso SHALL apresentar, apenas para `doctor`/`admin`, os dados reais do paciente (identificação, número de ocorrência) e a demografia do caso — idade, sexo e raça/cor extraídas do cabeçalho padrão SESAB — e os artefatos do pipeline re-identificados: histórico e sumário, estrutura extraída, alertas da policy com a recomendação por procedimento e o resultado agregado, requisitos gerais acionáveis e o PDF original. A re-identificação SHALL ocorrer apenas na renderização para papel autorizado; nenhum artefato re-identificado é persistido nem enviado a qualquer LLM. A ordem dos cards SHALL seguir a leitura clínica: identificação, procedimentos declarados, sumário clínico e estrutura extraída (o quadro clínico) ANTES dos alertas consultivos e demais cards da automação.
+O detalhe do caso SHALL apresentar, apenas para `doctor`/`admin`, os dados reais do paciente (identificação, número de ocorrência) e a demografia do caso — idade, sexo e raça/cor extraídas do cabeçalho padrão SESAB — e os artefatos do pipeline re-identificados: histórico e sumário, estrutura extraída, alertas da policy com a recomendação por procedimento e o resultado agregado, requisitos gerais acionáveis e o PDF original. A re-identificação SHALL ocorrer apenas na renderização para papel autorizado; nenhum artefato re-identificado é persistido nem enviado a qualquer LLM. A ordem dos cards SHALL seguir a leitura clínica: identificação, procedimentos declarados, sumário clínico e estrutura extraída (o quadro clínico) ANTES dos alertas consultivos e demais cards da automação. O detalhe NÃO exibe a trilha de eventos (vive no painel).
 
 #### Scenario: Médico vê o sumário re-identificado
 
@@ -118,6 +118,12 @@ O detalhe do caso SHALL apresentar, apenas para `doctor`/`admin`, os dados reais
 - **GIVEN** um caso em `AWAITING_DOCTOR` com procedimentos declarados, sumário clínico, estrutura extraída e alertas consultivos
 - **WHEN** o médico abre o detalhe
 - **THEN** os títulos aparecem na ordem: Procedimentos declarados → Sumário clínico → Estrutura extraída → Alertas consultivos (o quadro clínico precede o consultivo da automação)
+
+#### Scenario: Detalhe em decisão sem trilha de eventos
+
+- **GIVEN** um caso em `AWAITING_DOCTOR` com trilha de eventos
+- **WHEN** o médico abre o detalhe
+- **THEN** nenhum bloco de trilha de eventos é renderizado
 
 ### Requirement: Card de prior-case com motivo real
 
@@ -175,13 +181,10 @@ com mensagem clara ao usuário.
 
 ### Requirement: Caso decidido consultável
 
-O sistema SHALL exibir, para `doctor`/`admin` com acesso ao caso (regra de
-subtipo), o detalhe read-only de casos decididos com as decisões por
-procedimento, motivos, ator e data, além da trilha de eventos — sem permitir
-nova decisão fora de `AWAITING_DOCTOR`.
+O sistema SHALL exibir, para `doctor`/`admin` com acesso ao caso (regra de subtipo), o detalhe read-only de casos decididos com as decisões por procedimento, motivos, ator e data — **sem a trilha de eventos** (vive no painel) — e sem permitir nova decisão fora de `AWAITING_DOCTOR`.
 
 #### Scenario: Detalhe decidido read-only
 
 - **GIVEN** um caso em `DOCTOR_DENIED`
 - **WHEN** o médico autorizado abre o detalhe
-- **THEN** as decisões, motivos e a trilha são exibidos e nenhum formulário de decisão é renderizado
+- **THEN** as decisões e motivos são exibidos, nenhum formulário de decisão é renderizado e nenhum bloco de trilha de eventos aparece

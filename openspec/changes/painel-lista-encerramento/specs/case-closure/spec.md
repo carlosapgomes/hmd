@@ -65,14 +65,23 @@ Casos já em `CLEANED` SHALL ser rejeitados.
 
 - **GIVEN** um caso com documentos, anexos e campos clínicos preenchidos
 - **WHEN** é encerrado administrativamente
-- **THEN** documentos e anexos são removidos, os campos clínicos ficam
-  zerados e o download de documento do caso não é mais possível
+- **THEN** documentos e anexos são removidos (rows e arquivos físicos do
+  storage), os campos clínicos ficam zerados e o download de documento do
+  caso não é mais possível
 
 #### Scenario: Encerramento recusado durante processamento ativo
 
 - **GIVEN** um caso com lock de worker e lease ainda válida
 - **WHEN** tenta-se o encerramento administrativo
 - **THEN** a operação é recusada com erro e o caso permanece inalterado
+
+#### Scenario: Worker retornado após encerramento não repopula dados
+
+- **GIVEN** um caso com lease de worker EXPIRADA, encerrado
+  administrativamente
+- **WHEN** um passo do pipeline em voo tenta persistir resultados clínicos
+- **THEN** a escrita é abortada pelo status `CLEANED` e os campos clínicos
+  seguem zerados
 
 #### Scenario: Encerramento exige texto do motivo
 

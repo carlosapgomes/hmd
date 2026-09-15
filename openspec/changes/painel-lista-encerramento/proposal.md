@@ -27,13 +27,17 @@ fluxo de trabalho do supervisor.
   `reason_code` do catálogo fixo (`processing_error`, `llm_failure`,
   `system_bug`, `stuck_lock`, `duplicate_reprocess`, `other`) +
   `reason_text` obrigatório. No mesmo atomic: snapshot + força-release do
-  lock operacional (com evento de release), **minimização de dados clínicos**
-  (mesma limpeza do CLEANED por ciência: documentos/anexos deletados,
-  campos clínicos zerados) e eventos `CASE_STATUS_CLEANED` +
+  lock operacional (com evento de release), **minimização completa de dados
+  clínicos** (mesma limpeza do CLEANED por ciência: rows de documentos/
+  anexos deletadas E arquivos físicos removidos do storage, campos clínicos
+  zerados) e eventos `CASE_STATUS_CLEANED` +
   `CASE_ADMINISTRATIVELY_CLOSED` (payload: código, texto, autor, papel,
   estado do lock). Recusa fail-closed quando há lease de worker viva;
-  handlers de erro das tasks toleram caso CLEANED em voo. Notificação ao
-  criador com **novo tipo de notificação** (migration de choices);
+  abort de escrita em status CLEANED nos workers (tasks + atomics do
+  pipeline) para o worker-zumbi com lease expirada não repovoar dados.
+  Notificação ao criador com **novo tipo de notificação** (texto 100%
+  fixo, sem motivo; migration de choices; delta da spec notifications e
+  manual do usuário);
   contagem `administratively_closed` nas métricas do período (por timestamp
   do evento; sai de "em andamento"); "Meus casos" (NIR) exibe o
   encerramento administrativo como resultado.
@@ -49,21 +53,31 @@ fluxo de trabalho do supervisor.
 
 ### Modified: `case-closure`
 
-- ADDED "Encerramento administrativo do caso" (inclui minimização de dados
-  clínicos e recusa durante processamento ativo) + MODIFIED "Resultado e
-  casos encerrados visíveis ao criador" (cenários preservados; inclui o
-  encerramento administrativo como resultado visível).
+- ADDED "Encerramento administrativo do caso" (inclui minimização completa
+  — rows e arquivos — recusa durante processamento ativo e abort de
+  worker-zumbi) + MODIFIED "Resultado e casos encerrados visíveis ao
+  criador" (cenários preservados; inclui o encerramento administrativo
+  como resultado visível).
+
+### Modified: `notifications`
+
+- MODIFIED "Notificações por marcos do caso" (4º marco: encerramento
+  administrativo notifica o criador com texto fixo; cenários preservados
+  + cenário novo).
 
 ## Impact
 
 - **1 migration** (`apps/accounts/migrations/0005_*.py`, AlterField das
   choices de `NotificationType` — sem SQL no Postgres; mantém
   `makemigrations --check` limpo). Nenhuma migration de schema/índice.
-- Código: `apps/cases` (models/locks/services/events), `apps/accounts`
-  (models/notifications/migration), guards nas 3 tasks
-  (`apps/intake/tasks.py`, `apps/anonymization/tasks.py`,
-  `apps/pipeline/orchestrator.py`), `apps/dashboard` (views/urls/métricas/
-  templates), `apps/intake` (Meus casos).
+- Código: `apps/cases` (models/locks/events/closure — o service vive em
+  `closure.py`, módulo dono dos fechamentos), `apps/accounts`
+  (models/notifications/migration) + `templates/accounts/manual.html`,
+  aborts nas 3 tasks (`apps/intake/tasks.py`, `apps/anonymization/tasks.py`,
+  `apps/pipeline/orchestrator.py`) e gates nos atomics do pipeline
+  (`apps/pipeline/policy.py`, `llm2_service.py`, `prior_case.py`),
+  `apps/dashboard` (views/urls/métricas/templates), `apps/intake` (Meus
+  casos).
 - Amends declarados de testes existentes: "Página sem dados de paciente"
   (`test_views.py`) passa a pinnar nome do paciente (nº de ocorrência é
   dado do caso e aparece na lista); `test_metrics.py` ganha a chave nova.

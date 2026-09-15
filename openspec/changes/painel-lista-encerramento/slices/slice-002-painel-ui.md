@@ -34,9 +34,9 @@ confirmação; NIR vê o resultado; métrica nova coerente no painel.
   `scope`/`status`/`q` (≥3 chars; `icontains` no nº de ocorrência OU
   `istartswith` no uid — Postgres emite `::text` sozinho) + paginação 25/pág
   + `period` reusado.
-- Sem nome/nascimento do paciente em qualquer campo do card (teste pinnado:
-  fixture com paciente conhecido, nome ausente do HTML; nº de ocorrência
-  PRESENTE — não-vacuidade do card).
+- Sem nome E SEM data de nascimento do paciente em qualquer campo do card
+  (teste pinnado: fixture com paciente conhecido, nome e `patient_birth_date`
+  ausentes do HTML; nº de ocorrência PRESENTE — não-vacuidade do card).
 - Ação "Encerrar administrativamente" só em casos não-CLEANED (link →
   confirmação).
 
@@ -50,10 +50,16 @@ confirmação; NIR vê o resultado; métrica nova coerente no painel.
 
 ### R3 — Métrica + Meus casos
 
-- `compute_summary`: chave `administratively_closed` (eventos
-  `CASE_ADMINISTRATIVELY_CLOSED` por timestamp na janela) e
-  `em_andamento = total − agendados − negados − administratively_closed`.
-- "Meus casos": CLEANED + evento administrativo → resultado "Encerrado
+- `compute_summary`: chave `administratively_closed` = contagem de eventos
+  `CASE_ADMINISTRATIVELY_CLOSED` com `timestamp` na janela (card do painel —
+  `templates/dashboard/home.html` ganha o card); **`em_andamento` continua
+  derivado da população** (`created_at` na janela):
+  `em_andamento = |population − agendados − negados − (admin_fechados ∩
+  population sem desfecho)|` — admin-fechado FORA da janela não subtrai
+  (total=0, card=1, em_andamento=0); admin-fechado com desfecho conta só
+  no desfecho (sem dupla subtração). Implementar com conjuntos de ids.
+- "Meus casos": queryset com `prefetch_related("events")` (hoje só
+  `procedures`); CLEANED + evento administrativo → resultado "Encerrado
   administrativamente — {label do motivo}" na aba de encerrados (código +
   texto), só para o criador.
 
@@ -61,15 +67,19 @@ confirmação; NIR vê o resultado; métrica nova coerente no painel.
 
 - Lista: default ativos; `scope=todos`; `status`; busca por ocorrência e
   prefixo de uid (≥3 chars; <3 ignora); paginação preserva filtros; SEM
-  nome do paciente no HTML; nº de ocorrência presente; ação só em
-  não-CLEANED.
+  nome e SEM data de nascimento do paciente no HTML; nº de ocorrência
+  presente; ação só em não-CLEANED.
+- Métrica: card conta eventos na janela; os DOIS casos limítrofes pinnados
+  (caso criado fora da janela e encerrado dentro → total 0, card 1,
+  em_andamento 0; caso agendado E encerrado administrativamente na janela
+  → conta em agendados, em_andamento não-negativo).
 - Rota: encerra e volta com filtros; 403 paramétrico; 404; texto vazio →
   erro e caso intacto; código inválido → erro; lease viva → mensagem e caso
   intacto.
 - Métrica no período (e sai de em_andamento); Meus casos mostra o resultado
   ao criador (e NÃO ao outro NIR).
-- Amends: `test_views.py` (página sem nome do paciente) e `test_metrics.py`
-  (chave nova) atualizados e verdes.
+- Amends: `test_views.py` (página sem nome E sem data de nascimento;
+  docstring atualizado) e `test_metrics.py` (chave nova) verdes.
 
 ## Out of Scope
 

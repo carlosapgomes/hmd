@@ -31,7 +31,9 @@ painel"). Casos encerrados administrativamente SHALL sair da contagem de
 
 - **GIVEN** casos com nomes e números de registro
 - **WHEN** o painel é renderizado
-- **THEN** nenhum nome ou número de registro de paciente aparece na página
+- **THEN** na seção de métricas, nenhum nome ou número de registro de
+  paciente aparece (a lista de casos identifica por nº de ocorrência do
+  caso e não exibe nome nem data de nascimento do paciente)
 
 #### Scenario: Período selecionável
 

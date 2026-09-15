@@ -27,6 +27,6 @@
 
 ## 3. Encerramento
 
-- [ ] 3.1 E2E no dev: reenvio do PDF real → caso com metadados + linkage +
+- [x] 3.1 E2E no dev: reenvio do PDF real → caso com metadados + linkage +
       `<PESSOA_1>` no mapa + card de identificação do médico populado
-- [ ] 3.2 Archive do change (sync specs main + Purposes)
+- [x] 3.2 Archive do change (sync specs main + Purposes)

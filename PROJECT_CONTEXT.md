@@ -93,18 +93,40 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run p
 
 Projeto de referência (padrões, somente-leitura): `/projects/dev/ats-web`.
 
+## Fundamento do cabeçalho SESAB — CONCLUÍDO (change 22 `sesab-header-extraction`, 2026-09-15)
+
+Descoberta do dono + verificação no corpus real: o cabeçalho padrão SESAB
+(repetido por página) traz Código, Abertura, Dias em tela, Data Adm. Unid.,
+Dias Unid., **Paciente (nome)**, Idade, Sexo, Raça/Cor, Nome Social (pode
+estar em branco — NÃO é campo de captura do nome) e CNS (pode estar em
+branco); **não há data de nascimento**. O valor de `Paciente:` desalinha na
+extração linear (fica na linha de demografia antes do rótulo) — o nome ia
+ao LLM em claro. Change arquivado: âncora da linha de demografia canônica
+(Idade+Sexo+Raça/Cor juntos, enum IBGE fechado) + `Paciente:` sozinho na
+linha seguinte; metadados `patient_age`/`patient_gender`/`patient_race`/
+`days_on_screen` (migration 0010; worker pdf; zerados no reenvio;
+preservados no CLEANED); `social_name` como candidato PESSOA próprio (sem
+linkage, captura mesma-linha); tokenização de todas as ocorrências
+(`<PESSOA_1>`; vazamento real fechado — E2E no PDF do dono: 84/F/PARDA/6
+dias, 0 ocorrências restantes). Suíte 1330; benchmark NER on 63/63.
+
 ## Backlog pós-piloto (fase 2 — dono, 2026-09-15, E2E dev validado)
 
 Cada item abaixo é um change próprio (dono enumerou após validar o fluxo
-ponta a ponta em dev). Referência de padrão: `/projects/dev/ats-web`.
+ponta a ponta em dev). Referência de padrão: `/projects/dev/ats-web`. O
+fundamento do cabeçalho (acima) já fornece nome/idade/sexo/raça/dias-em-tela
+— os changes abaixo agora têm dados para consumir.
 
 1. **Cards das filas** (todas as filas): hoje mostram só o UID do caso.
-   Devem exibir nome do paciente, data de nascimento, idade e **tempo de
-   tela** (waiting time), ordenados pelo tempo de tela (mais tempo esperando
-   primeiro). Padrão: cards do ats-web em todas as filas.
-2. **Detalhe do caso (médico)**: identificação do paciente só mostra o UID.
-   Deve exibir nome, data de nascimento e demais detalhes do paciente
-   (re-identificação já existe no presenter — falta a UI).
+   Devem exibir nome do paciente, idade e **tempo de tela**
+   (days_on_screen do cabeçalho — tempo oficial do regulador; fallback
+   waiting-time), ordenados pelo tempo de tela (mais tempo esperando
+   primeiro). Padrão: cards do ats-web em todas as filas. (Data de
+   nascimento não existe no relatório — fora de escopo.)
+2. **Detalhe do caso (médico)**: o card de identificação já renderiza
+   `patient_name`/nº de ocorrência — com o cabeçalho SESAB extraído, o nome
+   agora popula; falta UI para idade/sexo/raça (demografia do caso) no
+   card.
 3. **Ordem dos cards no detalhe (médico)**: "Sumário clínico" e "Estrutura
    extraída" devem vir ANTES do card "Alertas consultivos" e logo depois de
    "Procedimentos declarados" (hoje as infos extraídas chegam depois dos

@@ -38,7 +38,8 @@ nome, default hoje/todos os estados; métricas e encerramento intactos.
 
 ### R1 — Filtros e default (views)
 
-- `date_from`/`date_to` (ISO; `created_at__date__gte/lte`), compondo por
+- `date_from`/`date_to` (ISO; `created_at__date__gte/lte`; **inválido =
+  ausente; from > to normaliza por swap**), compondo por
   AND com scope/status/q/procedure_type.
 - `procedure_type` (dropdown 13 tipos; `declared/all` default; filtro
   `procedures__declared_by_nir=True, procedures__procedure_type=X` +
@@ -72,6 +73,9 @@ nome, default hoje/todos os estados; métricas e encerramento intactos.
   estados (incl. CLEANED); `date_from`/`date_to` filtram e compõem por
   AND; `procedure_type` filtra por tipo declarado (dropdown presente com
   os 13); `q` por nome do paciente (encontra; <3 chars ignora);
+  datas ISO inválidas ignoradas (ausentes) e `from > to` swap normalizado;
+  **links de `period` preservam os filtros da lista** (query string
+  estendida) e a paginação preserva os filtros NOVOS;
   card com nome+idade+unidade+exames+fase+data/hora+[Detalhes] (href
   pinnado); `0 a` exibe; ausentes `—`/omitidos; encerramento FORA do card;
   **detail novo**: manager/admin vê identificação completa + procedimentos

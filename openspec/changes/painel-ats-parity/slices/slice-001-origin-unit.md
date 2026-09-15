@@ -7,6 +7,7 @@ expected_files:
   - apps/intake/services.py
   - apps/cases/models.py
   - apps/cases/migrations/
+  - apps/anonymization/deterministic.py
   - apps/intake/tests/test_header_metadata.py
   - apps/intake/tests/test_header_persistence.py
 ```
@@ -31,14 +32,19 @@ zerado no reenvio; preservado no CLEANED.
 
 ## Deliverables
 
-### R1 — Extração pura
+### R1 — Extração pura + fonte canônica de rótulos
 
 - `HeaderMetadata` ganha `origin_unit: str | None`; parser linha a linha
-  de `Unid. Origem:`/`Unidade de Origem:` — valor na MESMA linha OU, rótulo
-  sozinho, na linha imediatamente seguinte quando ela é um valor plausível
-  (não-vazia; NÃO começa com rótulo de cabeçalho SESAB conhecido — reutilize
-  a lista de rótulos do módulo). Primeira ocorrência; strip; truncada a
-  128. Ausente → `None`.
+  de `Unid. Origem:` — valor na MESMA linha OU, rótulo sozinho, na linha
+  imediatamente seguinte quando ela é um valor plausível (não-vazia E não
+  inicia um rótulo de campo SESAB — consulta à lista canônica
+  `SESAB_FIELD_LABELS`, criada AQUI em `pdf_utils.py` como a atual
+  `_FIELD_BREAK_LABELS` de `apps/anonymization/deterministic.py` mudando
+  de casa: `deterministic.py` passa a importar de `pdf_utils` — a
+  dependência vigente deterministic→pdf_utils continua, **sem ciclo**;
+  comportamento do `_FIELD_BREAK_PATTERN` inalterado, testes existentes do
+  deterministic devem continuar verdes). Primeira ocorrência; strip;
+  truncada a 128. Ausente → `None`.
 
 ### R2 — Campo + persistência
 
@@ -49,15 +55,21 @@ zerado no reenvio; preservado no CLEANED.
 ### R3 — Testes (RED→GREEN)
 
 - Novos (RED): extração multilinha (rótulo sozinho + valor na seguinte) e
-  mesma-linha; rótulo sozinho SEM valor plausível (próxima linha é outro
-  rótulo) → `None`; worker persiste; reenvio zera (incluindo PDF
-  corrompido); CLEANED preserva (paridade); eventos sem o valor;
+  mesma-linha; **adversariais com rótulos demográficos/institucionais na
+  linha seguinte** (`Sexo:`, `Idade:`, `Dias Unid.:`, `Abertura:`,
+  `Código:`) → `None`; rótulo sozinho seguido de linha vazia → `None`;
+  worker persiste; reenvio zera (incluindo PDF corrompido); CLEANED
+  preserva (paridade); eventos sem o valor; regressão do deterministic com
+  `SESAB_FIELD_LABELS` importada (suíte anonymization verde);
   `ruff/format/mypy/makemigrations --check` + suíte.
 
 ## Gates para o reviewer (2 linhas)
 
 1. Parser só captura valor plausível (linha seguinte não-vazia que não é
-   rótulo de cabeçalho) — teste adversarial com rótulo seguido de rótulo.
+   rótulo de cabeçalho) — testes adversariais com rótulos DEMOGRÁFICOS e
+   institucionais na linha seguinte; `SESAB_FIELD_LABELS` vive em
+   `pdf_utils` e o `deterministic.py` a IMPORTA (sem ciclo; comportamento
+   do _FIELD_BREAK_PATTERN inalterado).
 2. `_CLEANED_EMPTY_VALUES` IDÊNTICO; `_RESUBMIT_CLEARED_FIELDS` contém
    `origin_unit` com `""`.
 

@@ -13,6 +13,7 @@ expected_files:
   - apps/dashboard/tests/test_views.py
   - apps/intake/tests/test_detail.py
   - apps/doctor/tests/test_detail.py
+  - apps/doctor/tests/test_decision.py
 ```
 
 ## Contexto necessário
@@ -61,7 +62,12 @@ NIR e médico sem trilha; caso FAILED com badge de erro.
 
 - `templates/intake/case_detail.html` e `templates/doctor/case_detail.html`:
   bloco da trilha REMOVIDO; views/presenter deixam de montar `events`
-  para esses templates.
+  para esses templates. **`decision_event` do presenter médico
+  PRESERVADO** via consulta dedicada (evento
+  `CASE_DOCTOR_DECISIONS_RECORDED` mais recente, query direta) — o card
+  «Decisões registradas» (ator/data) continua renderizando; atualizar
+  `apps/doctor/tests/test_decision.py` (testa `context["events"]`/trilha
+  hoje).
 - Badge de erro: `status == FAILED` → badge `danger` «Falha no
   processamento» no detalhe NIR (e no médico quando o caso falho for
   acessível). Sem motivo técnico (vive na trilha do painel).

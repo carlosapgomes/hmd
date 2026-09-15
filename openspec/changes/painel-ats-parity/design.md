@@ -17,9 +17,15 @@
 
 - `extract_header_metadata` ganha `origin_unit: str | None`: parser
   linha a linha de `Unid. Origem:` — valor na MESMA linha OU, rótulo
-  sozinho, na linha imediatamente seguinte (não-vazia, sem ser rótulo
-  SESAB conhecido do `_FIELD_BREAK`/outro rótulo de cabeçalho — layout
-  real: rótulo L31, valor L32 de ~7 palavras institucionais). Primeira
+  sozinho, na linha imediatamente seguinte quando ela é um valor plausível:
+  não-vazia E **não inicia um rótulo de campo do cabeçalho SESAB**. A lista
+  canônica (a atual `_FIELD_BREAK_LABELS` do `deterministic.py`, que cobre
+  Sexo/Idade/Raça-Cor/Dias Unid./Abertura/etc.) **muda de casa**: vira
+  `SESAB_FIELD_LABELS` exportada de `apps/intake/pdf_utils.py` e
+  `deterministic.py` passa a importá-la de lá (a dependência vigente já é
+  deterministic→pdf_utils — **sem ciclo**; fonte única). Adversariais:
+  rótulo demográfico/institucional na linha seguinte (`Sexo:`, `Idade:`,
+  `Dias Unid.:`, `Abertura:`, …) NÃO é capturado como unidade. Primeira
   ocorrência vence; strip; truncada a 128 chars (defesa).
 - `Case.origin_unit` (CharField(128), blank/default ""). Persistido pelo
   worker pdf junto dos metadados; zerado no reenvio
@@ -39,7 +45,9 @@
   de encerramento administrativo MIGRA para o detail (link no card sai;
   o fluxo/validação do encerramento permanece intacto).
 - **Filtros (compoem por AND, molde ats-web `_dashboard_case_list_context`)**:
-  - `date_from`/`date_to` (`created_at__date` gte/lte, formato ISO);
+  - `date_from`/`date_to` (`created_at__date` gte/lte, formato ISO;
+    **ISO inválido é tratado como ausente**; `from > to` **normaliza por
+    swap** — sem erro de banco nem intervalo vazio);
   - `status` (vigente);
   - `procedure_type` (dropdown «Tipo de exame»: `declared/all` default;
     filtro `procedures__declared_by_nir=True,
@@ -48,7 +56,11 @@
   - `q` (busca ≥3 chars: `patient_name__icontains` OU nº de ocorrência
     OU prefixo do uid — a busca por NOME entra agora; volume baixo, sem
     índice trigram);
-  - `scope` (ativos/todos) permanece — **default muda para `todos`**.
+  - `scope` (ativos/todos) permanece — **default muda para `todos`**;
+  - **Preservação cruzada**: os links de seleção de `period` (métricas)
+    passam a carregar os filtros da lista na query string (e a paginação
+    estende a preservação aos filtros novos); trocar `period` não descarta
+    data/tipo/status/q.
 - **Default (molde ats-web `_resolve_list_defaults`)**: sem NENHUM filtro
   explícito (`scope`, `status`, `procedure_type`, `q`, `date_from`,
   `date_to`) → `date_from=date_to=hoje`, `scope=todos` (recebidos hoje,
@@ -82,6 +94,11 @@
 - `templates/intake/case_detail.html` e `templates/doctor/case_detail.html`:
   bloco «Trilha de eventos» REMOVIDO (as views deixam de montar `events`
   para esses templates).
+- **`decision_event` do presenter médico é PRESERVADO**: hoje derivado da
+  lista `events` (ator/data da decisão no card «Decisões registradas»,
+  `templates/doctor/case_detail.html` ~126-139) — passa a **consulta
+  dedicada** (evento `CASE_DOCTOR_DECISIONS_RECORDED` mais recente, query
+  direta), sem a lista de trilha no contexto.
 - Badge de erro: quando `status == FAILED`, o detalhe NIR exibe badge
   `danger` «Falha no processamento» (o motivo técnico permanece acessível
   pela trilha do painel); idem no detalhe médico quando aplicável.

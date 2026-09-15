@@ -16,6 +16,7 @@ limpo; o nº vai para ``Case.agency_record_number``.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 
@@ -121,6 +122,96 @@ def extract_agency_record_number(text: str) -> str | None:
     return None
 
 
+# ── Catálogo canônico de rótulos de campo do cabeçalho SESAB ─────────────────
+# Fonte ÚNICA (change painel-ats-parity, slice 001, R1/D1): a lista legada do
+# ``apps/anonymization/deterministic.py`` muda de casa e nasce EXPANDIDA com os
+# rótulos do cabeçalho que faltavam (``sexo``/``idade``/``raca/cor``/
+# ``dias unid.``/``nome social``). Forma canônica: minúsculo, sem acento,
+# espaços colapsados (a comparação é sobre linhas passadas por ``_fold_line``);
+# o casamento é por PREFIXO da linha seguido de ``:`` ou fim de linha. O
+# ``deterministic.py`` importa esta lista para compilar a quebra de campo dos
+# valores (mesma direção do reuso de ``extract_agency_record_number`` —
+# dependência deterministic→pdf_utils, sem ciclo).
+SESAB_FIELD_LABELS: tuple[str, ...] = (
+    # Identificação do paciente (rótulos de nome e nascimento — R3/R4).
+    "nome do paciente",
+    "paciente",
+    "nome",
+    "nome social",
+    "data de nascimento",
+    "nascimento",
+    "cpf",
+    "cns",
+    # Linha de demografia e campos administrativos do cabeçalho.
+    "sexo",
+    "idade",
+    "raca/cor",
+    "dias unid.",
+    # Cabeçalho e sinais institucionais do relatório.
+    "relatorio de ocorrencias",
+    "central estadual de regulacao",
+    "secretaria da saude do estado",
+    "governo do estado da bahia",
+    # Seções operacionais reconhecidas pelo gate (apps/intake/regulation_gate.py).
+    "codigo",
+    "abertura",
+    "unid. origem",
+    "unidade de origem",
+    "motivo da solicitacao",
+    "complemento da solicitacao",
+    "resumo clinico",
+    "dias em tela",
+    "data adm. unid.",
+)
+
+
+def _fold_line(text: str) -> str:
+    """Normaliza uma linha do relatório para casamento de rótulo.
+
+    Espelho exato do ``_fold`` do ``anonymization.deterministic``: sem
+    acentos, minúsculo, espaços colapsados.
+    """
+    text = text.strip()
+    text = re.sub(r"\s+", " ", text)
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
+    return text.lower()
+
+
+def _starts_sesab_field(line: str) -> bool:
+    """A linha inicia um rótulo de campo do catálogo SESAB (fold).
+
+    Mesma semântica do padrão de quebra do ``deterministic``: rótulo como
+    prefixo da linha seguido de ``:`` ou do fim da linha.
+    """
+    folded = _fold_line(line)
+    for label in SESAB_FIELD_LABELS:
+        if not folded.startswith(label):
+            continue
+        rest = folded[len(label) :].lstrip()
+        if rest == "" or rest.startswith(":"):
+            return True
+    return False
+
+
+# ── Unidade de origem do cabeçalho (change painel-ats-parity, slice 001,
+# R1/D1) ──────────────────────────────────────────────────────────────────────
+# Layout real do corpus: ``Unid. Origem:`` SOZINHO numa linha e o nome da
+# unidade (~7 palavras institucionais, sigla + hífen) na linha SEGUINTE — mesma
+# forma multilinha de ``Dias em tela``; a variante ``Unidade de Origem:`` é
+# aceita (rótulo canônico do gate). A linha seguinte só vira valor quando é
+# plausível: não-vazia E não inicia outro rótulo de campo do catálogo SESAB.
+_ORIGIN_UNIT_WITH_VALUE_PATTERN = re.compile(
+    r"^\s*(?:Unid\.?\s*Origem|Unidade\s+de\s+Origem)\s*:\s*(?P<value>.*)$",
+    flags=re.IGNORECASE,
+)
+_ORIGIN_UNIT_ALONE_PATTERN = re.compile(
+    r"^\s*(?:Unid\.?\s*Origem|Unidade\s+de\s+Origem)\s*:?\s*$",
+    flags=re.IGNORECASE,
+)
+# Defesa de tamanho do campo (``Case.origin_unit`` é CharField(128)).
+_ORIGIN_UNIT_MAX_LENGTH = 128
+
 # ── Cabeçalho padrão SESAB: metadados do caso (change sesab-header-extraction,
 # slice 001, R1/D3) ───────────────────────────────────────────────────────────
 # O cabeçalho repete-se por página e, na extração linear do PyMuPDF, rótulos e
@@ -166,6 +257,7 @@ class HeaderMetadata:
     gender: str | None = None
     race: str | None = None
     days_on_screen: int | None = None
+    origin_unit: str | None = None
 
 
 def extract_header_metadata(text: str) -> HeaderMetadata:
@@ -176,7 +268,9 @@ def extract_header_metadata(text: str) -> HeaderMetadata:
     ordem) — menção clínica isolada de idade não gera metadado.
     ``days_on_screen`` é o MAIOR valor de ``Dias em tela`` entre as
     ocorrências do texto (molde ats-web), aceitando a forma mesma-linha e a
-    forma multilinha do layout real. Gênero normalizado para a letra (F/M): o
+    forma multilinha do layout real. ``origin_unit`` vem do rótulo
+    ``Unid. Origem:`` (mesma-linha ou rótulo sozinho + valor plausível na
+    linha seguinte). Gênero normalizado para a letra (F/M): o
     layout real traz a palavra completa (``Sexo Feminino``) e outros trazem a
     letra (``Sexo: F``). Função pura, zero I/O.
     """
@@ -197,7 +291,39 @@ def extract_header_metadata(text: str) -> HeaderMetadata:
         gender=gender,
         race=race,
         days_on_screen=_extract_days_on_screen(text),
+        origin_unit=_extract_origin_unit(text),
     )
+
+
+def _extract_origin_unit(text: str) -> str | None:
+    """Unidade de origem do cabeçalho padrão SESAB (R1/D1).
+
+    Duas formas do layout real: valor na MESMA linha do rótulo
+    (``Unid. Origem: <unidade>``) ou rótulo sozinho com o valor na linha
+    imediatamente seguinte. A linha seguinte só é aceita quando é plausível —
+    não-vazia E não inicia outro rótulo de campo do catálogo canônico
+    (``_starts_sesab_field``); rótulo sozinho no fim do texto ou seguido de
+    linha vazia/de rótulo → sem valor (nada inventado). Primeira ocorrência
+    vence; o valor é truncado em ``_ORIGIN_UNIT_MAX_LENGTH`` (defesa do
+    campo).
+    """
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        with_value = _ORIGIN_UNIT_WITH_VALUE_PATTERN.match(line)
+        if with_value is not None:
+            value = with_value.group("value").strip()
+            if value:
+                return value[:_ORIGIN_UNIT_MAX_LENGTH]
+            # Rótulo com dois-pontos e sem valor: mesma semântica do rótulo
+            # sozinho — o valor pode estar na linha imediatamente seguinte.
+        elif _ORIGIN_UNIT_ALONE_PATTERN.match(line) is None:
+            continue
+        if index + 1 >= len(lines):
+            continue
+        candidate = lines[index + 1].strip()
+        if candidate and not _starts_sesab_field(candidate):
+            return candidate[:_ORIGIN_UNIT_MAX_LENGTH]
+    return None
 
 
 def _extract_days_on_screen(text: str) -> int | None:

@@ -16,7 +16,7 @@ import dataclasses
 
 import pytest
 
-from apps.intake.pdf_utils import HeaderMetadata, extract_header_metadata
+from apps.intake.pdf_utils import SESAB_FIELD_LABELS, HeaderMetadata, extract_header_metadata
 
 # Linha de demografia canônica do cabeçalho real (nome + idade + sexo + raça).
 _DEMOGRAPHICS_LINE = "FULANO DE TAL SILVA - Idade: 79a. - Sexo: F - Raça/Cor: Parda"
@@ -283,3 +283,147 @@ def test_extracts_demographics_real_variant_masculino() -> None:
 
     assert metadata.gender == "M"
     assert metadata.race == "Branca"
+
+
+# ── R1/D1 (change painel-ats-parity, slice 001): unidade de origem ─────────
+#
+# Layout real do corpus: ``Unid. Origem:`` sozinho numa linha e o nome da
+# unidade (~7 palavras institucionais, sigla + hífen) na linha SEGUINTE —
+# mesma forma multilinha de ``Dias em tela``. O valor só é aceito quando é
+# plausível: não-vazio E não inicia rótulo de campo do cabeçalho SESAB
+# (catálogo canônico ``SESAB_FIELD_LABELS``, fonte única em ``pdf_utils``).
+
+_ORIGIN_UNIT_VALUE = "HELN - HOSPITAL ESTADUAL DO LESTE NORTE"
+
+
+def test_origin_unit_multiline_form() -> None:
+    """R1: rótulo ``Unid. Origem:`` sozinho + valor na linha seguinte."""
+    text = "\n".join(["RELATÓRIO DE OCORRÊNCIAS", "Unid. Origem:", _ORIGIN_UNIT_VALUE])
+
+    metadata = extract_header_metadata(text)
+
+    assert metadata.origin_unit == _ORIGIN_UNIT_VALUE
+
+
+def test_origin_unit_same_line_form() -> None:
+    """R1: forma mesma-linha ``Unid. Origem: <valor>``."""
+    text = f"Unid. Origem: {_ORIGIN_UNIT_VALUE}"
+
+    metadata = extract_header_metadata(text)
+
+    assert metadata.origin_unit == _ORIGIN_UNIT_VALUE
+
+
+def test_origin_unit_unidade_de_origem_variant() -> None:
+    """R1: variante ``Unidade de Origem:`` (rótulo sozinho + valor na seguinte)."""
+    text = "\n".join(["Unidade de Origem:", _ORIGIN_UNIT_VALUE])
+
+    metadata = extract_header_metadata(text)
+
+    assert metadata.origin_unit == _ORIGIN_UNIT_VALUE
+
+
+def test_origin_unit_first_occurrence_wins() -> None:
+    """R1: primeira ocorrência válida vence (cabeçalho repetido por página)."""
+    text = "\n".join(
+        [
+            "Unid. Origem:",
+            _ORIGIN_UNIT_VALUE,
+            "Unid. Origem:",
+            "OUTRA UNIDADE QUALQUER",
+        ]
+    )
+
+    metadata = extract_header_metadata(text)
+
+    assert metadata.origin_unit == _ORIGIN_UNIT_VALUE
+
+
+def test_origin_unit_label_alone_without_plausible_value_is_none() -> None:
+    """R1 adversarial: rótulo sozinho + linha vazia → None (sem valor inventado)."""
+    text = "\n".join(["Unid. Origem:", "", "Resumo Clínico: quadro estável"])
+
+    metadata = extract_header_metadata(text)
+
+    assert metadata.origin_unit is None
+
+
+def test_origin_unit_label_at_end_of_text_is_none() -> None:
+    """R1 adversarial: rótulo sozinho no fim do texto → None."""
+    metadata = extract_header_metadata("RELATÓRIO DE OCORRÊNCIAS\nUnid. Origem:")
+
+    assert metadata.origin_unit is None
+
+
+@pytest.mark.parametrize("label", SESAB_FIELD_LABELS)
+def test_origin_unit_adversarial_each_sesab_label_next_line_is_none(label: str) -> None:
+    """R1 adversarial PARAMETRIZADO (anti-drift): CADA rótulo do catálogo
+    canônico na linha seguinte a ``Unid. Origem:`` NÃO vira unidade — iterar
+    a lista faz um rótulo novo esquecido quebrar o teste.
+
+    Para os PRÓPRIOS rótulos de unidade o candidato vai sem par
+    ``: valor`` na mesma linha — ali uma segunda ocorrência do rótulo
+    legitimamente fornece o valor da linha seguinte (o contrato testado é
+    o bloqueio, não a ausência de novas ocorrências).
+    """
+    candidate = label if label in ("unid. origem", "unidade de origem") else f"{label}: valor"
+    text = f"Unid. Origem:\n{candidate}\n"
+
+    metadata = extract_header_metadata(text)
+
+    assert metadata.origin_unit is None
+
+
+def test_origin_unit_truncated_to_128_chars() -> None:
+    """R1: valor truncado a 128 chars (defesa de tamanho do campo)."""
+    long_value = "UNIDADE " * 40
+
+    metadata = extract_header_metadata("\n".join(["Unid. Origem:", long_value]))
+
+    assert metadata.origin_unit is not None
+    assert len(metadata.origin_unit) == 128
+    assert metadata.origin_unit == long_value.strip()[:128]
+
+
+def test_origin_unit_absent_is_none_and_other_metadata_preserved() -> None:
+    """R1: cabeçalho real sem ``Unid. Origem:`` → None (não-vacuoso: os demais
+    metadados seguem extraídos)."""
+    metadata = extract_header_metadata("\n".join(_header_lines()))
+
+    assert metadata.origin_unit is None
+    assert metadata.age == 79
+    assert metadata.days_on_screen == 5
+
+
+# ── R1: catálogo canônico compartilhado (pdf_utils ↔ deterministic) ────────
+
+
+def test_sesab_field_labels_covers_header_demographics() -> None:
+    """R1: o catálogo canônico contém os rótulos do cabeçalho que faltavam na
+    lista legada (fold: minúsculo/sem acento/colapsado)."""
+    for label in (
+        "paciente",
+        "nome social",
+        "sexo",
+        "idade",
+        "raca/cor",
+        "data adm. unid.",
+        "dias unid.",
+        "dias em tela",
+        "abertura",
+        "codigo",
+        "unid. origem",
+        "unidade de origem",
+    ):
+        assert label in SESAB_FIELD_LABELS
+
+
+@pytest.mark.parametrize("label", SESAB_FIELD_LABELS)
+def test_deterministic_field_break_uses_canonical_label_list(label: str) -> None:
+    """R1: o ``deterministic.py`` compila a quebra de campo da MESMA lista
+    canônica — a captura do valor de um rótulo para no rótulo seguinte."""
+    from apps.anonymization.deterministic import extract_patient_name
+
+    text = f"Nome: MARIA DA SILVA\n{label}: outro campo\n"
+
+    assert extract_patient_name(text) == "MARIA DA SILVA"

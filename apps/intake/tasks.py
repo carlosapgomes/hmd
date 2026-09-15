@@ -254,6 +254,7 @@ def _extract_and_decide(case: Case, *, lock: CaseLock) -> bool:
         current.patient_gender = header_metadata.gender or ""
         current.patient_race = header_metadata.race or ""
         current.days_on_screen = header_metadata.days_on_screen
+        current.origin_unit = header_metadata.origin_unit or ""
         current.save(
             update_fields=[
                 "extracted_text",
@@ -263,6 +264,7 @@ def _extract_and_decide(case: Case, *, lock: CaseLock) -> bool:
                 "patient_gender",
                 "patient_race",
                 "days_on_screen",
+                "origin_unit",
             ]
         )
         if gate.ok:

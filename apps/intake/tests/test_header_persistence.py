@@ -25,6 +25,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 
 from apps.accounts.models import User
+from apps.cases.closure import _CLEANED_EMPTY_VALUES, _clean_acknowledged_clinical_data
 from apps.cases.models import Case, CaseDocument, CaseStatus
 from apps.intake.services import create_case_with_documents, resubmit_case_documents
 from apps.intake.tasks import process_case_documents
@@ -244,3 +245,153 @@ def test_resubmit_corrupt_pdf_keeps_metadata_zeroed(
     assert case.patient_gender == ""
     assert case.patient_race == ""
     assert case.days_on_screen is None
+
+
+# ── R2/R3 (change painel-ats-parity, slice 001): unidade de origem ─────────
+#
+# ``origin_unit`` segue o MESMO ciclo dos metadados do cabeçalho: o worker pdf
+# persiste no write único do ``extracted_text``; o reenvio de documentos zera
+# na mesma transação; a minimização do CLEANED NÃO o toca (dado
+# administrativo — paridade com ``agency_record_number``).
+
+_ORIGIN_UNIT = "HELN - HOSPITAL ESTADUAL DO LESTE NORTE"
+_ORIGIN_UNIT_INLINE = "Hospital Geral do Estado"
+
+
+def _header_page_with_multiline_origin(value: str) -> list[str]:
+    """Página padrão com ``Unid. Origem:`` sozinho e o valor na linha seguinte.
+
+    O rótulo inline do ``_SECTIONS`` é removido para o valor vir do layout
+    multilinha (caso do corpus real).
+    """
+    sections = [line for line in _SECTIONS if not line.startswith("Unid. Origem:")]
+    lines = [_REPORT_HEADER, _INSTITUTIONAL_SIGNAL, *sections, "Unid. Origem:", value]
+    while len("\n".join(lines)) < 600:
+        lines.append(_PADDING)
+    return lines
+
+
+@pytest.mark.django_db
+def test_worker_persists_origin_unit_multiline(nir_user: User) -> None:
+    """R2/R3: worker grava a unidade de origem do rótulo multilinha."""
+    case = _create_case_with_pdf(
+        nir_user, _pdf_bytes([_header_page_with_multiline_origin(_ORIGIN_UNIT)])
+    )
+
+    process_case_documents(case.case_id)
+    case.refresh_from_db()
+
+    assert case.status == CaseStatus.ANONYMIZING
+    assert case.origin_unit == _ORIGIN_UNIT
+
+
+@pytest.mark.django_db
+def test_worker_persists_origin_unit_inline(nir_user: User) -> None:
+    """R2/R3: worker grava a unidade da forma mesma-linha do cabeçalho."""
+    case = _create_case_with_pdf(nir_user, _pdf_bytes([_header_page()]))
+
+    process_case_documents(case.case_id)
+    case.refresh_from_db()
+
+    assert case.origin_unit == _ORIGIN_UNIT_INLINE
+
+
+@pytest.mark.django_db
+def test_worker_events_carry_no_origin_unit(nir_user: User) -> None:
+    """R2/D4: eventos do worker não carregam o valor da unidade (PHI-free)."""
+    case = _create_case_with_pdf(
+        nir_user, _pdf_bytes([_header_page_with_multiline_origin(_ORIGIN_UNIT)])
+    )
+
+    process_case_documents(case.case_id)
+    case.refresh_from_db()
+
+    # Não-vacuoso: a unidade foi extraída e, ainda assim, não aparece nos eventos.
+    assert case.origin_unit == _ORIGIN_UNIT
+    serialized = json.dumps([event.payload for event in case.events.all()])
+    assert "origin_unit" not in serialized
+    assert "HELN" not in serialized
+
+
+@pytest.mark.django_db
+def test_resubmit_zeroes_origin_unit(
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R2/R3: reenvio zera ``origin_unit`` na MESMA transação ("")."""
+    case = _retain_for_review(
+        create_case_with_documents(
+            user=nir_user,
+            role=NIR_ROLE,
+            file=pdf_factory(name="antigo.pdf"),
+            procedure_type="art_perif",
+        )
+    )
+    case.origin_unit = _ORIGIN_UNIT
+    case.save(update_fields=["origin_unit"])
+
+    resubmit_case_documents(
+        case=case,
+        user=nir_user,
+        role=NIR_ROLE,
+        files=[_valid_pdf("corrigido.pdf")],
+    )
+
+    case.refresh_from_db()
+    assert case.origin_unit == ""
+
+
+@pytest.mark.django_db
+def test_resubmit_corrupt_pdf_keeps_origin_unit_zeroed(
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R2/R3: novo PDF que falha na extração não deixa unidade órfã."""
+    case = _retain_for_review(
+        create_case_with_documents(
+            user=nir_user,
+            role=NIR_ROLE,
+            file=pdf_factory(name="antigo.pdf"),
+            procedure_type="art_perif",
+        )
+    )
+    case.origin_unit = _ORIGIN_UNIT
+    case.save(update_fields=["origin_unit"])
+
+    resubmit_case_documents(
+        case=case,
+        user=nir_user,
+        role=NIR_ROLE,
+        files=[_valid_pdf("corrompido.pdf", content=_CORRUPT_PDF)],
+    )
+    process_case_documents(case.case_id)
+
+    case.refresh_from_db()
+    assert case.status == CaseStatus.FAILED
+    assert case.origin_unit == ""
+
+
+@pytest.mark.django_db
+def test_cleaned_minimization_preserves_origin_unit(nir_user: User) -> None:
+    """R3: a minimização do CLEANED preserva a unidade de origem (paridade
+    administrativa com ``agency_record_number``; não-vacuoso: os campos
+    clínicos SÃO zerados pela MESMA passada)."""
+    case = _create_case_with_pdf(
+        nir_user, _pdf_bytes([_header_page_with_multiline_origin(_ORIGIN_UNIT)])
+    )
+    process_case_documents(case.case_id)
+    case.refresh_from_db()
+    assert case.origin_unit == _ORIGIN_UNIT
+
+    _clean_acknowledged_clinical_data(case)
+    case.refresh_from_db()
+
+    assert case.extracted_text == ""
+    assert case.anonymized_text == ""
+    assert case.origin_unit == _ORIGIN_UNIT
+
+
+def test_cleaned_empty_values_does_not_touch_origin_unit() -> None:
+    """R3 (gate 2): ``_CLEANED_EMPTY_VALUES`` permanece IDÊNTICO — a unidade
+    de origem não entra na minimização."""
+    assert "origin_unit" not in _CLEANED_EMPTY_VALUES

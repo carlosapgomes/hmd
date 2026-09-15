@@ -2,12 +2,12 @@
 
 ## 1. Slice 001 — Unidade de origem do cabeçalho (extração + campo)
 
-- [ ] 1.1 `HeaderMetadata.origin_unit` + parser multilinha (`Unid. Origem:`
+- [x] 1.1 `HeaderMetadata.origin_unit` + parser multilinha (`Unid. Origem:`
       mesma-linha OU linha seguinte plausível) + `Case.origin_unit` +
       migration
-- [ ] 1.2 Worker pdf persiste no mesmo atomic; reenvio zera
+- [x] 1.2 Worker pdf persiste no mesmo atomic; reenvio zera
       (`_RESUBMIT_CLEARED_FIELDS`); CLEANED preserva
-- [ ] 1.3 Testes RED→GREEN (multilinha/mesma-linha/adversarial rótulo-seguido-de-rótulo/reenvio/CLEANED) + bateria
+- [x] 1.3 Testes RED→GREEN (multilinha/mesma-linha/adversarial rótulo-seguido-de-rótulo/reenvio/CLEANED) + bateria
 
 ## 2. Slice 002 — Lista do painel com paridade ats-web
 

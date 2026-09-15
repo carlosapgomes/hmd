@@ -377,8 +377,9 @@ def create_case_with_documents(
 
 
 # Campos zerados pelo reenvio (R2): texto/nº extraídos, metadados do
-# cabeçalho SESAB (change sesab-header-extraction, slice 001, D4 — derivados do
-# documento corrente) e flag/motivo do gate.
+# cabeçalho SESAB (changes sesab-header-extraction e painel-ats-parity, slices
+# 001 — derivados do documento corrente, unidade de origem inclusa) e
+# flag/motivo do gate.
 _RESUBMIT_CLEARED_FIELDS = (
     "extracted_text",
     "agency_record_number",
@@ -387,6 +388,7 @@ _RESUBMIT_CLEARED_FIELDS = (
     "patient_gender",
     "patient_race",
     "days_on_screen",
+    "origin_unit",
     "manual_review_required",
     "manual_review_reason",
 )
@@ -580,6 +582,7 @@ def resubmit_case_documents(
             locked.patient_gender = ""
             locked.patient_race = ""
             locked.days_on_screen = None
+            locked.origin_unit = ""
             locked.manual_review_required = False
             locked.manual_review_reason = ""
             locked.save(update_fields=_RESUBMIT_CLEARED_FIELDS)

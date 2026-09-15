@@ -34,40 +34,22 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 
-from apps.intake.pdf_utils import DEMOGRAPHICS_LINE_PATTERN, extract_agency_record_number
-
-# ── Rótulos canônicos de campo do relatório SESAB (quebra de valor) ───────
-# Minúsculos/sem acento (a comparação é sobre linhas normalizadas por fold):
-# rótulos de identificação do paciente + cabeçalho/sinais institucionais
-# (repetidos página a página) + seções operacionais reconhecidas pelo gate.
-_FIELD_BREAK_LABELS: tuple[str, ...] = (
-    # Identificação do paciente (rótulos de nome e nascimento — R3/R4).
-    "nome do paciente",
-    "paciente",
-    "nome",
-    "data de nascimento",
-    "nascimento",
-    "cpf",
-    "cns",
-    # Cabeçalho e sinais institucionais do relatório.
-    "relatorio de ocorrencias",
-    "central estadual de regulacao",
-    "secretaria da saude do estado",
-    "governo do estado da bahia",
-    # Seções operacionais reconhecidas pelo gate (apps/intake/regulation_gate.py).
-    "codigo",
-    "abertura",
-    "unid. origem",
-    "unidade de origem",
-    "motivo da solicitacao",
-    "complemento da solicitacao",
-    "resumo clinico",
-    "dias em tela",
-    "data adm. unid.",
+from apps.intake.pdf_utils import (
+    DEMOGRAPHICS_LINE_PATTERN,
+    SESAB_FIELD_LABELS,
+    extract_agency_record_number,
 )
 
+# ── Rótulos canônicos de campo do relatório SESAB (quebra de valor) ───────
+# O catálogo vive em ``apps.intake.pdf_utils.SESAB_FIELD_LABELS`` (fonte
+# única — change painel-ats-parity, slice 001, R1/D1; a lista nasceu lá
+# EXPANDIDA com os rótulos do cabeçalho que faltavam); a importação segue a
+# direção vigente deterministic→pdf_utils (sem ciclo), como
+# ``extract_agency_record_number``. Minúsculos/sem acento (a comparação é
+# sobre linhas normalizadas por fold); o casamento é por prefixo da linha
+# seguido de ``:`` ou fim de linha.
 _FIELD_BREAK_PATTERN = re.compile(
-    r"^(?:" + "|".join(re.escape(label) for label in _FIELD_BREAK_LABELS) + r")(?:\s*:|\s*$)"
+    r"^(?:" + "|".join(re.escape(label) for label in SESAB_FIELD_LABELS) + r")(?:\s*:|\s*$)"
 )
 
 # Rótulos de nome do paciente (R3): case-insensitive, espaços flexíveis no

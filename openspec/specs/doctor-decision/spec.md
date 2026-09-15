@@ -86,9 +86,7 @@ nunca apenas no template.
 - **THEN** a submissão é rejeitada com HTTP 403 e nenhuma decisão é persistida
 
 ### Requirement: Presenter re-identificado sob papel autorizado
-
-O detalhe do caso SHALL apresentar, apenas para `doctor`/`admin`, os dados reais do paciente (identificação, número de ocorrência) e a demografia do caso — idade, sexo e raça/cor extraídas do cabeçalho padrão SESAB — e os artefatos do pipeline re-identificados: histórico e sumário, estrutura extraída, alertas da policy com a recomendação por procedimento e o resultado agregado, requisitos gerais acionáveis e o PDF original. A re-identificação SHALL ocorrer apenas na renderização para papel autorizado; nenhum artefato re-identificado é persistido nem enviado a qualquer LLM. A ordem dos cards SHALL seguir a leitura clínica: identificação, procedimentos declarados, sumário clínico e estrutura extraída (o quadro clínico) ANTES dos alertas consultivos e demais cards da automação. O detalhe NÃO exibe a trilha de eventos (vive no painel).
-
+O detalhe do caso SHALL apresentar, apenas para `doctor`/`admin`, os dados reais do paciente (identificação, número de ocorrência) e a demografia do caso — idade, sexo e raça/cor extraídas do cabeçalho padrão SESAB — e os artefatos do pipeline re-identificados: histórico e sumário, estrutura extraída, alertas da policy com a recomendação por procedimento e o resultado agregado, requisitos gerais acionáveis e o PDF original. A re-identificação SHALL ocorrer apenas na renderização para papel autorizado; nenhum artefato re-identificado é persistido nem enviado a qualquer LLM. A ordem dos cards SHALL seguir a leitura clínica: identificação, «Procedimentos do caso», sumário clínico e estrutura extraída (o quadro clínico) ANTES dos alertas consultivos e demais cards da automação. O detalhe NÃO exibe a trilha de eventos (vive no painel). O card «Procedimentos do caso» exibe TODAS as rows — inclusive a detectada não-declarada que sobrevive ao bypass da divergência — com badges de origem (Declarado/Detectado na extração) e de detecção após a reconciliação.
 #### Scenario: Médico vê o sumário re-identificado
 
 - **GIVEN** um caso em `AWAITING_DOCTOR` cujo `summary_text` contém o token `<PESSOA_1>`
@@ -123,13 +121,19 @@ O detalhe do caso SHALL apresentar, apenas para `doctor`/`admin`, os dados reais
 
 - **GIVEN** um caso em `AWAITING_DOCTOR` com procedimentos declarados, sumário clínico, estrutura extraída e alertas consultivos
 - **WHEN** o médico abre o detalhe
-- **THEN** os títulos aparecem na ordem: Procedimentos declarados → Sumário clínico → Estrutura extraída → Alertas consultivos (o quadro clínico precede o consultivo da automação)
+- **THEN** os títulos aparecem na ordem: Procedimentos do caso → Sumário clínico → Estrutura extraída → Alertas consultivos (o quadro clínico precede o consultivo da automação)
 
 #### Scenario: Detalhe em decisão sem trilha de eventos
 
 - **GIVEN** um caso em `AWAITING_DOCTOR` com trilha de eventos
 - **WHEN** o médico abre o detalhe
 - **THEN** nenhum bloco de trilha de eventos é renderizado
+
+#### Scenario: Detalhe médico exibe row detectada não-declarada
+
+- **GIVEN** um caso em `AWAITING_DOCTOR` cuja divergência foi liberada por bypass (declarada `angio_art_perif` não-detectada + `art_perif` detectada não-declarada persistida)
+- **WHEN** o médico com especialidade compatível abre o detalhe
+- **THEN** o card «Procedimentos do caso» exibe ambas as rows com rótulos legíveis e os badges «Não detectado» e «Detectado na extração»
 
 ### Requirement: Card de prior-case com motivo real
 

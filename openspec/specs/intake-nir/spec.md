@@ -107,9 +107,7 @@ O NIR SHALL conseguir revisar casos retidos pelo gate na tela de detalhe, com du
 - **THEN** os documentos antigos são substituídos, a flag de revisão é zerada, o texto anterior é descartado e o caso é reprocessado
 
 ### Requirement: Meus casos e detalhe do NIR
-
-O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com status, tipos declarados, indicador de retenção pelo gate e a identificação do paciente (nome e idade quando presentes — o NIR é o criador do caso); o detalhe de um caso SHALL exibir documentos (com visualização do PDF) e comunicações — **sem a trilha de eventos** (a trilha vive no painel; caso `FAILED` exibe badge de erro «Falha no processamento»). Acesso a caso criado por outro usuário SHALL ser negado. Os cards NÃO exibem o identificador interno do caso (uid).
-
+O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com status, tipos declarados, indicador de retenção pelo gate e a identificação do paciente (nome e idade quando presentes — o NIR é o criador do caso); o detalhe de um caso SHALL exibir documentos (com visualização do PDF) e comunicações — **sem a trilha de eventos** (a trilha vive no painel; caso `FAILED` exibe badge de erro «Falha no processamento»). Acesso a caso criado por outro usuário SHALL ser negado. Os cards NÃO exibem o identificador interno do caso (uid). O detalhe exibe TODAS as rows de procedimento do caso com a origem («Declarado» NIR / «Detectado na extração») e o status de detecção após a reconciliação; no card de revisão por divergência, o resumo declarados × detectados acompanha a ação de liberar.
 #### Scenario: Lista mostra apenas casos do próprio NIR
 
 - **GIVEN** dois NIR com casos criados
@@ -145,3 +143,9 @@ O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com s
 - **GIVEN** casos com uid interno e nº de ocorrência
 - **WHEN** a lista é renderizada
 - **THEN** nenhum card exibe o uid do caso — o nº de ocorrência (com `—` quando ausente) e a identificação do paciente são os identificadores do card
+
+#### Scenario: Detalhe retido por divergência lista declarados e detectados
+
+- **GIVEN** um caso do próprio NIR retido em `LLM_EXTRACTING` por divergência (`angio_art_perif` declarada não-detectada e `art_perif` detectada não-declarada)
+- **WHEN** o NIR abre o detalhe
+- **THEN** a seção de procedimentos exibe ambas as rows com os rótulos legíveis e os badges de origem e detecção («Não detectado», «Detectado na extração»), e o card de revisão resume declarados × detectados junto ao botão de liberação

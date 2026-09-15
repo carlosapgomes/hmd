@@ -67,6 +67,17 @@
           Procedimentos: —
           {% endif %}
         </div>
+        {% if item.admin_closure_result %}
+        <!-- Resultado do encerramento administrativo (painel-lista-encerramento,
+             slice 003, R3/D4): só o CRIADOR vê o caso (escopo por criador); o
+             texto do motivo foi escrito pelo supervisor e não traz PHI. -->
+        <div class="small mt-1">
+          <span class="badge rounded-pill text-bg-secondary">{{ item.admin_closure_result }}</span>
+          {% if item.admin_closure_reason %}
+          <span class="text-muted ms-1">{{ item.admin_closure_reason }}</span>
+          {% endif %}
+        </div>
+        {% endif %}
       </a>
       {% endfor %}
     </div>

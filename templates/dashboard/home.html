@@ -5,7 +5,10 @@
 <!-- Painel gerencial (change dashboard-notifications-pwa, slice 003, D3):
      métricas agregadas ZERO-PHI — nenhum nome/nº de registro/idade de paciente.
      A tabela por tipo conta PROCEDIMENTOS (rows), não casos: o somatório das
-     linhas difere do total de casos do resumo (esperado). -->
+     linhas difere do total de casos do resumo (esperado). A lista de casos
+     abaixo das métricas (change painel-lista-encerramento, slice 003, R1/D1)
+     identifica o CASO pelo nº de ocorrência (ou uid curto) e NUNCA exibe nome
+     nem data de nascimento do paciente. -->
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
   <h1 class="h4 mb-0">Painel gerencial</h1>
   <nav class="btn-group" aria-label="Período das métricas">
@@ -18,7 +21,7 @@
 </div>
 
 <!-- Cards de resumo do período -->
-<div class="row row-cols-2 row-cols-md-5 g-3 mb-4">
+<div class="row row-cols-2 row-cols-md-6 g-3 mb-4">
   <div class="col">
     <div class="card h-100 text-center">
       <div class="card-body">
@@ -56,6 +59,14 @@
       <div class="card-body">
         <div class="fs-3 fw-bold">{{ summary.encerrados }}</div>
         <div class="text-muted small text-uppercase">Encerrados</div>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card h-100 text-center border-warning">
+      <div class="card-body">
+        <div class="fs-3 fw-bold text-warning-emphasis">{{ summary.administratively_closed }}</div>
+        <div class="text-muted small text-uppercase">Encerr. administrativos</div>
       </div>
     </div>
   </div>
@@ -118,5 +129,112 @@
       </div>
     </div>
   </div>
+</div>
+
+<!-- Lista de casos do período (change painel-lista-encerramento, slice 003,
+     R1/D1): SSR puro, filtros na query string, 25/página. O card identifica o
+     CASO pelo nº de ocorrência (dado do caso) ou uid curto — nome e data de
+     nascimento do paciente NÃO aparecem. A ação de encerramento administrativo
+     só existe fora de CLEANED (R2). -->
+<div class="card mt-3">
+  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <span>Casos do período</span>
+    <form method="get" action="{% url 'dashboard:home' %}"
+          class="d-flex flex-wrap gap-2 align-items-end">
+      <input type="hidden" name="period" value="{{ period }}">
+      <div>
+        <label class="form-label mb-0 small" for="list-scope">Situação</label>
+        <select class="form-select form-select-sm" id="list-scope" name="scope">
+          {% for value, label in scope_options %}
+          <option value="{{ value }}"{% if value == scope %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="form-label mb-0 small" for="list-status">Status</label>
+        <select class="form-select form-select-sm" id="list-status" name="status">
+          <option value="">Todos</option>
+          {% for value, label in status_options %}
+          <option value="{{ value }}"{% if value == status %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="form-label mb-0 small" for="list-q">Busca</label>
+        <input type="search" class="form-control form-control-sm" id="list-q" name="q"
+               value="{{ q }}" placeholder="Nº de ocorrência ou início do uid"
+               title="Termos com menos de 3 caracteres são ignorados">
+      </div>
+      <button type="submit" class="btn btn-sm btn-outline-secondary">Filtrar</button>
+    </form>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th scope="col">Caso</th>
+          <th scope="col">Status</th>
+          <th scope="col">Procedimentos</th>
+          <th scope="col">Criado em</th>
+          <th scope="col">Resultado</th>
+          <th scope="col">Próximo passo</th>
+          <th scope="col"><span class="visually-hidden">Ações</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in cases %}
+        <tr>
+          <td class="font-monospace small">
+            {% if item.agency_record_number %}{{ item.agency_record_number }}{% else %}uid {{ item.short_id }}{% endif %}
+          </td>
+          <td class="small">{{ item.status_label }}</td>
+          <td class="small">
+            {% if item.procedure_labels %}{{ item.procedure_labels|join:" · " }}{% else %}—{% endif %}
+          </td>
+          <td class="small">{{ item.created_at|date:"d/m/Y H:i" }}</td>
+          <td class="small">{{ item.result_label }}</td>
+          <td class="small">{{ item.next_step_label }}</td>
+          <td class="text-end">
+            {% if item.can_close %}
+            <a href="{% url 'dashboard:admin_close_confirm' item.case_id %}{% if filter_qs %}?{{ filter_qs }}{% endif %}"
+               class="btn btn-sm btn-outline-danger">Encerrar administrativamente</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="7" class="text-muted small">
+            Nenhum caso no período com os filtros selecionados.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if page_obj.paginator.num_pages > 1 %}
+  <div class="card-footer">
+    <nav aria-label="Paginação da lista de casos">
+      <ul class="pagination pagination-sm justify-content-center mb-0">
+        <li class="page-item{% if not page_obj.has_previous %} disabled{% endif %}">
+          {% if page_obj.has_previous %}
+          <a class="page-link" href="{% url 'dashboard:home' %}?page={{ page_obj.previous_page_number }}{% if filter_qs %}&{{ filter_qs }}{% endif %}">Anterior</a>
+          {% else %}
+          <span class="page-link">Anterior</span>
+          {% endif %}
+        </li>
+        <li class="page-item disabled">
+          <span class="page-link">Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
+        </li>
+        <li class="page-item{% if not page_obj.has_next %} disabled{% endif %}">
+          {% if page_obj.has_next %}
+          <a class="page-link" href="{% url 'dashboard:home' %}?page={{ page_obj.next_page_number }}{% if filter_qs %}&{{ filter_qs }}{% endif %}">Próxima</a>
+          {% else %}
+          <span class="page-link">Próxima</span>
+          {% endif %}
+        </li>
+      </ul>
+    </nav>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}

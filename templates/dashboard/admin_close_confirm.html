@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+{% block title %}Encerrar caso administrativamente — {{ app_display_name }}{% endblock %}
+
+{% block content %}
+<!-- Confirmação do encerramento administrativo (change painel-lista-encerramento,
+     slice 003, R2/D3): página PRÓPRIA (SSR puro, sem modal/JS) com o select do
+     catálogo fixo de motivos e a textarea OBRIGATÓRIA. Os filtros vigentes da
+     lista viajam como campos ocultos para o retorno preservá-los. -->
+<div class="row justify-content-center mt-4">
+  <div class="col-12 col-lg-8">
+    <h1 class="h4 mb-3">Encerrar caso administrativamente</h1>
+
+    <div class="card mb-3">
+      <div class="card-body">
+        <div class="mb-1">
+          <span class="text-muted small text-uppercase">Caso</span>
+          <span class="font-monospace">
+            {% if agency_record_number %}Nº de ocorrência {{ agency_record_number }}{% else %}uid {{ short_id }}{% endif %}
+          </span>
+        </div>
+        <div>
+          <span class="text-muted small text-uppercase">Status atual</span>
+          {{ status_label }}
+        </div>
+      </div>
+    </div>
+
+    <div class="alert alert-warning" role="alert">
+      O encerramento é terminal: o caso sai das filas operacionais, os dados
+      clínicos (documentos e anexos, inclusive os arquivos físicos) são
+      minimizados e o criador é notificado. Não inclua dados de paciente no
+      texto do motivo.
+    </div>
+
+    <form method="post" action="{% url 'dashboard:admin_close' case.case_id %}">
+      {% csrf_token %}
+      {% for name, value in filters.items %}
+      <input type="hidden" name="{{ name }}" value="{{ value }}">
+      {% endfor %}
+
+      <div class="mb-3">
+        <label class="form-label" for="reason-code">Motivo (catálogo)</label>
+        <select class="form-select" id="reason-code" name="reason_code" required>
+          {% for value, label in reason_choices %}
+          <option value="{{ value }}"{% if value == submitted_reason_code %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label" for="reason-text">Texto do motivo (obrigatório)</label>
+        <textarea class="form-control" id="reason-text" name="reason_text" rows="4" required>{{ submitted_reason_text }}</textarea>
+      </div>
+
+      <div class="d-flex flex-wrap gap-2">
+        <button type="submit" class="btn btn-danger">Encerrar caso</button>
+        <a href="{{ back_url }}" class="btn btn-outline-secondary">Cancelar</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

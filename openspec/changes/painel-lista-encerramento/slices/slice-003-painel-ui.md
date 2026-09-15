@@ -125,4 +125,28 @@ uv run python manage.py makemigrations --check --dry-run
 
 ## Deviations / learnings
 
-- (preenchido na execução)
+- metrics.py: `_outcome_by_case` → `outcome_by_case` público + novo
+  `cases_in_period(period)` (lista e métricas compartilham a MESMA janela e
+  o MESMO desfecho imutável, sem duplicar constantes); `_count_outcome` →
+  `_outcome_ids` (fórmula por conjuntos). Valores das métricas existentes
+  inalterados.
+- Card resultado: admin > CASE_RESULT_LABELS (último evento final, só
+  status pós-final) > `—`.
+- `test_case_labels.py` arquivo novo além da lista literal (cobertura
+  completa exigida, sem arquivo nomeado).
+- Literal "Encerrado administrativamente" 1× por app (fonte única seria
+  `apps/cases/closure.py`, fora dos expected files; label do MOTIVO sim vem
+  de `ADMINISTRATIVE_CLOSURE_REASONS`).
+- Rotas `case/<uuid>/close/` (GET) + `close/submit/` (POST), padrão
+  intake/doctor; redirect preserva `period/scope/status/q` (não `page`).
+- Hardening do parent (review P2s): teste de ordenação pinado em
+  `period=7d` (backdate de horas quebrava "hoje" entre 00:00-02:00 local)
+  e 4 labels de "próximo passo" rewordados — DOCTOR_ACCEPTED/DENIED e
+  SCHEDULER_CONFIRMED/DENIED são auto-encadeados pelo sistema, não
+  "Pendente: NIR" (ator real: sistema publicando resposta final).
+- Report-only registrados (decisão do dono): `?status=CLEANED` com scope
+  default ativos retorna vazio (interação não pinnada na spec — esconder a
+  opção ou auto-alargar); card admin-fechado com desfecho prévio mostra só
+  "Encerrado administrativamente" (compor "Agendado · Encerrado
+  administrativamente" seria mais fiel a D1); GET de confirmação renderiza
+  para caso já CLEANED (POST falha safe).

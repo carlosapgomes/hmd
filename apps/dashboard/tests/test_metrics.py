@@ -4,9 +4,12 @@ Cobre ``apps/dashboard/metrics.py`` (serviços puros, sem request): resumo do
 período com a regra de desfecho IMUTÁVEL (população por ``created_at``;
 outcome = ``payload["source"]`` do ÚLTIMO evento ``CASE_STATUS_FINAL_REPLY_POSTED``,
 contado apenas quando o status atual é pós-final — caso reaberto ao pipeline
-conta como em andamento), contagem por tipo/unidade, tempo médio até decisão
-médica e bounds de período. Os casos são levados aos estados pelas operações
-públicas da FSM (mesmo padrão dos testes de closure/scheduler).
+conta como em andamento), o card de encerramentos administrativos (eventos
+``CASE_ADMINISTRATIVELY_CLOSED`` com ``timestamp`` na janela, com os dois casos
+limítrofes de ``em_andamento``), contagem por tipo/unidade, tempo médio até
+decisão médica e bounds de período. Os casos são levados aos estados pelas
+operações públicas da FSM (mesmo padrão dos testes de closure/scheduler) e o
+encerramento administrativo usa o serviço real de ``apps/cases/closure.py``.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import pytest
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.cases.closure import administratively_close_case
 from apps.cases.models import (
     Case,
     CaseProcedure,
@@ -48,12 +52,35 @@ EMPTY_SUMMARY = {
     "negados": 0,
     "em_andamento": 0,
     "encerrados": 0,
+    "administratively_closed": 0,
 }
+
+# Motivo canônico do catálogo usado nos cenários de encerramento administrativo.
+ADMIN_REASON_CODE = "processing_error"
+ADMIN_REASON_TEXT = "caso travado no processamento"
+
+
+# Roles do encerramento administrativo (defesa em profundidade do serviço).
+MANAGER_ROLE = "manager"
 
 
 def _make_user(username: str) -> User:
-    """Criador dos casos das fixtures (sem papel — métricas não dependem dele)."""
+    """Usuário das fixtures: criador dos casos ou supervisor que encerra
+    administrativamente (o papel ativo do encerramento é parâmetro do serviço)."""
     return User.objects.create_user(username=username, password="senha-teste")
+
+
+def _administratively_closed(case: Case, *, manager: User) -> Case:
+    """Encerra o caso pelo serviço real (motivo do catálogo + autor)."""
+    administratively_close_case(
+        case=case,
+        user=manager,
+        active_role=MANAGER_ROLE,
+        reason_code=ADMIN_REASON_CODE,
+        reason_text=ADMIN_REASON_TEXT,
+    )
+    assert case.status == CaseStatus.CLEANED
+    return case
 
 
 def _drive_to_awaiting_doctor(case: Case) -> Case:
@@ -147,6 +174,7 @@ def test_summary_counts() -> None:
         "negados": 2,
         "em_andamento": 2,
         "encerrados": 0,
+        "administratively_closed": 0,
     }
 
 
@@ -189,6 +217,7 @@ def test_summary_reopened_case_counts_as_in_progress() -> None:
         "negados": 0,
         "em_andamento": 1,
         "encerrados": 0,
+        "administratively_closed": 0,
     }
 
 
@@ -206,6 +235,7 @@ def test_summary_cleaned_case_kept_by_outcome() -> None:
         "negados": 0,
         "em_andamento": 0,
         "encerrados": 1,
+        "administratively_closed": 0,
     }
 
 
@@ -222,6 +252,91 @@ def test_summary_period_boundaries() -> None:
     assert compute_summary("7d")["total"] == 1
     assert compute_summary("7d")["agendados"] == 1
     assert compute_summary("tudo")["total"] == 1
+
+
+# ── R3: encerramentos administrativos na métrica ──────────────────────────
+
+
+@pytest.mark.django_db
+def test_summary_counts_administratively_closed_events_in_window() -> None:
+    """R3/spec: o card conta os eventos de encerramento administrativo do período,
+    o caso sai de em andamento e segue contado como encerrado."""
+    creator = _make_user("nir-admin-card")
+    manager = _make_user("gestor-admin-card")
+    _administratively_closed(Case.objects.create(created_by=creator), manager=manager)
+
+    summary = compute_summary("hoje")
+
+    assert summary == {
+        "total": 1,
+        "agendados": 0,
+        "negados": 0,
+        "em_andamento": 0,
+        "encerrados": 1,
+        "administratively_closed": 1,
+    }
+
+
+@pytest.mark.django_db
+def test_summary_admin_closed_outside_window_keeps_total_zero() -> None:
+    """R3/caso limítrofe 1: caso CRIADO fora da janela e encerrado administrativamente
+    DENTRO dela → total 0 (população), card 1 (evento) e em_andamento 0 (nunca negativo)."""
+    creator = _make_user("nir-admin-fora")
+    manager = _make_user("gestor-admin-fora")
+    case = Case.objects.create(created_by=creator)
+    Case.objects.filter(pk=case.pk).update(created_at=timezone.now() - timedelta(days=1))
+    _administratively_closed(case, manager=manager)
+
+    summary = compute_summary("hoje")
+
+    assert summary["total"] == 0
+    assert summary["administratively_closed"] == 1
+    assert summary["em_andamento"] == 0
+    assert summary["encerrados"] == 0
+    # A janela de 7 dias traz o caso (população) e o evento — em andamento zero.
+    inclusive = compute_summary("7d")
+    assert inclusive["total"] == 1
+    assert inclusive["administratively_closed"] == 1
+    assert inclusive["em_andamento"] == 0
+
+
+@pytest.mark.django_db
+def test_summary_admin_closed_scheduled_case_has_no_double_subtraction() -> None:
+    """R3/caso limítrofe 2: caso AGENDADO e encerrado administrativamente na janela
+    conta em agendados (desfecho imutável) e em_andamento fica ZERO — sem dupla subtração."""
+    creator = _make_user("nir-admin-agendado")
+    manager = _make_user("gestor-admin-agendado")
+    case = _final_by_scheduling_confirmed(
+        Case.objects.create(created_by=creator), SchedulingUnit.UNIT_1
+    )
+    _administratively_closed(case, manager=manager)
+
+    summary = compute_summary("hoje")
+
+    assert summary == {
+        "total": 1,
+        "agendados": 1,
+        "negados": 0,
+        "em_andamento": 0,
+        "encerrados": 1,
+        "administratively_closed": 1,
+    }
+
+
+@pytest.mark.django_db
+def test_summary_admin_closed_leaves_in_progress_case_out() -> None:
+    """R3: caso em andamento encerrado administrativamente sai de em andamento
+    (subtraído pela interseção evento∩população sem desfecho) sem zerar os vizinhos."""
+    creator = _make_user("nir-admin-andamento")
+    manager = _make_user("gestor-admin-andamento")
+    _administratively_closed(Case.objects.create(created_by=creator), manager=manager)
+    _drive_to_awaiting_doctor(Case.objects.create(created_by=creator))
+
+    summary = compute_summary("hoje")
+
+    assert summary["total"] == 2
+    assert summary["administratively_closed"] == 1
+    assert summary["em_andamento"] == 1
 
 
 # ── R1: por tipo de procedimento ───────────────────────────────────────────
@@ -421,4 +536,5 @@ def test_summary_two_final_events_last_source_wins() -> None:
         "negados": 1,
         "em_andamento": 0,
         "encerrados": 0,
+        "administratively_closed": 0,
     }

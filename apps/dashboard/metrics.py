@@ -14,6 +14,14 @@ A tabela por tipo conta **rows de procedimento** (``CaseProcedure``), não
 casos: o somatório das linhas difere do total do resumo (esperado; anotado no
 template). O tempo até a decisão médica é por caso:
 ``max(doctor_decided_at das rows decididas) − case.created_at``.
+
+O change painel-lista-encerramento (slice 003, R3/D1) acrescenta o card de
+ENCERRAMENTOS ADMINISTRATIVOS (eventos ``CASE_ADMINISTRATIVELY_CLOSED`` com
+``timestamp`` na janela) e mantém ``em_andamento`` derivado da POPULAÇÃO por
+conjuntos de ids — sem dupla subtração de quem já tem desfecho. A população do
+período é exposta em ``cases_in_period`` e o desfecho por caso em
+``outcome_by_case``: a MESMA régua alimenta a lista de casos do painel (view
+``dashboard:home``), sem grafia paralela.
 """
 
 from __future__ import annotations
@@ -117,19 +125,28 @@ def _window(start: datetime | None, end: datetime | None) -> QuerySet[Case]:
     return cases.filter(created_at__gte=start, created_at__lt=end)
 
 
+def cases_in_period(period: str) -> QuerySet[Case]:
+    """População do período (``created_at`` na janela) — régua única das métricas
+    e da lista de casos do painel (R1/D1).
+    """
+    start, end = _period_bounds(period)
+    return _window(start, end)
+
+
 def _post_final_population(population: QuerySet[Case]) -> QuerySet[Case]:
     """Casos da população cujo status atual é pós-final (desfecho atribuível)."""
     return population.filter(status__in=_POST_FINAL_STATUSES)
 
 
-def _outcome_by_case(population: QuerySet[Case]) -> dict[uuid.UUID, str]:
+def outcome_by_case(population: QuerySet[Case]) -> dict[uuid.UUID, str]:
     """``payload["source"]`` do ÚLTIMO evento final por caso (só status pós-final).
 
     Fetch dirigido (uma consulta) com ``DISTINCT ON (case_id)`` ordenado por id
     desc: classifica o caso pelo desfecho do evento final MAIS RECENTE e só o
     inclui se o status atual é pós-final — base da regra imutável do D3 (caso
     reaberto tem o evento final anterior ignorado). Casos sem evento final com
-    source textual ficam de fora (contam como em andamento).
+    source textual ficam de fora (contam como em andamento). Consumido pelo
+    resumo e pelos cards da lista (D1): uma única grafia do desfecho imutável.
     """
     rows = (
         CaseEvent.objects.filter(
@@ -148,31 +165,56 @@ def _outcome_by_case(population: QuerySet[Case]) -> dict[uuid.UUID, str]:
     return outcome
 
 
-def _count_outcome(outcome: dict[uuid.UUID, str], sources: tuple[CaseStatus, ...]) -> int:
-    """Casos cujo desfecho (último evento final) tem ``source`` no conjunto."""
+def _outcome_ids(outcome: dict[uuid.UUID, str], sources: tuple[CaseStatus, ...]) -> set[uuid.UUID]:
+    """Ids dos casos cujo desfecho (último evento final) tem ``source`` no conjunto."""
     wanted = {str(source) for source in sources}
-    return sum(1 for source in outcome.values() if source in wanted)
+    return {case_id for case_id, source in outcome.items() if source in wanted}
+
+
+def _administratively_closed_case_ids(
+    start: datetime | None, end: datetime | None
+) -> set[uuid.UUID]:
+    """Ids dos casos com evento ``CASE_ADMINISTRATIVELY_CLOSED`` na janela (R3).
+
+    O card conta EVENTOS do período (semântica do cenário "encerramentos
+    administrativos contados no período"): o caso aparece na métrica mesmo
+    quando foi criado fora da janela.
+    """
+    events = CaseEvent.objects.filter(event_type=CaseEventType.CASE_ADMINISTRATIVELY_CLOSED)
+    if start is not None and end is not None:
+        events = events.filter(timestamp__gte=start, timestamp__lt=end)
+    return set(events.values_list("case_id", flat=True))
 
 
 def compute_summary(period: str) -> dict[str, int]:
-    """Resumo do período (R1): total, agendados, negados, em andamento e encerrados.
+    """Resumo do período (R1/R3): total, agendados, negados, em andamento,
+    encerrados e encerramentos administrativos.
 
-    ``em_andamento = total − agendados − negados`` (≥ 0 por construção — o
-    desfecho só é atribuído a casos de status pós-final). ``encerrados`` conta
-    os casos da população em ``CLEANED``.
+    ``em_andamento`` é derivado da POPULAÇÃO (``created_at`` na janela) por
+    conjuntos de ids: ``|population − agendados − negados − (admin_fechados ∩
+    population sem desfecho)|``. Admin-fechado FORA da população não subtrai
+    (total 0 com card 1 sem em andamento negativo) e admin-fechado COM desfecho
+    já está em ``agendados``/``negados`` (sem dupla subtração). ``encerrados``
+    segue contando os ``CLEANED`` da população — INCLUI os encerrados
+    administrativamente; ``administratively_closed`` conta os eventos do
+    período. Os conjuntos subtraídos são subconjuntos da população, então o
+    saldo de ``em_andamento`` nunca é negativo por construção.
     """
     start, end = _period_bounds(period)
     population = _window(start, end)
-    total = population.count()
-    outcome = _outcome_by_case(population)
-    agendados = _count_outcome(outcome, _SCHEDULED_SOURCES)
-    negados = _count_outcome(outcome, _NEGATED_SOURCES)
+    population_ids = set(population.values_list("case_id", flat=True))
+    outcome = outcome_by_case(population)
+    scheduled_ids = _outcome_ids(outcome, _SCHEDULED_SOURCES)
+    negated_ids = _outcome_ids(outcome, _NEGATED_SOURCES)
+    admin_closed_ids = _administratively_closed_case_ids(start, end)
+    admin_without_outcome = (admin_closed_ids & population_ids) - scheduled_ids - negated_ids
     return {
-        "total": total,
-        "agendados": agendados,
-        "negados": negados,
-        "em_andamento": total - agendados - negados,
+        "total": len(population_ids),
+        "agendados": len(scheduled_ids),
+        "negados": len(negated_ids),
+        "em_andamento": len(population_ids - scheduled_ids - negated_ids - admin_without_outcome),
         "encerrados": population.filter(status=CaseStatus.CLEANED).count(),
+        "administratively_closed": len(admin_closed_ids),
     }
 
 
@@ -221,7 +263,7 @@ def compute_by_unit(period: str) -> dict[str, int]:
     """
     start, end = _period_bounds(period)
     population = _window(start, end)
-    outcome = _outcome_by_case(population)
+    outcome = outcome_by_case(population)
     scheduled = str(CaseStatus.SCHEDULING_CONFIRMED)
     scheduled_ids = [case_id for case_id, source in outcome.items() if source == scheduled]
     return {

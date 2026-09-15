@@ -53,7 +53,7 @@ from django.views.decorators.http import require_POST
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
-from apps.cases.closure import acknowledge_case_receipt
+from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS, acknowledge_case_receipt
 from apps.cases.events import CaseEventType
 from apps.cases.locks import CaseLockConflictError
 from apps.cases.models import Case, CaseDocument, CaseStatus, DoctorDisposition
@@ -110,6 +110,12 @@ _SCHEDULED_AT_FORMAT = "%d/%m/%Y %H:%M"
 _MY_CASES_TABS = frozenset({"active", "closed"})
 _DEFAULT_MY_CASES_TAB = "active"
 
+# Resultado do encerramento administrativo no card de "meus casos" (R3/D4):
+# prefixo fixo + rótulo legível do catálogo de motivos de ``apps/cases/closure.py``
+# (fonte única). O texto livre do motivo vem do supervisor autor do encerramento e
+# é exibido ao CRIADOR (dono do caso, D4) — sem PHI no fluxo.
+_ADMIN_CLOSED_RESULT_PREFIX = "Encerrado administrativamente"
+
 
 def _require_user(request: HttpRequest) -> User:
     """Usuário autenticado de uma view já protegida por ``@role_required``."""
@@ -137,6 +143,30 @@ def _declared_types_from_rows(case: Case) -> list[str]:
     exibição é resolvida por ``_procedure_labels``.
     """
     return [row.procedure_type for row in case.procedures.all() if row.declared_by_nir]
+
+
+def _administrative_closure_result(case: Case) -> tuple[str, str] | None:
+    """Resultado e texto do encerramento administrativo do caso (R3/D4).
+
+    Lê o evento ``CASE_ADMINISTRATIVELY_CLOSED`` MAIS RECENTE das rows já
+    pré-carregadas (``prefetch_related("events")`` — sem N+1): o rótulo legível
+    vem do catálogo de motivos de ``apps/cases/closure.py``. Sem evento
+    administrativo → ``None`` (o caso encerrado pela ciência do NIR segue sem
+    resultado adicional); vale apenas para ``CLEANED``, checado no chamador.
+    """
+    admin_events = [
+        event
+        for event in case.events.all()
+        if event.event_type == CaseEventType.CASE_ADMINISTRATIVELY_CLOSED
+    ]
+    if not admin_events:
+        return None
+    event = max(admin_events, key=lambda item: item.pk)
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    reason_code = payload.get("reason_code", "")
+    reason_label = ADMINISTRATIVE_CLOSURE_REASONS.get(reason_code, reason_code)
+    reason_text = payload.get("reason_text", "")
+    return f"{_ADMIN_CLOSED_RESULT_PREFIX} — {reason_label}", str(reason_text)
 
 
 def _summarize_payload(payload: dict[str, Any]) -> list[tuple[str, str]]:
@@ -271,6 +301,11 @@ def my_cases(request: HttpRequest) -> HttpResponse:
     aba **encerrados** lista apenas os ``CLEANED`` — mesmo formato de items,
     badges e ordenação (``created_at desc``). ``?tab=`` desconhecido/ausente
     nunca vaza nem quebra: cai em ativos.
+
+    Slice 003 do painel-lista-encerramento (R3/D4): o queryset pré-carrega
+    ``events`` (além de ``procedures``) e o caso ``CLEANED`` com evento
+    administrativo recebe o resultado "Encerrado administrativamente — {motivo}"
+    na aba de encerrados — só para o CRIADOR (o escopo por criador já o garante).
     """
     user = _require_user(request)
     requested_tab = request.GET.get("tab", _DEFAULT_MY_CASES_TAB)
@@ -282,13 +317,18 @@ def my_cases(request: HttpRequest) -> HttpResponse:
     selected_cases = closed_cases if current_tab == "closed" else active_cases
 
     items = []
-    for case in selected_cases.prefetch_related("procedures").order_by("-created_at"):
+    for case in selected_cases.prefetch_related("procedures", "events").order_by("-created_at"):
+        closure_result = (
+            _administrative_closure_result(case) if case.status == CaseStatus.CLEANED else None
+        )
         items.append(
             {
                 "case": case,
                 "status_label": case.get_status_display(),
                 "procedure_labels": _procedure_labels(_declared_types_from_rows(case)),
                 "agency_record_number": case.agency_record_number or "—",
+                "admin_closure_result": closure_result[0] if closure_result else "",
+                "admin_closure_reason": closure_result[1] if closure_result else "",
             }
         )
     return render(

@@ -24,6 +24,7 @@ from django.test import Client, override_settings
 from django.urls import reverse
 
 from apps.accounts.models import User
+from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS, administratively_close_case
 from apps.cases.communications import post_user_communication
 from apps.cases.models import Case, CaseDocument, CaseStatus
 from apps.intake.services import create_case_with_documents
@@ -324,3 +325,75 @@ def test_non_nir_forbidden_on_all_routes(
         == 403
     )
     assert CaseDocument.objects.count() == 1
+
+
+# ── R3: resultado do encerramento administrativo ao criador (slice 003) ───
+
+# Motivo do catálogo do encerramento administrativo usado nas fixtures.
+ADMIN_CLOSURE_REASON_CODE = "stuck_lock"
+ADMIN_CLOSURE_REASON_TEXT = "lock do worker nao liberado apos 24h"
+MANAGER_ROLE = "manager"
+
+
+def _close_administratively(case: Case, manager: User) -> Case:
+    """Encerra o caso pelo serviço real do núcleo (papel ativo do supervisor)."""
+    administratively_close_case(
+        case=case,
+        user=manager,
+        active_role=MANAGER_ROLE,
+        reason_code=ADMIN_CLOSURE_REASON_CODE,
+        reason_text=ADMIN_CLOSURE_REASON_TEXT,
+    )
+    assert case.status == CaseStatus.CLEANED
+    return case
+
+
+@pytest.mark.django_db
+def test_closed_tab_shows_administrative_closure_result(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R3/D4: na aba de encerrados, o CRIADOR vê o resultado "Encerrado
+    administrativamente" com o rótulo do motivo e o texto registrado."""
+    case = _create_case(nir_user, pdf_factory)
+    manager = user_factory("gestor-mycases", MANAGER_ROLE)
+    _close_administratively(case, manager)
+
+    client.force_login(nir_user)
+    response = client.get(reverse("intake:my_cases"), {"tab": "closed"})
+    body = response.content.decode()
+
+    assert response.status_code == 200
+    assert str(case.case_id) in body
+    assert "Encerrado administrativamente" in body
+    assert ADMINISTRATIVE_CLOSURE_REASONS[ADMIN_CLOSURE_REASON_CODE] in body
+    assert ADMIN_CLOSURE_REASON_TEXT in body
+
+
+@pytest.mark.django_db
+def test_administrative_closure_result_is_scoped_to_creator(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R3/D4: o resultado administrativo nunca vaza para outro NIR e o caso
+    encerrado sai da aba de ativos do próprio criador."""
+    case = _create_case(nir_user, pdf_factory)
+    manager = user_factory("gestor-mycases-alheio", MANAGER_ROLE)
+    _close_administratively(case, manager)
+    other_nir = user_factory("nir-alheio-adm", NIR_ROLE)
+
+    client.force_login(other_nir)
+    foreign_body = client.get(reverse("intake:my_cases"), {"tab": "closed"}).content.decode()
+
+    assert str(case.case_id) not in foreign_body
+    assert ADMIN_CLOSURE_REASON_TEXT not in foreign_body
+
+    client.force_login(nir_user)
+    active_body = client.get(reverse("intake:my_cases")).content.decode()
+
+    assert str(case.case_id) not in active_body
+    assert ADMIN_CLOSURE_REASON_TEXT not in active_body

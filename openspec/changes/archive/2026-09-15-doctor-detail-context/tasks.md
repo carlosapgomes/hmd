@@ -15,4 +15,4 @@
 
 - [x] 2.1 E2E no dev: detalhe médico do caso real com demografia populada
       e ordem clínica
-- [ ] 2.2 Archive do change (sync specs main + Purposes)
+- [x] 2.2 Archive do change (sync specs main + Purposes)

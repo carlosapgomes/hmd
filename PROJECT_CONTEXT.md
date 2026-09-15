@@ -123,15 +123,13 @@ fundamento do cabeçalho (acima) já fornece nome/idade/sexo/raça/dias-em-tela
    waiting-time), ordenados pelo tempo de tela (mais tempo esperando
    primeiro). Padrão: cards do ats-web em todas as filas. (Data de
    nascimento não existe no relatório — fora de escopo.)
-2. **Detalhe do caso (médico)**: o card de identificação já renderiza
-   `patient_name`/nº de ocorrência — com o cabeçalho SESAB extraído, o nome
-   agora popula; falta UI para idade/sexo/raça (demografia do caso) no
-   card.
-3. **Ordem dos cards no detalhe (médico)**: "Sumário clínico" e "Estrutura
-   extraída" devem vir ANTES do card "Alertas consultivos" e logo depois de
-   "Procedimentos declarados" (hoje as infos extraídas chegam depois dos
-   comentários da automação; o médico quer o quadro clínico primeiro, depois
-   o consultivo).
+2. ~~Detalhe do caso (médico): demografia~~ **CONCLUÍDO** (change
+   `doctor-detail-context`, 2026-09-15): card de identificação com Idade
+   (`84 a`)/Sexo/Raça-Cor (`—` quando ausentes).
+3. ~~Ordem dos cards no detalhe (médico)~~ **CONCLUÍDO** (mesmo change):
+   quadro clínico (Procedimentos declarados → Sumário clínico → Estrutura
+   extraída) antes de Alertas consultivos; Decisões registradas entre o
+   quadro e o consultivo; ordem pinnada por índices no HTML.
 4. **Trilha de eventos**: (a) NIR e médico NÃO veem a trilha — em erro,
    basta badge/ícone de erro; (b) a trilha passa a viver nos detalhes da
    listagem de cards do painel (dashboard, change `painel-lista-encerramento`

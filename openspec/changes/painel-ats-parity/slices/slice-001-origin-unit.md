@@ -38,12 +38,15 @@ zerado no reenvio; preservado no CLEANED.
   de `Unid. Origem:` — valor na MESMA linha OU, rótulo sozinho, na linha
   imediatamente seguinte quando ela é um valor plausível (não-vazia E não
   inicia um rótulo de campo SESAB — consulta à lista canônica
-  `SESAB_FIELD_LABELS`, criada AQUI em `pdf_utils.py` como a atual
-  `_FIELD_BREAK_LABELS` de `apps/anonymization/deterministic.py` mudando
-  de casa: `deterministic.py` passa a importar de `pdf_utils` — a
-  dependência vigente deterministic→pdf_utils continua, **sem ciclo**;
-  comportamento do `_FIELD_BREAK_PATTERN` inalterado, testes existentes do
-  deterministic devem continuar verdes). Primeira ocorrência; strip;
+  `SESAB_FIELD_LABELS`, criada AQUI em `pdf_utils.py` NASCIDA EXPANDIDA:
+  a atual `_FIELD_BREAK_LABELS` + os rótulos demográficos/institucionais
+  que faltam (`Paciente`, `Nome Social`, `Sexo`, `Idade`, `Raça/Cor`,
+  `Data Adm. Unid.`, `Dias Unid.`, `Dias em tela`, `Abertura`, `Código`,
+  `Unid. Origem`/`Unidade de Origem` — catálogo completo do cabeçalho,
+  fold). `deterministic.py` importa a lista de `pdf_utils` (sem ciclo) e
+  compila `_FIELD_BREAK_PATTERN` dela — captura de valores fica MAIS
+  ESTRITA; ajustar conscientemente testes legados do deterministic que
+  pinarem capturas antigas. Primeira ocorrência; strip;
   truncada a 128. Ausente → `None`.
 
 ### R2 — Campo + persistência
@@ -55,9 +58,10 @@ zerado no reenvio; preservado no CLEANED.
 ### R3 — Testes (RED→GREEN)
 
 - Novos (RED): extração multilinha (rótulo sozinho + valor na seguinte) e
-  mesma-linha; **adversariais com rótulos demográficos/institucionais na
-  linha seguinte** (`Sexo:`, `Idade:`, `Dias Unid.:`, `Abertura:`,
-  `Código:`) → `None`; rótulo sozinho seguido de linha vazia → `None`;
+  mesma-linha; **adversarial PARAMETRIZADO: CADA rótulo de
+  `SESAB_FIELD_LABELS` na linha seguinte a `Unid. Origem:` → `None`**
+  (itera a lista — rótulo novo esquecido quebra o teste, anti-drift);
+  rótulo sozinho seguido de linha vazia → `None`;
   worker persiste; reenvio zera (incluindo PDF corrompido); CLEANED
   preserva (paridade); eventos sem o valor; regressão do deterministic com
   `SESAB_FIELD_LABELS` importada (suíte anonymization verde);

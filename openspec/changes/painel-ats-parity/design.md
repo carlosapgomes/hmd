@@ -106,6 +106,15 @@
   «Presenter re-identificado» (cenário novo: sem trilha), «Meus casos e
   detalhe do NIR» (detalhe sem trilha + badge de erro).
 
+## D5b — Títulos de cenários verbatim (nota de formato)
+
+Dois cenários das specs main têm títulos datados («Lista padrão mostra
+casos ativos do período» — agora todos os estados; «Detalhe exibe
+documentos e trilha» — agora sem trilha). O validador OpenSpec EXIGE que
+MODIFIED carregue os títulos existentes verbatim (renomear = omitir) — os
+títulos permanecem e os CORPOS governam o comportamento novo; custo
+conhecido e documentado do formato, sem ambiguidade contratual.
+
 ## D5 — Não-mudanças
 
 - Guard `_assert_tokens_only`, anonimização e todo o perímetro externo —

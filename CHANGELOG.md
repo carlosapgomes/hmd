@@ -4,6 +4,46 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.10] — 2026-09-15
+
+**Dia do backlog pós-piloto (fase 2)** — 4 changes (22º–25º archives), política
+ de PHI corrigida pelo dono: **zero-PHI é exigência do perímetro EXTERNO
+ (LLMs/serviços de terceiros)**; a UI interna (funcionários do hospital)
+ mostra a identificação completa. Suíte 1269 → **1451**.
+
+- **`sesab-header-extraction`** — o cabeçalho padrão SESAB (repetido por
+  página) passa a ser fonte determinística: **nome do paciente** extraído
+  da linha de demografia (layout desalinhado da extração linear — o nome
+  ia ao LLM em claro; agora `<PESSOA_1>` em todas as ocorrências, zero
+  restantes), nome social como candidato PESSOA próprio, e metadados
+  `patient_age`/`patient_gender`/`patient_race`/`days_on_screen`
+  (Dias em tela = maior ocorrência, molde ats-web). Benchmark com corpus
+  real como aceite; E2E no PDF do dono.
+- **`doctor-detail-context`** — card de identificação do detalhe médico com
+  Idade/Sexo/Raça-Cor e **ordem de leitura clínica**: Procedimentos →
+  Sumário clínico → Estrutura extraída ANTES dos Alertas consultivos.
+- **`queue-cards-wait-time`** — filas de médico/agendador **ordenadas por
+  tempo de tela** (`days_on_screen` desc nulls-last, desempate FIFO) com
+  cards nome+idade+⏱ Aguardando há/Recebido há+badge `N d em tela`;
+  Meus casos do NIR com nome+idade (escopo por criador intacto).
+- **`painel-ats-parity`** — painel em paridade com o dashboard ats-web:
+  cards com nome/idade/**unidade de origem** (extraída do cabeçalho,
+  campo novo)/exames/fase/data-hora+[Detalhes]; filtros data range + tipo
+  de exame + busca por nome (AND); default **hoje/todos os estados**;
+  **detalhe do caso no painel** com **trilha legível** (EVENT_LABELS
+  100% do enum, anti-drift) collapsible + encerramento administrativo;
+  trilha REMOVIDA de NIR/médico com badge «Falha no processamento".
+- **`painel-lista-encerramento`** (21º, v0.1.9+) — lista de casos no painel
+  + encerramento administrativo ≠CLEANED→CLEANED com minimização
+  rows+arquivos, gates anti-worker-zumbi (defesa em 3 camadas), notificação
+  ao criador (4º marco) e métrica de encerramentos.
+- Fixes da fila médica (link «Abrir caso» nos cards — rotas inalcançáveis) e
+  isolamento do `.env` do repo na suíte.
+
+**Migrations**: `accounts.0005` (tipo de notificação ADMINISTRATIVELY_CLOSED),
+ `cases.0010` (metadados do cabeçalho), `cases.0011` (`origin_unit`) — **o
+ update requer `migrate`**.
+
 ## [0.1.9] — 2026-09-14
 
 **Fix do incidente da fase 2 (mapa envenenado pelo NER)** (change

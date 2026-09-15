@@ -40,7 +40,7 @@ services:
   # Web de produção (gunicorn, CMD do Dockerfile): somente a imagem pronta,
   # sem bind de código e sem porta publicada.
   web:
-    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.9}
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.10}
     restart: unless-stopped
     stop_grace_period: 40s
     # Limites de recurso — PLANEJADOS/INICIAIS da fase 1 (blueprint/Eon,
@@ -163,7 +163,7 @@ services:
   # idempotentes. Usa a credencial de MIGRATOR (DDL), nunca a da aplicação.
   # `restart: "no"`: roda uma vez e sai (invocado com `run --rm migrate`).
   migrate:
-    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.9}
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.10}
     profiles: ["migrate"]
     restart: "no"
     command: >
@@ -214,7 +214,7 @@ services:
   # no volume compartilhado e enfileira; este processo lê). Ao concluir, o
   # signal enfileira no cluster anonymization.
   worker-pdf:
-    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.9}
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.10}
     profiles: ["workers"]
     restart: unless-stopped
     stop_grace_period: 40s
@@ -251,7 +251,7 @@ services:
   # Cluster anonymization: único processo que carrega o engine Presidio/spaCy
   # (singleton; o modelo vive na imagem). Não sai para a rede (nenhum egress).
   worker-anonymization:
-    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.9}
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.10}
     profiles: ["workers"]
     restart: unless-stopped
     stop_grace_period: 40s
@@ -298,7 +298,7 @@ services:
   # concluir a anonimização, o signal enfileira aqui (nunca inline no worker
   # de anonimização).
   worker-llm:
-    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.9}
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.10}
     profiles: ["workers"]
     restart: unless-stopped
     stop_grace_period: 40s
@@ -350,7 +350,7 @@ services:
   # externa). Dispara no CASE_ANONYMIZATION_COMPLETED, em paralelo ao cluster
   # llm (nunca inline no worker de anonimização).
   worker-attachments:
-    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.9}
+    image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.10}
     profiles: ["workers"]
     restart: unless-stopped
     stop_grace_period: 40s

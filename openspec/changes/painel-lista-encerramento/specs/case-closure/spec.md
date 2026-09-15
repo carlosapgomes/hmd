@@ -48,8 +48,11 @@ catálogo fixo (`processing_error`, `llm_failure`, `system_bug`,
 `stuck_lock`, `duplicate_reprocess`, `other`) e texto descritivo
 obrigatório. O encerramento SHALL registrar evento de auditoria
 `CASE_ADMINISTRATIVELY_CLOSED` com código, texto, autor e papel; SHALL
-limpar o lock operacional persistido do caso; e SHALL notificar o criador
-do caso. Casos já em `CLEANED` SHALL ser rejeitados.
+limpar o lock operacional persistido do caso; SHALL minimizar os dados
+clínicos do caso (documentos e anexos removidos, campos clínicos zerados —
+mesma limpeza do encerramento por ciência); SHALL notificar o criador do
+caso; e SHALL ser recusado enquanto houver lock de worker com lease válida.
+Casos já em `CLEANED` SHALL ser rejeitados.
 
 #### Scenario: Supervisor encerra caso travado com motivo
 
@@ -57,6 +60,19 @@ do caso. Casos já em `CLEANED` SHALL ser rejeitados.
 - **WHEN** encerra administrativamente com código `processing_error` e texto
 - **THEN** o caso vai a `CLEANED`, o evento de auditoria é registrado com o
   payload completo e o lock do caso fica limpo
+
+#### Scenario: Encerramento minimiza dados clínicos
+
+- **GIVEN** um caso com documentos, anexos e campos clínicos preenchidos
+- **WHEN** é encerrado administrativamente
+- **THEN** documentos e anexos são removidos, os campos clínicos ficam
+  zerados e o download de documento do caso não é mais possível
+
+#### Scenario: Encerramento recusado durante processamento ativo
+
+- **GIVEN** um caso com lock de worker e lease ainda válida
+- **WHEN** tenta-se o encerramento administrativo
+- **THEN** a operação é recusada com erro e o caso permanece inalterado
 
 #### Scenario: Encerramento exige texto do motivo
 

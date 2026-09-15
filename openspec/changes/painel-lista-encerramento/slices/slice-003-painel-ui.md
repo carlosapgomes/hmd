@@ -1,4 +1,4 @@
-# Slice 002 — Lista no painel + rota/UI de encerramento + resultado ao criador
+# Slice 003 — Lista no painel + rota/UI de encerramento + resultado ao criador
 
 ## Contexto necessário
 

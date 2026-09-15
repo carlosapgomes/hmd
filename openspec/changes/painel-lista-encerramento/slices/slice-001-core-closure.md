@@ -24,15 +24,9 @@
   nir → `intake:case_detail`); teste-invariante dos tipos em
   `apps/accounts/tests/test_notifications_model.py` (~78-85); manual do
   usuário enumera marcos em `templates/accounts/manual.html` (~216-226).
-- Pipeline em voo: atomics de escrita clínica SEM checagem de status em
-  `apps/pipeline/policy.py` (~679-683: `policy_result`),
-  `apps/pipeline/llm2_service.py` (~428-432: `summary_text`/
-  `suggested_action`), `apps/pipeline/prior_case.py` (~218-219); chamadores
-  com `refresh_from_db` pré-passo em `apps/pipeline/orchestrator.py`
-  (~132/157/163), `apps/intake/tasks.py` (~127-128, refresh no except),
-  `apps/anonymization/tasks.py` (~180-181). Contextos de worker começam
-  com `worker_`; handlers de erro chamam `fail_processing` (só aceita
-  PDF_EXTRACTING/ANONYMIZING/LLM_EXTRACTING/LLM_SUMMARIZING).
+- Workers: contextos de lock começam com `worker_` e a lease default é
+  300s (`apps/cases/locks.py`) — base da validação de recusa por lease
+  viva. (Gates de escrita pós-encerramento ficam no slice 002.)
 - Exceção do repo para validação: `ValueError` nomeada (NÃO existe
   `DomainError`).
 
@@ -40,8 +34,7 @@
 
 Transição excepcional auditável → CLEANED com minimização completa (rows +
 arquivos físicos), força-release de lock auditável, recusa fail-closed,
-notificação ao criador (tipo novo + migration + spec notifications) e
-abort de escrita pós-encerramento nos workers.
+notificação ao criador (tipo novo + migration + spec notifications).
 
 ## Deliverables
 
@@ -73,9 +66,11 @@ abort de escrita pós-encerramento nos workers.
 - Gatilho em `create_milestone_notifications`: título e preview FIXOS
   "Caso encerrado administrativamente" (sem `reason_text`, sem PHI);
   destinatário `case.created_by`.
-- Amend do teste-invariante (4 marcos) + docstrings que dizem "conjunto
-  FECHADO" (`apps/accounts/notifications.py` E `apps/accounts/signals.py`)
-  + `templates/accounts/manual.html` (enumera o 4º marco).
+- Amend do teste-invariante (4 marcos) + textos que dizem "3 marcos"/
+  "conjunto FECHADO": docstrings de `apps/accounts/notifications.py`,
+  `apps/accounts/signals.py` e `apps/accounts/models.py` (~156),
+  docstring de `apps/accounts/tests/test_notifications_service.py` (~3) +
+  `templates/accounts/manual.html` (enumera o 4º marco).
 
 ### R3 — Testes (`apps/cases/tests/test_administrative_closure.py` novo)
 
@@ -113,6 +108,7 @@ abort de escrita pós-encerramento nos workers.
 - apps/accounts/migrations/0005_*.py (novo)
 - apps/accounts/tests/test_notifications_model.py (amend do invariante)
 - apps/accounts/signals.py (docstring do conjunto)
+- apps/accounts/tests/test_notifications_service.py (docstring do conjunto)
 - templates/accounts/manual.html (4º marco)
 - allowed incidental: NENHUM
 

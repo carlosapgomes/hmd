@@ -1,4 +1,4 @@
-# Design: painel-lista-encerramento (rev.3 — plan review)
+# Design: painel-lista-encerramento (rev.5 — plan review)
 
 ## Context
 
@@ -122,8 +122,20 @@ reason_code, reason_text) -> Case`.
   escrita**, cobrindo o passo longo com lease expirada que retorna depois
   do encerramento: `apps/pipeline/policy.py` (~679: re-lê no atomic,
   retorna `{}` sem persistir se CLEANED — orquestrador ignora o retorno,
-  mypy satisfeito), `llm2_service.py` (~428, idem), `prior_case.py`
-  (~218, idem); **`apps/intake/tasks.py`** (~218-263: `_extract_and_decide`
+  mypy satisfeito), `llm2_service.py` (~428, idem, retornando o **sentinel
+  tipado** `Llm2SummarizationResult(suggestions={}, aggregate="",
+  aggregate_reasons=[], retry_used=False)` — `{}` não passa no mypy, a
+  assinatura é `-> Llm2SummarizationResult`), `prior_case.py`
+  (~218, idem, `None` — contrato `-> None`); **`apps/pipeline/
+  llm1_service.py`** (~330: re-lê DENTRO do atomic de persistência; se
+  CLEANED, pula TODAS as escritas — `structured_data`, `manual_review_*` e
+  eventos — e devolve o resultado computado sem persistir) e, no
+  orquestrador, **refresh+gate logo APÓS `run_llm1_extraction`, ANTES do
+  ramo de divergência e de `complete_llm_extraction`** — sem isso o save
+  full de `_run_transition` ressuscitaria `status=LLM_SUMMARIZING`, campos
+  clínicos e lock de uma linha CLEANED, e o refresh seguinte leria o
+  estado ressuscitado (os gates de dentro passariam até AWAITING_DOCTOR);
+  **`apps/intake/tasks.py`** (~218-263: `_extract_and_decide`
   re-lê a linha dentro do atomic ANTES de gravar `extracted_text`/eventos —
   o caminho de RETENÇÃO hoje commita via `return False` no release, então
   o gate tem de vir antes de qualquer write, inclusive o evento
@@ -133,11 +145,19 @@ reason_code, reason_text) -> Case`.
   os 6 campos de lock lidos antes do claim). Worker de anexos NÃO precisa
   de gate (só escreve na row do anexo; re-lê e devolve None se a row
   sumiu — resíduo pré-existente absorvido por `_fail_attachment`).
-  Testes pinnados com INTERCALAÇÃO (transição para CLEANED entre o refresh
-  pré-passo e a escrita — sem intercalar, o gate de topo no-opa e o teste
-  fica verde sem fix): intake e anonymization + policy/llm2/prior_case.
+  Testes pinnados com INTERCALAÇÃO e **seam nomeado, FORA do atomic de
+  escrita** (senão o re-read do fix roda antes da intercalação e o teste
+  nunca fica verde) e com a lease já EXPIRADA no banco antes de intercalar
+  (senão a recusa de lease viva do service aborta a intercalação em vez do
+  write): intake — seam em `evaluate_regulation_report`/
+  `_extract_document_text` (~206-216, antes do atomic ~218);
+  anonymization — seam antes de `start_anonymization`/do atomic (~144/160);
+  pipeline — seam no stub do cliente LLM cuja chamada intercala o
+  encerramento (padrão dos testes existentes com clientes fake), cobrindo
+  llm1 (status permanece CLEANED, `structured_data` segue zerado),
+  policy/llm2/prior_case e o handler de erro.
 - Notificação ao criador: **novo `NotificationType`
-  `ADMINISTRATIVELY_CLOSED = "administratively_closed"`** (24 chars <
+  `ADMINISTRATIVELY_CLOSED = "administratively_closed"`** (23 chars <
   max_length 30; choices congeladas na migration `0004` → **migration
   `0005` AlterField**, sem DDL no Postgres, mantém `makemigrations
   --check` limpo; amend do teste-invariante no mesmo slice). Gatilho no
@@ -165,10 +185,10 @@ reason_code, reason_text) -> Case`.
   estados (nada inventado inline no template).
 - `encerrados` (CLEANED) CONTINUA contando os administrativamente
   encerrados (mesmo card de encerrados de hoje).
-- Arquivamento: além do desvio vs PROJECT_CONTEXT 4(b), ajustar o
-  **Purpose** da spec dashboard main ("sem qualquer dado de paciente" →
+- Arquivamento: além do desvio vs PROJECT_CONTEXT 4(b), ajustar os
+  **Purpose** das specs main dashboard ("sem qualquer dado de paciente" →
   métricas sem dados de paciente; lista identifica casos por nº de
-  ocorrência).
+  ocorrência) e notifications (3 marcos → 4).
 
 ### D3 — Rota/UI de encerramento (painel)
 
@@ -194,10 +214,10 @@ encerrados.
 - `apps/dashboard/tests/test_views.py:33-36/141-155` ("Página sem dados de
   paciente"): passa a pinnar **nome e data de nascimento do paciente**
   ausentes (nº de ocorrência é dado do caso e aparece na lista); docstring
-  atualizado. Amend no slice 002.
+  atualizado. Amend no slice 003.
 - `apps/dashboard/tests/test_metrics.py` (`EMPTY_SUMMARY` ~45-51 e
   iguadades de dict ~144-150/186-192/203-209/418-424): ganham a chave
-  `administratively_closed`. Amend declarado no slice 002.
+  `administratively_closed`. Amend declarado no slice 003.
 
 ## Risks / Trade-offs
 

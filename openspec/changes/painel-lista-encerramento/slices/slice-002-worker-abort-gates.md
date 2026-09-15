@@ -48,26 +48,46 @@ encerrado administrativamente (CLEANED); falhas inócuas, sem explosão.
 - `apps/anonymization/tasks.py`: re-ler ANTES de
   `anonymize_case_text`/`complete_anonymization`; se `CLEANED`, abortar
   (o save full do serviço não roda). No `except`, idem.
-- `apps/pipeline/policy.py` / `llm2_service.py` / `prior_case.py`: dentro
-  do atomic, re-ler e retornar `{}` (policy/llm2 — orquestrador ignora o
-  retorno; mypy satisfeito) ou `None` (prior_case, contrato existente)
-  sem persistir quando `CLEANED`.
+- `apps/pipeline/policy.py`: dentro do atomic, re-ler e retornar `{}`
+  sem persistir quando `CLEANED` (retorno tipado `dict`, chamador ignora).
+- `apps/pipeline/llm2_service.py`: idem, retornando o **sentinel tipado**
+  `Llm2SummarizationResult(suggestions={}, aggregate="",
+  aggregate_reasons=[], retry_used=False)` — `{}` não passa no mypy.
+- `apps/pipeline/llm1_service.py` (~330): re-lê DENTRO do atomic de
+  persistência; se `CLEANED`, pula TODAS as escritas (`structured_data`,
+  `manual_review_*`, eventos) e devolve o resultado computado sem
+  persistir.
+- `apps/pipeline/prior_case.py`: idem, `None` (contrato `-> None`).
 - `apps/pipeline/orchestrator.py`: após cada `refresh_from_db` pré-passo,
   retornar quando `CLEANED` (evita `TransitionNotAllowed` em
-  `start_/complete_llm_summarization`); no `except`, idem.
+  `start_/complete_llm_summarization`); **refresh+gate logo APÓS
+  `run_llm1_extraction`, ANTES do ramo de divergência e de
+  `complete_llm_extraction`** (o save full da transição ressuscitaria
+  status+campos+lock de uma linha CLEANED e envenenaria os gates
+  seguintes); no `except`, idem.
 
-### R2 — Testes (com INTERCALAÇÃO — sem ela o gate de topo no-opa e o
-teste fica verde sem fix)
+### R2 — Testes (com INTERCALAÇÃO — sem ela o gate de topo no-opa e o teste
+fica verde sem fix; seam SEMPRE fora do atomic de escrita, senão o re-read
+do fix roda antes da intercalação e o teste nunca fica verde; lease já
+EXPIRADA no banco ANTES de intercalar, senão a recusa de lease viva aborta
+a intercalação em vez do write)
 
-- intake: caso com documentos pendentes → task entra no passo →
-  INTERCALA `administratively_close_case` (lease expirada) → a task
-  prossegue o passo → nada gravado (sem `extracted_text`, sem evento de
-  retenção, sem ressurreição de status), atomic sem commit de writes.
-- anonymization: idem → `anonymized_text`/`pseudonym_map`/status/lock
-  seguem limpos após o passo retornar.
-- pipeline: caso encerrado → `evaluate_case_policies` e o passo de llm2
-  rodam → retornam `{}` sem persistir; `prior_case` idem; orquestrador
-  aborta sem `TransitionNotAllowed` e sem evento de falha.
+- intake: caso com documentos pendentes → task entra no passo (seam:
+  `evaluate_regulation_report`/`_extract_document_text`, ~206-216) →
+  INTERCALA `administratively_close_case` → a task prossegue o passo →
+  nada gravado (sem `extracted_text`, sem evento de retenção, sem
+  ressurreição de status).
+- anonymization: idem (seam antes de `start_anonymization`/do atomic,
+  ~144/160) → `anonymized_text`/`pseudonym_map`/status/lock seguem
+  limpos após o passo retornar.
+- pipeline llm1: seam no stub do cliente LLM (padrão dos testes com
+  clientes fake) que INTERCALA o encerramento durante a chamada →
+  `structured_data` segue zerado, nenhum evento LLM1 gravado, status
+  permanece `CLEANED` (orquestrador aborta antes da divergência/
+  `complete_llm_extraction`).
+- pipeline policy/llm2: caso encerrado → `evaluate_case_policies`
+  retorna `{}` e o passo de llm2 retorna o sentinel tipado, sem
+  persistir; `prior_case` idem (`None`).
 - Handlers de erro: caso CLEANED no `except` → sem `fail_processing`, sem
   exceção propagada (uma task representativa).
 
@@ -81,6 +101,7 @@ teste fica verde sem fix)
 - apps/anonymization/tasks.py
 - apps/pipeline/orchestrator.py
 - apps/pipeline/policy.py
+- apps/pipeline/llm1_service.py
 - apps/pipeline/llm2_service.py
 - apps/pipeline/prior_case.py
 - apps/cases/tests/test_closure_worker_abort.py (novo — ou nomes coerentes

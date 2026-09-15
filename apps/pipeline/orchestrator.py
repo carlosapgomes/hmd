@@ -144,6 +144,18 @@ def process_case_pipeline(case_id: uuid.UUID) -> None:
             # LLM_EXTRACTING e não re-dispara o signal de entrada).
             case.start_llm_extraction(user=None, role=SYSTEM_ROLE)
             extraction = run_llm1_extraction(case, user=None, role=SYSTEM_ROLE)
+            # Gate do slice 002: a chamada LLM é longa e pode retornar DEPOIS do
+            # encerramento administrativo — refresh ANTES do ramo de divergência
+            # e de ``complete_llm_extraction`` (o save full da transição
+            # ressuscitaria status/campos/lock de uma linha CLEANED).
+            case.refresh_from_db()
+            if case.status == CaseStatus.CLEANED:
+                logger.info(
+                    "process_case_pipeline: caso %s encerrado administrativamente após o "
+                    "LLM1 — abortando",
+                    case_id,
+                )
+                return
             if extraction.has_divergence:
                 logger.info(
                     "process_case_pipeline: caso %s retido por divergência declarado×detectado "
@@ -155,12 +167,26 @@ def process_case_pipeline(case_id: uuid.UUID) -> None:
 
         # Sumarização (continuação da extração ou retomada pós-bypass).
         case.refresh_from_db()
+        if case.status == CaseStatus.CLEANED:
+            logger.info(
+                "process_case_pipeline: caso %s encerrado administrativamente antes da "
+                "sumarização — abortando",
+                case_id,
+            )
+            return
         case.start_llm_summarization(user=None, role=SYSTEM_ROLE)
         evaluate_case_policies(case, user=None, role=SYSTEM_ROLE)
         record_prior_case_lookups(case, user=None, role=SYSTEM_ROLE)
         # Os serviços acima persistem em instâncias lockadas; a releitura
         # alinha o objeto em memória (policy_result etc.) antes da LLM2.
         case.refresh_from_db()
+        if case.status == CaseStatus.CLEANED:
+            logger.info(
+                "process_case_pipeline: caso %s encerrado administrativamente antes do "
+                "LLM2 — abortando",
+                case_id,
+            )
+            return
         run_llm2_summarization(case, user=None, role=SYSTEM_ROLE)
 
         # Coordenação transição+release no MESMO atomic (padrão change 05): a
@@ -169,6 +195,10 @@ def process_case_pipeline(case_id: uuid.UUID) -> None:
         # dispara com a lease ``worker_llm`` já liberada.
         with transaction.atomic():
             current = Case.objects.select_for_update().get(pk=case.pk)
+            # Gate do slice 002: encerramento administrativo durante a chamada
+            # llm2 (sentinel) → abort benigno, sem transição nem log de erro.
+            if current.status == CaseStatus.CLEANED:
+                return
             current.complete_llm_summarization(user=None, role=SYSTEM_ROLE)
             try:
                 release_case_lock(current, lock.token)
@@ -186,6 +216,15 @@ def process_case_pipeline(case_id: uuid.UUID) -> None:
         # O rollback do atomic final desfez transição/eventos; a releitura
         # garante o estado real (e o fail_processing válido) antes do fail.
         case.refresh_from_db()
+        # Gate do slice 002: falha APÓS o encerramento não chama
+        # ``fail_processing`` (seria TransitionNotAllowed em CLEANED).
+        if case.status == CaseStatus.CLEANED:
+            logger.info(
+                "process_case_pipeline: caso %s encerrado administrativamente — "
+                "sem fail_processing",
+                case_id,
+            )
+            return
         case.fail_processing(reason=_failure_reason(exc), user=None, role=SYSTEM_ROLE)
     finally:
         if not released:

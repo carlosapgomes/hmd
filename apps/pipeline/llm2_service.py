@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -35,7 +36,7 @@ from django.db import transaction
 from pydantic import ValidationError as PydanticValidationError
 
 from apps.cases.events import CaseEventType
-from apps.cases.models import ActorType, Case, CaseEvent
+from apps.cases.models import ActorType, Case, CaseEvent, CaseStatus
 from apps.cases.procedures import get_declared_procedure_types
 from apps.llm.services import build_case_prompts, prompt_usage
 from apps.pipeline.json_parser import LlmJsonParseError, decode_llm_json_object
@@ -48,6 +49,8 @@ from apps.pipeline.schemas.llm2 import Llm2Response
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
+
+logger = logging.getLogger(__name__)
 
 # Motivo de falha das guardas (código da instrução corretiva do retry).
 GuardReason = Literal["schema", "language"]
@@ -427,6 +430,21 @@ def run_llm2_summarization(
 
     with transaction.atomic():
         locked = Case.objects.select_for_update().get(pk=case.pk)
+        # Gate do slice 002 (painel-lista-encerramento): o passo pode retornar
+        # DEPOIS do encerramento administrativo (worker com lease expirada) —
+        # devolve o sentinel tipado sem persistir ``summary_text``/
+        # ``suggested_action`` nem o evento no caso minimizado.
+        if locked.status == CaseStatus.CLEANED:
+            logger.info(
+                "run_llm2_summarization: caso %s encerrado administrativamente — sem persistir",
+                case.pk,
+            )
+            return Llm2SummarizationResult(
+                suggestions={},
+                aggregate="",
+                aggregate_reasons=[],
+                retry_used=False,
+            )
         locked.summary_text = validated.summary_text
         locked.suggested_action = suggested_action
         locked.save(update_fields=["summary_text", "suggested_action"])

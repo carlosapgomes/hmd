@@ -125,6 +125,16 @@ def process_case_documents(case_id: uuid.UUID, user: User | None = None) -> None
             # O rollback do atomic final desfez transição/eventos; a releitura
             # garante o estado real (e o fail_processing válido) antes do fail.
             case.refresh_from_db()
+            # Gate do slice 002: o erro pode ocorrer DEPOIS do encerramento
+            # administrativo (worker com lease expirada) — fail_processing em
+            # CLEANED seria TransitionNotAllowed; o passo encerra em silêncio.
+            if case.status == CaseStatus.CLEANED:
+                logger.info(
+                    "process_case_documents: caso %s encerrado administrativamente durante "
+                    "a extração — sem fail_processing",
+                    case_id,
+                )
+                return
             case.fail_processing(reason=_failure_reason(exc), user=None, role=SYSTEM_ROLE)
     finally:
         if not released:
@@ -217,6 +227,18 @@ def _extract_and_decide(case: Case, *, lock: CaseLock) -> bool:
 
     with transaction.atomic():
         current = Case.objects.select_for_update().get(pk=case.pk)
+        # Gate do slice 002 (painel-lista-encerramento): o passo longo (extração
+        # de N PDFs) pode retornar DEPOIS do encerramento administrativo com a
+        # lease expirada. Re-lê a linha ANTES de qualquer write — inclusive o
+        # evento de retenção ``CASE_GATE_MANUAL_REVIEW``, que commita este
+        # atomic via ``return False`` no release — e aborta em CLEANED.
+        if current.status == CaseStatus.CLEANED:
+            logger.info(
+                "process_case_documents: caso %s encerrado administrativamente durante "
+                "a extração — abortando sem persistir",
+                case.pk,
+            )
+            return False
         current.extracted_text = cleaned_text
         current.agency_record_number = record_number or ""
         current.agency_record_extracted_at = timezone.now()

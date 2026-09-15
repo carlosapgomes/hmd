@@ -126,4 +126,26 @@ TEST_DB_PORT=55435 uv run pytest apps/cases apps/intake apps/anonymization apps/
 
 ## Deviations / learnings
 
-- (preenchido na execução)
+- Seam de anonymization via WRAP do gate `_is_administratively_closed`
+  (intercala o closure e delega à implementação real — o re-read de produção
+  roda): não há colaborador patchável genuíno entre o porteiro de texto
+  vazio e o atomic; seam em `start_anonymization` é rejeitado por design.
+- RED do worker provado por neutralização `if False and …` (short-circuita a
+  chamada); a review apontou infidelidade no teste de anonymization —
+  hardening do parent fecha com duas camadas extras (abaixo) e o teste pina
+  a INVARIANTE final (nada persistido), não um gate único: neutralizar só o
+  gate externo é capturado pelo gate interno serializado; neutralizar ambos
+  cai na proteção estrutural (o refresh do gate muta a instância a CLEANED →
+  `complete_anonymization` levanta `TransitionNotAllowed` → rollback do
+  atomic) — defence-in-depth de 3 camadas.
+- Hardening do parent (review P1): teste irmão do sub-caminho de RETENÇÃO
+  (`_OFF_PATTERN_LINES`) — o único onde o gate é a única proteção (o atomic
+  de retenção commita via `return False`); discriminante: RED provado com
+  `git stash` do `apps/intake/tasks.py` (teste falha sem o gate).
+- Hardening do parent (review P2): gate serializado `select_for_update` no
+  topo do atomic de anonymization (fecha a janela entre o gate externo e o
+  save full durante a anonimização em si) e gate CLEANED no atomic final do
+  orquestrador antes de `complete_llm_summarization` (abort benigno, sem
+  `logger.exception` de erro).
+- Gates de erro do anonymization/orquestrador cobertos por "uma task
+  representativa" (R2 permite); except do intake pinnado.

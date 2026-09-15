@@ -39,6 +39,7 @@ flag do catálogo).
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -47,12 +48,14 @@ from typing import TYPE_CHECKING, Any, Literal
 from django.db import transaction
 
 from apps.cases.events import CaseEventType
-from apps.cases.models import ActorType, Case, CaseEvent
+from apps.cases.models import ActorType, Case, CaseEvent, CaseStatus
 from apps.cases.procedure_catalog import CRITERIA_SECTIONS, CriteriaSection, get_procedure_profile
 from apps.cases.procedures import get_declared_procedure_types
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
+
+logger = logging.getLogger(__name__)
 
 CriterionStatus = Literal["ok", "alerta", "nao_informado"]
 CriterionSeverity = Literal["recusa", "informativo"]
@@ -679,6 +682,15 @@ def evaluate_case_policies(
 
     with transaction.atomic():
         locked = Case.objects.select_for_update().get(pk=case.pk)
+        # Gate do slice 002 (painel-lista-encerramento): o passo pode retornar
+        # DEPOIS do encerramento administrativo (worker com lease expirada) —
+        # não persiste ``policy_result`` nem evento no caso minimizado.
+        if locked.status == CaseStatus.CLEANED:
+            logger.info(
+                "evaluate_case_policies: caso %s encerrado administrativamente — sem persistir",
+                case.pk,
+            )
+            return {}
         locked.policy_result = serialized
         locked.save(update_fields=["policy_result"])
         summary = [

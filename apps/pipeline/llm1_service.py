@@ -45,6 +45,7 @@ from apps.cases.models import (
     ActorType,
     Case,
     CaseEvent,
+    CaseStatus,
     DetectionStatus,
 )
 from apps.cases.procedures import (
@@ -328,6 +329,24 @@ def run_llm1_extraction(
     _assert_tokens_only(case, artifact)
 
     with transaction.atomic():
+        current = Case.objects.select_for_update().get(pk=case.pk)
+        # Gate do slice 002 (painel-lista-encerramento): a chamada LLM é longa e
+        # pode retornar DEPOIS do encerramento administrativo (worker com lease
+        # expirada). Re-lê DENTRO do atomic e, em CLEANED, pula TODAS as
+        # escritas (``structured_data``, ``manual_review_*``, eventos) devolvendo
+        # o resultado computado sem persistir.
+        if current.status == CaseStatus.CLEANED:
+            logger.info(
+                "run_llm1_extraction: caso %s encerrado administrativamente — sem persistir",
+                case.pk,
+            )
+            reconciliation = _reconcile_artifact(declared_types, artifact)
+            return Llm1ExtractionResult(
+                declared_types=declared_types,
+                detected_types=_detected_types(reconciliation),
+                reconciliation=reconciliation,
+                retry_used=retry_used,
+            )
         case.structured_data = artifact
         case.save(update_fields=["structured_data"])
         _record_event(
@@ -354,17 +373,35 @@ def run_llm1_extraction(
                 user=user,
                 role=role,
             )
-        detected_types = tuple(
-            procedure_type
-            for procedure_type, classification in reconciliation.classification().items()
-            if classification != "not_detected"
-        )
+        detected_types = _detected_types(reconciliation)
 
     return Llm1ExtractionResult(
         declared_types=declared_types,
         detected_types=detected_types,
         reconciliation=reconciliation,
         retry_used=retry_used,
+    )
+
+
+def _reconcile_artifact(
+    declared_types: tuple[str, ...], artifact: dict[str, Any]
+) -> ReconciliationResult:
+    """Reconcilia declarado × detectado a partir do artefato (puro, sem persistir)."""
+    pedido = artifact.get("pedido")
+    detected_raw: list[object] = []
+    if isinstance(pedido, dict):
+        procedures = pedido.get("procedimentos_solicitados")
+        if isinstance(procedures, list):
+            detected_raw = procedures
+    return reconcile_procedures(declared_types, (str(t) for t in detected_raw))
+
+
+def _detected_types(reconciliation: ReconciliationResult) -> tuple[str, ...]:
+    """Tipos detectados (≠ ``not_detected``) na ordem canônica da reconciliação."""
+    return tuple(
+        procedure_type
+        for procedure_type, classification in reconciliation.classification().items()
+        if classification != "not_detected"
     )
 
 
@@ -377,13 +414,7 @@ def _record_detection(
     role: str | None,
 ) -> ReconciliationResult:
     """Reconcilia declarado × detectado e grava a detecção (UPSERT, R4)."""
-    pedido = artifact.get("pedido")
-    detected_raw: list[object] = []
-    if isinstance(pedido, dict):
-        procedures = pedido.get("procedimentos_solicitados")
-        if isinstance(procedures, list):
-            detected_raw = procedures
-    reconciliation = reconcile_procedures(declared_types, (str(t) for t in detected_raw))
+    reconciliation = _reconcile_artifact(declared_types, artifact)
 
     detection_map: dict[str, str] = {}
     detected_set = set(reconciliation.match) | set(reconciliation.missing_declaration)

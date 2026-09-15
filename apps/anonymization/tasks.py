@@ -89,6 +89,19 @@ def _claim_worker_lock(case: Case, *, case_id: uuid.UUID) -> CaseLock | None:
         raise
 
 
+def _is_administratively_closed(case: Case) -> bool:
+    """Gate do slice 002: o caso foi encerrado administrativamente (CLEANED)?
+
+    Re-lê a row fresca (a instância em memória pode ser pré-encerramento) e
+    devolve ``True`` quando o status persistido é ``CLEANED``. O worker em voo
+    com lease expirada retorna depois do encerramento e não pode persistir
+    artefatos nem a transição: o ``save()`` full do serviço ressuscitaria
+    status, campos clínicos e os campos de lock de uma linha minimizada.
+    """
+    case.refresh_from_db()
+    return bool(case.status == CaseStatus.CLEANED)
+
+
 def process_case_anonymization(case_id: uuid.UUID) -> None:
     """Anonimiza o caso (entry point do worker/cluster anonymization).
 
@@ -148,6 +161,18 @@ def process_case_anonymization(case_id: uuid.UUID) -> None:
             case.fail_processing(reason=EMPTY_TEXT_REASON, user=None, role=SYSTEM_ROLE)
             return
 
+        # Gate do slice 002 (painel-lista-encerramento): re-lê ANTES de
+        # ``anonymize_case_text``/``complete_anonymization`` — o ``save()`` full
+        # do serviço ressuscitaria ``status``/campos clínicos/lock de uma linha
+        # CLEANED (worker com lease expirada que retorna após o encerramento).
+        if _is_administratively_closed(case):
+            logger.info(
+                "process_case_anonymization: caso %s encerrado administrativamente durante "
+                "a anonimização — abortando sem persistir",
+                case_id,
+            )
+            return
+
         try:
             # Persistência (wrapper 003) e transição FSM atômicas: em falha
             # nada é escrito — ``anonymized_text`` permanece vazio (fail-closed).
@@ -158,6 +183,12 @@ def process_case_anonymization(case_id: uuid.UUID) -> None:
             # autorizado no slice 006). O ``finally`` re-tenta nos demais
             # caminhos (falhas/estados não avançados) — release duplo é no-op.
             with transaction.atomic():
+                # Gate serializado do slice 002: re-leitura sob lock de linha
+                # fecha a janela entre o gate externo e o save full do serviço
+                # (encerramento commitando durante a anonimização em si).
+                locked = Case.objects.select_for_update().get(pk=case.pk)
+                if locked.status == CaseStatus.CLEANED:
+                    return
                 anonymize_case_text(case)
                 case.complete_anonymization(user=None, role=SYSTEM_ROLE)
                 try:
@@ -178,6 +209,15 @@ def process_case_anonymization(case_id: uuid.UUID) -> None:
             # Descarta qualquer estado sujo em memória do atomic que falhou
             # antes do fail_processing (o banco já está íntegro).
             case.refresh_from_db()
+            # Gate do slice 002: falha APÓS o encerramento não chama
+            # ``fail_processing`` (seria TransitionNotAllowed em CLEANED).
+            if case.status == CaseStatus.CLEANED:
+                logger.info(
+                    "process_case_anonymization: caso %s encerrado administrativamente "
+                    "durante a anonimização — sem fail_processing",
+                    case_id,
+                )
+                return
             case.fail_processing(reason=str(exc), user=None, role=SYSTEM_ROLE)
     finally:
         if not released:

@@ -29,6 +29,7 @@ quem consome é o resumo retornado ao orquestrador 006).
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from collections.abc import Mapping
@@ -41,11 +42,20 @@ from django.db import transaction
 
 from apps.anonymization.services import anonymize_text
 from apps.cases.events import CaseEventType
-from apps.cases.models import ActorType, Case, CaseEvent, CaseProcedure, DoctorDisposition
+from apps.cases.models import (
+    ActorType,
+    Case,
+    CaseEvent,
+    CaseProcedure,
+    CaseStatus,
+    DoctorDisposition,
+)
 from apps.cases.procedures import get_declared_procedure_types
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
+
+logger = logging.getLogger(__name__)
 
 # Origens canônicas do match (design D7 / R5).
 PriorCaseOrigin = Literal["occurrence_number", "name_birthdate_fallback"]
@@ -217,6 +227,15 @@ def record_prior_case_lookups(
 
     with transaction.atomic():
         locked = Case.objects.select_for_update().get(pk=case.pk)
+        # Gate do slice 002 (painel-lista-encerramento): o passo pode retornar
+        # DEPOIS do encerramento administrativo (worker com lease expirada) —
+        # não grava eventos ``PRIOR_CASE_LOOKUP`` no caso minimizado.
+        if locked.status == CaseStatus.CLEANED:
+            logger.info(
+                "record_prior_case_lookups: caso %s encerrado administrativamente — sem persistir",
+                case.pk,
+            )
+            return
         actor_type = ActorType.USER if user is not None else ActorType.SYSTEM
         for procedure_type in declared_types:
             summary = lookup_prior_case_context(locked, procedure_type)

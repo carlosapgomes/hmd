@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from dataclasses import dataclass
 
 import pymupdf
 
@@ -118,6 +119,93 @@ def extract_agency_record_number(text: str) -> str | None:
         if match:
             return match.group(1)
     return None
+
+
+# ── Cabeçalho padrão SESAB: metadados do caso (change sesab-header-extraction,
+# slice 001, R1/D3) ───────────────────────────────────────────────────────────
+# O cabeçalho repete-se por página e, na extração linear do PyMuPDF, rótulos e
+# valores desalinham: a demografia vem na linha ANTES do rótulo ``Paciente:``
+# sozinho (``<NOME> - Idade: 79a. - Sexo: F - Raça/Cor: Parda``). A âncora
+# anti-falso-positivo exige os TRÊS marcadores NA MESMA LINHA, nesta ordem —
+# idade mencionada em texto clínico isolado não casa. Fonte única do pattern:
+# o slice 002 da anonymization importa daqui (mesma direção do reuso de
+# ``extract_agency_record_number``).
+_RACE_ALTERNATION = r"Branc[ao]|Pret[ao]|Pard[ao]|Amarel[ao]|Ind[íi]gena|N[ãa]o\s+informad[oa]"
+DEMOGRAPHICS_LINE_PATTERN = re.compile(
+    r"Idade\s*:\s*(?P<age>\d+)\s*a\.?"
+    r".*?Sexo\s*:\s*(?P<gender>[FM])\b"
+    rf".*?Ra[çc]a\s*/\s*Cor\s*:\s*(?P<race>{_RACE_ALTERNATION})\b",
+    flags=re.IGNORECASE,
+)
+
+# ``Dias em tela``: forma mesma-linha (``Dias em tela: 3``) e forma do layout
+# real (rótulo sozinho com o valor na linha imediatamente seguinte, contendo
+# APENAS o inteiro).
+_DAYS_ON_SCREEN_LABEL_PATTERN = re.compile(r"^Dias\s+em\s+tela\s*:\s*$", flags=re.IGNORECASE)
+_DAYS_ON_SCREEN_INLINE_PATTERN = re.compile(r"Dias\s+em\s+tela\s*:\s*(\d+)", flags=re.IGNORECASE)
+_INTEGER_ONLY_LINE_PATTERN = re.compile(r"^\s*\d+\s*$")
+
+
+@dataclass(frozen=True)
+class HeaderMetadata:
+    """Metadados do cabeçalho padrão SESAB do relatório (R1, imutável).
+
+    Campos ausentes no texto ficam ``None`` (relatório sem cabeçalho não é
+    erro — D3).
+    """
+
+    age: int | None = None
+    gender: str | None = None
+    race: str | None = None
+    days_on_screen: int | None = None
+
+
+def extract_header_metadata(text: str) -> HeaderMetadata:
+    """Extrai idade/sexo/raça/dias-em-tela do cabeçalho padrão SESAB (R1/D3).
+
+    Idade/sexo/raça vêm SOMENTE da linha de demografia canônica
+    (``DEMOGRAPHICS_LINE_PATTERN``: os três marcadores na mesma linha, na
+    ordem) — menção clínica isolada de idade não gera metadado.
+    ``days_on_screen`` é o MAIOR valor de ``Dias em tela`` entre as
+    ocorrências do texto (molde ats-web), aceitando a forma mesma-linha e a
+    forma multilinha do layout real. Função pura, zero I/O.
+    """
+    age: int | None = None
+    gender: str | None = None
+    race: str | None = None
+    for line in text.splitlines():
+        match = DEMOGRAPHICS_LINE_PATTERN.search(line)
+        if match is not None:
+            age = int(match.group("age"))
+            gender = match.group("gender").upper()
+            race = match.group("race")
+            break
+    return HeaderMetadata(
+        age=age,
+        gender=gender,
+        race=race,
+        days_on_screen=_extract_days_on_screen(text),
+    )
+
+
+def _extract_days_on_screen(text: str) -> int | None:
+    """Maior ``Dias em tela`` do texto (mesma-linha ou rótulo+inteiro abaixo)."""
+    lines = text.splitlines()
+    values: list[int] = []
+    for index, line in enumerate(lines):
+        # Todas as ocorrências inline da linha contam (contrato: maior valor
+        # entre TODAS as ocorrências — P2 da review do slice 001).
+        for inline in _DAYS_ON_SCREEN_INLINE_PATTERN.finditer(line):
+            values.append(int(inline.group(1)))
+        if _DAYS_ON_SCREEN_INLINE_PATTERN.search(line) is not None:
+            continue
+        if (
+            _DAYS_ON_SCREEN_LABEL_PATTERN.match(line.strip())
+            and index + 1 < len(lines)
+            and _INTEGER_ONLY_LINE_PATTERN.match(lines[index + 1])
+        ):
+            values.append(int(lines[index + 1].strip()))
+    return max(values) if values else None
 
 
 def _normalize_whitespace(text: str) -> str:

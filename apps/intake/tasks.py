@@ -47,6 +47,7 @@ from apps.cases.models import ActorType, Case, CaseEvent, CaseStatus
 from apps.intake.pdf_utils import (
     extract_agency_record_number,
     extract_document_text,
+    extract_header_metadata,
     strip_watermark,
 )
 from apps.intake.regulation_gate import GateResult, evaluate_regulation_report
@@ -201,7 +202,10 @@ def _extract_and_decide(case: Case, *, lock: CaseLock) -> bool:
     limpo. Gate ok → ``complete_pdf_extraction`` (→ ANONYMIZING) + evento
     ``CASE_EXTRACTION_COMPLETED``; falha do gate → retenção em ``PDF_EXTRACTING``
     com ``manual_review_required``/``manual_review_reason`` + evento
-    ``CASE_GATE_MANUAL_REVIEW``. Exceção de extração propaga ao chamador (que
+    ``CASE_GATE_MANUAL_REVIEW``. Os metadados do cabeçalho SESAB (idade/sexo/
+    raça/dias em tela — change sesab-header-extraction, D3/D4) são extraídos do
+    texto LIMPO e gravados no MESMO write do ``extracted_text``; nenhum evento
+    carrega seus valores. Exceção de extração propaga ao chamador (que
     converte em ``fail_processing``).
 
     O ``release_case_lock`` roda DENTRO do mesmo atomic da transição de saída
@@ -224,6 +228,10 @@ def _extract_and_decide(case: Case, *, lock: CaseLock) -> bool:
     record_number = extract_agency_record_number(raw_text)
     cleaned_text = strip_watermark(raw_text)
     gate = evaluate_regulation_report(cleaned_text)
+    # Metadados do cabeçalho padrão SESAB (sesab-header-extraction, slice 001,
+    # D3/D4): extração PURA sobre o texto limpo, fora do atomic; a
+    # persistência vai no mesmo write do ``extracted_text`` (writer único).
+    header_metadata = extract_header_metadata(cleaned_text)
 
     with transaction.atomic():
         current = Case.objects.select_for_update().get(pk=case.pk)
@@ -242,11 +250,19 @@ def _extract_and_decide(case: Case, *, lock: CaseLock) -> bool:
         current.extracted_text = cleaned_text
         current.agency_record_number = record_number or ""
         current.agency_record_extracted_at = timezone.now()
+        current.patient_age = header_metadata.age
+        current.patient_gender = header_metadata.gender or ""
+        current.patient_race = header_metadata.race or ""
+        current.days_on_screen = header_metadata.days_on_screen
         current.save(
             update_fields=[
                 "extracted_text",
                 "agency_record_number",
                 "agency_record_extracted_at",
+                "patient_age",
+                "patient_gender",
+                "patient_race",
+                "days_on_screen",
             ]
         )
         if gate.ok:

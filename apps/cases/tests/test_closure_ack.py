@@ -76,6 +76,13 @@ RADIO_TYPE = "nefrostomia"
 RECORD_NUMBER = "33345"
 PATIENT_NAME = "Maria da Silva"
 PATIENT_BIRTH_DATE = date(1965, 4, 10)
+# Metadados do cabeçalho SESAB (change sesab-header-extraction, slice 001,
+# D6): PHI demográfico estrutural que SOBREVIVE ao CLEANED por paridade com
+# o nº de ocorrência (histórico administrativo) — não entram na limpeza.
+PATIENT_AGE = 79
+PATIENT_GENDER = "F"
+PATIENT_RACE = "Parda"
+DAYS_ON_SCREEN = 5
 
 # Conteúdo clínico/LLM a ser minimizado no ack (D2).
 EXTRACTED_TEXT = "texto extraído do relatório — conteúdo clínico completo"
@@ -151,6 +158,10 @@ def _seed_identity_and_artifacts(case: Case) -> None:
     case.agency_record_number = RECORD_NUMBER
     case.patient_name = PATIENT_NAME
     case.patient_birth_date = PATIENT_BIRTH_DATE
+    case.patient_age = PATIENT_AGE
+    case.patient_gender = PATIENT_GENDER
+    case.patient_race = PATIENT_RACE
+    case.days_on_screen = DAYS_ON_SCREEN
     case.extracted_text = EXTRACTED_TEXT
     case.anonymized_text = ANONYMIZED_TEXT
     case.pseudonym_map = {"<PESSOA_1>": "MARIA DA SILVA SOUZA"}
@@ -397,6 +408,12 @@ def test_cleanup_removes_clinical_keeps_essential(
     assert fresh.patient_name == PATIENT_NAME
     assert fresh.patient_birth_date == PATIENT_BIRTH_DATE
     assert fresh.anonymization_report == report_before
+    # Preserva: metadados do cabeçalho SESAB (paridade com o nº de ocorrência
+    # — D6 do change sesab-header-extraction; a limpeza NÃO os toca).
+    assert fresh.patient_age == PATIENT_AGE
+    assert fresh.patient_gender == PATIENT_GENDER
+    assert fresh.patient_race == PATIENT_RACE
+    assert fresh.days_on_screen == DAYS_ON_SCREEN
     # Preserva: rows CaseProcedure com decisões/motivos e a trilha (auditoria).
     rows_after = {
         row.procedure_type: (row.doctor_disposition, row.doctor_reason, row.doctor_decided_at)

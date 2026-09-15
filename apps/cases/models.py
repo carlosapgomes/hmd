@@ -143,6 +143,19 @@ class Case(FSMModelMixin, models.Model):
     patient_name = models.CharField(max_length=255, blank=True)
     patient_birth_date = models.DateField(null=True, blank=True)
 
+    # Metadados do cabeçalho padrão SESAB (change sesab-header-extraction,
+    # slice 001, D3/D6): idade/sexo/raça/dias-em-tela extraídos do cabeçalho
+    # (repetido por página) pelo worker pdf. PHI demográfico estrutural que
+    # SOBREVIVE ao CLEANED por paridade com ``agency_record_number`` — não
+    # entram na minimização (``_CLEANED_EMPTY_VALUES``); zerados apenas no
+    # reenvio de documentos (``_RESUBMIT_CLEARED_FIELDS``). O relatório SESAB
+    # não traz data de nascimento (``patient_birth_date`` segue não-populado
+    # por extração).
+    patient_age = models.PositiveSmallIntegerField(null=True, blank=True)
+    patient_gender = models.CharField(max_length=16, blank=True)
+    patient_race = models.CharField(max_length=32, blank=True)
+    days_on_screen = models.PositiveSmallIntegerField(null=True, blank=True)
+
     # Artefatos do pipeline LLM (change llm-pipeline-per-type, D10): os 4
     # campos nascem na migration ÚNICA do slice 004 (dono definido; os slices
     # 005/006 apenas usam). ``structured_data`` é o artefato LLM1 persistido

@@ -2,15 +2,15 @@
 
 ## 1. Slice 001 — Metadados do cabeçalho SESAB (extração + campos do caso)
 
-- [ ] 1.1 `HeaderMetadata` + `extract_header_metadata` em
+- [x] 1.1 `HeaderMetadata` + `extract_header_metadata` em
       `apps/intake/pdf_utils.py` (idade/sexo/raça da linha de demografia;
       dias em tela = maior ocorrência; ausentes → None)
-- [ ] 1.2 Campos `patient_age`/`patient_gender`/`patient_race`/
+- [x] 1.2 Campos `patient_age`/`patient_gender`/`patient_race`/
       `days_on_screen` em `Case` + migration única
-- [ ] 1.3 Worker pdf persiste os metadados no mesmo atomic do
+- [x] 1.3 Worker pdf persiste os metadados no mesmo atomic do
       `extracted_text` (após o gate CLEANED vigente); eventos sem valores;
       reenvio de documentos zera os 4 metadados (`_RESUBMIT_CLEARED_FIELDS`)
-- [ ] 1.4 Testes RED→GREEN (extração pura, worker, cabeçalho ausente,
+- [x] 1.4 Testes RED→GREEN (extração pura, worker, cabeçalho ausente,
       CLEANED preserva) + bateria local
 
 ## 2. Slice 002 — Nome do paciente do cabeçalho + tokenização end-to-end

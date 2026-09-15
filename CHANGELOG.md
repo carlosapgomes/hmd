@@ -4,6 +4,21 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.11] — 2026-09-15
+
+**Correções de UX das filas** — 1 change (26º archive) + fix de template.
+Suíte 1451 → **1458**. Sem migrations novas (deploy direto, sem `migrate`).
+
+- **`queues-remove-uid`** — o uid interno (case_id) sai dos cards das três
+  filas (Meus casos do NIR, fila médica, fila do agendador): nº de ocorrência
+  + identificação do paciente bastam; **sem fallback** para uid quando o nº
+  de ocorrência está ausente («—»), decisão do dono. O uid segue como chave
+  técnica nas rotas (href).
+- **Fix fila médica** (`</a>` ausente desde v0.1.4) — o card abria
+  `<a class="list-group-item…">` e fechava com `</div>`: HTML malformado em
+  cascata (cards sem fundo/limites, conteúdo vazando) visível com múltiplos
+  casos simultâneos; teste de regressão pinnando o fechamento de cada card.
+
 ## [0.1.10] — 2026-09-15
 
 **Dia do backlog pós-piloto (fase 2)** — 4 changes (22º–25º archives), política

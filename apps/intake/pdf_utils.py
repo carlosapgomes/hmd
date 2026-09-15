@@ -130,11 +130,19 @@ def extract_agency_record_number(text: str) -> str | None:
 # idade mencionada em texto clínico isolado não casa. Fonte única do pattern:
 # o slice 002 da anonymization importa daqui (mesma direção do reuso de
 # ``extract_agency_record_number``).
-_RACE_ALTERNATION = r"Branc[ao]|Pret[ao]|Pard[ao]|Amarel[ao]|Ind[íi]gena|N[ãa]o\s+informad[oa]"
+# Enum IBGE do DATASUS (feminino, como no formulário do SUS) + ausência —
+# domínio FECHADO: aberturas de sufixo (``[ao]``, ``Fem?``) ampliariam o
+# domínio além do contrato e casariam variantes não-IBGE (P1 da review do
+# slice 002); acentuação/case seguem tolerantes (extração de PDF).
+_RACE_ALTERNATION = r"Branca|Preta|Parda|Amarela|Ind[íi]gena|N[ãa]o informado"
+# Sexo do cabeçalho: letra ("Sexo: F") ou palavra completa ("Sexo Feminino"/
+# "Sexo Masculino", layout real do corpus) — dois-pontos OPCIONAL; abreviações
+# ("Fem"/"Masc") estão FORA do domínio.
+_GENDER_ALTERNATION = r"F|M|Feminino|Masculino"
 DEMOGRAPHICS_LINE_PATTERN = re.compile(
     r"Idade\s*:\s*(?P<age>\d+)\s*a\.?"
-    r".*?Sexo\s*:\s*(?P<gender>[FM])\b"
-    rf".*?Ra[çc]a\s*/\s*Cor\s*:\s*(?P<race>{_RACE_ALTERNATION})\b",
+    rf".*?Sexo\s*:?\s*(?P<gender>{_GENDER_ALTERNATION})\b"
+    rf".*?Ra[çc]a\s*/\s*Cor\s*:?\s*(?P<race>{_RACE_ALTERNATION})\b",
     flags=re.IGNORECASE,
 )
 
@@ -168,7 +176,9 @@ def extract_header_metadata(text: str) -> HeaderMetadata:
     ordem) — menção clínica isolada de idade não gera metadado.
     ``days_on_screen`` é o MAIOR valor de ``Dias em tela`` entre as
     ocorrências do texto (molde ats-web), aceitando a forma mesma-linha e a
-    forma multilinha do layout real. Função pura, zero I/O.
+    forma multilinha do layout real. Gênero normalizado para a letra (F/M): o
+    layout real traz a palavra completa (``Sexo Feminino``) e outros trazem a
+    letra (``Sexo: F``). Função pura, zero I/O.
     """
     age: int | None = None
     gender: str | None = None
@@ -177,7 +187,9 @@ def extract_header_metadata(text: str) -> HeaderMetadata:
         match = DEMOGRAPHICS_LINE_PATTERN.search(line)
         if match is not None:
             age = int(match.group("age"))
-            gender = match.group("gender").upper()
+            # Gênero normalizado para a letra (F/M): o layout real traz a
+            # palavra completa ("Feminino") e outros trazem a letra.
+            gender = match.group("gender").strip().upper()[0]
             race = match.group("race")
             break
     return HeaderMetadata(

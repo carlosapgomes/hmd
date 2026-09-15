@@ -15,14 +15,14 @@
 
 ## 2. Slice 002 — Nome do paciente do cabeçalho + tokenização end-to-end
 
-- [ ] 2.1 Âncora do cabeçalho padrão em `extract_patient_name` (linha de
+- [x] 2.1 Âncora do cabeçalho padrão em `extract_patient_name` (linha de
       demografia + `Paciente:` sozinho na linha seguinte + validações)
-- [ ] 2.2 `social_name` em `DeterministicExtraction` + candidato PESSOA
+- [x] 2.2 `social_name` em `DeterministicExtraction` + candidato PESSOA
       próprio em `_deterministic_candidates` (sem linkage)
-- [ ] 2.3 Fixture do benchmark com o layout real (desalinhado, nome social
+- [x] 2.3 Fixture do benchmark com o layout real (desalinhado, nome social
       preenchido/vazio, páginas repetidas) + testes de tokenização de todas
       as ocorrências
-- [ ] 2.4 Bateria local + aceite operacional com o corpus REAL do piloto
+- [x] 2.4 Bateria local + aceite operacional com o corpus REAL do piloto
       (recall PESSOA 100%, linkage populado, texto sem o nome)
 
 ## 3. Encerramento

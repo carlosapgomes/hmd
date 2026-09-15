@@ -245,15 +245,22 @@ def _deterministic_candidates(
 ) -> list[SpanCandidate]:
     """TODAS as ocorrências de cada valor determinístico no texto (R2).
 
-    Cada valor vira spans com a categoria própria mesmo sem NER: nome→PESSOA,
-    nascimento→DATA, nº de ocorrência→OCORRENCIA, CPF→CPF, CNS→CNS. Os spans de
-    CPF/CNS reusam a varredura de runs de ``deterministic`` (mesmo contrato de
+    Cada valor vira spans com a categoria própria mesmo sem NER: nome→PESSOA
+    (nome civil e nome social do cabeçalho), nascimento→DATA, nº de
+    ocorrência→OCORRENCIA, CPF→CPF, CNS→CNS. Os spans de CPF/CNS reusam a
+    varredura de runs de ``deterministic`` (mesmo contrato de
     boundary: um run só é ocorrência quando normaliza EXATAMENTE para o tamanho
     do candidato), preservando a paridade com a pré-extração.
     """
     candidates: list[SpanCandidate] = []
     if extraction.patient_name is not None:
         for start, end in _find_folded_occurrences(text, extraction.patient_name):
+            candidates.append(SpanCandidate(start, end, PESSOA, deterministic=True))
+    # Nome social do cabeçalho (change sesab-header-extraction, slice 002, R2):
+    # candidato PESSOA PRÓPRIO (valor distinto do nome civil → token distinto);
+    # nunca alimenta o linkage do caso.
+    if extraction.social_name is not None:
+        for start, end in _find_folded_occurrences(text, extraction.social_name):
             candidates.append(SpanCandidate(start, end, PESSOA, deterministic=True))
     if extraction.birth_date is not None:
         birth = extraction.birth_date

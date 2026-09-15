@@ -91,9 +91,35 @@ def test_synthetic_corpus_passes() -> None:
     assert "Resultado: PASS" in report
     assert "Recall por tipo" in report
     assert "Zero-PII: limpo" in report
-    # Totais agregados do relatório além do por-tipo (P2): as 10 entradas do
-    # corpus esperam 55 valores no total (6+5+6+5+6+5+6+5+6+5).
-    assert "TOTAL: 55 esperadas / " in report
+    # Totais agregados do relatório além do por-tipo (P2): as 13 entradas do
+    # corpus esperam 63 valores no total (55 das 10 originais + 3 + 3 + 2 das
+    # três entradas do layout real do cabeçalho SESAB).
+    assert "TOTAL: 63 esperadas / " in report
+
+
+@override_settings(ANONYMIZATION_USE_NER=False)
+def test_sesab_header_layout_recall_deterministic_only(tmp_path: Path) -> None:
+    """R4/D7: entradas do layout real passam com o NER DESLIGADO.
+
+    Isola a âncora determinística do cabeçalho (nome desalinhado na linha de
+    demografia, antes do rótulo ``Paciente:`` sozinho): sem ela os nomes
+    sobrevivem ao output e o recall de PESSOA reprova — com o NER ligado o
+    modelo poderia mascarar a falha.
+    """
+    entries = [
+        json.loads(line)
+        for line in _CORPUS_FIXTURE.read_text(encoding="utf-8").splitlines()
+        if "Paciente:\n" in json.loads(line)["text"]
+    ]
+    assert len(entries) == 3  # as três entradas do layout real do cabeçalho
+    corpus = _write_corpus(tmp_path, entries)
+
+    report = _run_benchmark(corpus)
+
+    assert "PESSOA: 4/4 = 1.000" in report
+    assert "OCORRENCIA: 3/3 = 1.000" in report
+    assert "Zero-PII: limpo" in report
+    assert "Resultado: PASS" in report
 
 
 # ── Spec: "Benchmark reprova corpus abaixo do mínimo" ─────────────────────

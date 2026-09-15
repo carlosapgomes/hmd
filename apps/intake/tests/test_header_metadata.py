@@ -195,6 +195,39 @@ def test_race_outside_enum_not_captured() -> None:
     assert metadata.race is None
 
 
+@pytest.mark.parametrize(
+    "gender_value",
+    ["Fem", "Masc"],
+)
+def test_gender_abbreviations_outside_domain(gender_value: str) -> None:
+    """P1 da review do slice 002: abreviações (``Fem``/``Masc``) estão FORA do
+    domínio — a linha não é cabeçalho (fonte única: a âncora do nome também
+    não ativa)."""
+    text = f"FULANO DE TAL - Idade: 79a. - Sexo: {gender_value} - Raça/Cor: Parda"
+
+    metadata = extract_header_metadata(text)
+
+    assert metadata.age is None
+    assert metadata.gender is None
+    assert metadata.race is None
+
+
+@pytest.mark.parametrize(
+    "race_value",
+    ["Branco", "Preto", "Amarelo", "Não informada"],
+)
+def test_race_masculine_and_feminine_absence_outside_domain(race_value: str) -> None:
+    """P1 da review do slice 002: formas masculinas e a ausência no feminino
+    (``Não informada``) estão FORA do domínio IBGE especificado."""
+    text = f"FULANO DE TAL - Idade: 79a. - Sexo: F - Raça/Cor: {race_value}"
+
+    metadata = extract_header_metadata(text)
+
+    assert metadata.age is None
+    assert metadata.gender is None
+    assert metadata.race is None
+
+
 def test_male_gender_captured() -> None:
     """R1/D3: sexo M também é valor canônico do cabeçalho."""
     text = "FULANO DE TAL - Idade: 40a. - Sexo: M - Raça/Cor: Branca"
@@ -218,3 +251,35 @@ def test_header_metadata_is_frozen() -> None:
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         metadata.age = 80  # type: ignore[misc]
+
+
+# ── R1 (calibração do corpus real): variante sem dois-pontos e gênero por
+# extenso — ``<NOME> - Idade: 79a. - Sexo Feminino - Raça/Cor Parda`` ──────
+
+
+def test_extracts_demographics_from_real_corpus_variant() -> None:
+    """R1: layout do corpus real — ``Sexo``/``Raça/Cor`` sem dois-pontos e
+    gênero por extenso (o pattern é a fonte única compartilhada com a
+    anonymization)."""
+    text = (
+        "RELATÓRIO DE OCORRÊNCIAS\n"
+        "5040778\n"
+        "FULANO DE TAL SILVA - Idade: 79a. - Sexo Feminino - Raça/Cor Parda\n"
+        "Paciente:\n"
+    )
+
+    metadata = extract_header_metadata(text)
+
+    assert metadata.age == 79
+    assert metadata.gender == "F"
+    assert metadata.race == "Parda"
+
+
+def test_extracts_demographics_real_variant_masculino() -> None:
+    """R1: ``Sexo Masculino`` (por extenso) normaliza para ``M``."""
+    text = "FULANO DE TAL SILVA - Idade: 42a. - Sexo Masculino - Raça/Cor Branca\n"
+
+    metadata = extract_header_metadata(text)
+
+    assert metadata.gender == "M"
+    assert metadata.race == "Branca"

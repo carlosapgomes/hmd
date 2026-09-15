@@ -223,3 +223,164 @@ def test_contiguous_12_digit_sequence_yields_no_candidate() -> None:
 
     assert extract_cpf_candidates(text) == ()
     assert extract_cns_candidates(text) == ()
+
+
+# ── R1/D1 (slice 002 sesab-header-extraction): âncora do cabeçalho real ────
+#
+# Layout real (validado no corpus do piloto): na extração linear do PyMuPDF o
+# nome completo do paciente vem na linha de DEMOGRAFIA
+# (``<NOME> - Idade: 79a. - Sexo: F - Raça/Cor: Parda``) e o rótulo ``Paciente:``
+# aparece sozinho na linha SEGUINTE, bloco repetido a cada página. O pattern da
+# linha de demografia é a fonte única importada de ``apps.intake.pdf_utils``.
+_SESAB_HEADER_PAGE = (
+    "RELATÓRIO DE OCORRÊNCIAS\n"
+    "5040778\n"
+    "ANTONIO CARLOS PEREIRA LIMA - Idade: 79a. - Sexo: F - Raça/Cor: Parda\n"
+    "Paciente:\n"
+    "Abertura:\n"
+    "05/02/2025\n"
+    "Código:\n"
+    "09:12\n"
+    "Governo do Estado da Bahia\n"
+    "Secretaria da Saúde do Estado da Bahia\n"
+    "Central Estadual de Regulação\n"
+    "CNS:547762666886141\n"
+    "Dias em tela:\n"
+    "5\n"
+    "Data Adm. Unid.:\n"
+    "05/02/2025\n"
+    "Dias Unid.:\n"
+    "3\n"
+    "Pág: 1\n"
+    "09:30:00\n"
+    "Data:\n"
+    "Hora:\n"
+    "Nome Social:\n"
+    "Central. Reg.:\n"
+    "CER - Central Estadual de Regulação\n"
+)
+
+
+def test_patient_name_from_demographics_line_anchor() -> None:
+    """R1/D1: nome do layout real (demografia + ``Paciente:`` sozinho abaixo)."""
+    assert extract_patient_name(_SESAB_HEADER_PAGE) == "ANTONIO CARLOS PEREIRA LIMA"
+
+
+def test_patient_name_anchor_requires_following_label_line() -> None:
+    """R1: demografia cuja linha seguinte NÃO é ``Paciente:`` → None."""
+    text = "ANTONIO CARLOS PEREIRA LIMA - Idade: 79a. - Sexo: F - Raça/Cor: Parda\nAbertura:\n"
+
+    assert extract_patient_name(text) is None
+
+
+def test_patient_name_orphan_clinical_demographics_not_captured() -> None:
+    """R1 adversarial: «Idade: 79a.» clínico órfão NÃO gera nome.
+
+    Menção clínica de idade sem os outros marcadores na mesma linha, mesmo
+    seguida de uma linha ``Paciente:``, nunca casa — a âncora exige a linha de
+    demografia COMPLETA (Idade+Sexo+Raça/Cor na mesma linha, na ordem).
+    """
+    text = "Resumo Clínico: paciente em investigação. Idade: 79a. conforme anotação.\nPaciente:\n"
+
+    assert extract_patient_name(text) is None
+
+
+def test_patient_name_anchor_requires_race_marker_same_line() -> None:
+    """R1 adversarial: Idade+Sexo sem Raça/Cor na mesma linha → None."""
+    text = "ANTONIO CARLOS PEREIRA LIMA - Idade: 79a. - Sexo: F\nPaciente:\n"
+
+    assert extract_patient_name(text) is None
+
+
+def test_patient_name_anchor_single_word_prefix_ignored() -> None:
+    """R1: prefixo de uma única palavra não é nome válido (≥ 2 palavras)."""
+    text = "ADULTO - Idade: 79a. - Sexo: F - Raça/Cor: Parda\nPaciente:\n"
+
+    assert extract_patient_name(text) is None
+
+
+def test_patient_name_anchor_first_valid_across_pages() -> None:
+    """R1: blocos repetidos por página — a primeira ocorrência válida vence."""
+    text = _SESAB_HEADER_PAGE + _SESAB_HEADER_PAGE.replace(
+        "ANTONIO CARLOS PEREIRA LIMA", "OUTRO NOME QUALQUER"
+    )
+
+    assert extract_patient_name(text) == "ANTONIO CARLOS PEREIRA LIMA"
+
+
+def test_patient_name_anchor_precedes_same_line_label_layout() -> None:
+    """R1: a âncora do cabeçalho é tentada ANTES dos rótulos mesma-linha."""
+    text = "Paciente: MARIA DA SILVA\n" + _SESAB_HEADER_PAGE
+
+    assert extract_patient_name(text) == "ANTONIO CARLOS PEREIRA LIMA"
+
+
+# ── R2/D2 (slice 002): nome social — candidato PESSOA, sem fallback ────────
+
+
+def test_social_name_same_line_captured() -> None:
+    """R2/D2: valor na MESMA linha do rótulo é capturado (sem linkage)."""
+    text = "Nome Social: TONI LIMA\nCentral. Reg.: CER - Central Estadual\n"
+
+    result = run_deterministic_extraction(text)
+
+    assert result.social_name == "TONI LIMA"
+    assert result.patient_name is None
+
+
+def test_social_name_accented_value_captured() -> None:
+    """R2/D2: nome social acentuado é valor nominal válido."""
+    result = run_deterministic_extraction("Nome Social: JOÃO DA CONCEIÇÃO\n")
+
+    assert result.social_name == "JOÃO DA CONCEIÇÃO"
+
+
+def test_social_name_label_alone_returns_none() -> None:
+    """R2/D2: rótulo sozinho → None — SEM fallback de linha anterior.
+
+    O texto clínico ANTES do rótulo não pode ser capturado como nome social.
+    """
+    text = (
+        "Resumo Clínico: paciente sem registro de nome social informado.\n"
+        "Nome Social:\n"
+        "Central. Reg.: CER - Central Estadual de Regulação\n"
+    )
+
+    assert run_deterministic_extraction(text).social_name is None
+
+
+def test_social_name_equal_to_civil_name_ignored() -> None:
+    """R2/D2: valor igual ao nome civil (fold) não gera candidato próprio."""
+    text = "Nome Social: ANTONIO CARLOS PEREIRA LIMA\nPaciente: ANTONIO CARLOS PEREIRA LIMA\n"
+
+    assert run_deterministic_extraction(text).social_name is None
+
+
+@pytest.mark.parametrize("value", ["N/A", "12345", "A", "-", "J. SILVA", "  "])
+def test_social_name_non_nominal_value_ignored(value: str) -> None:
+    """R2/D2: valor com dígito/símbolo ou palavra de 1 letra → None."""
+    assert run_deterministic_extraction(f"Nome Social: {value}\n").social_name is None
+
+
+def test_full_extraction_real_layout_composition() -> None:
+    """R1/R3: composição no layout real — nome pelo cabeçalho, sem nascimento."""
+    result = run_deterministic_extraction(_SESAB_HEADER_PAGE)
+
+    assert result.patient_name == "ANTONIO CARLOS PEREIRA LIMA"
+    assert result.social_name is None
+    assert result.birth_date is None  # o relatório SESAB real não traz nascimento
+    assert result.record_number == "5040778"
+    assert result.cns_candidates == ("547762666886141",)
+
+
+def test_patient_name_anchor_real_corpus_variant_without_colons() -> None:
+    """R1: variante do corpus real — ``Sexo``/``Raça/Cor`` sem dois-pontos e
+    gênero por extenso (o pattern da demografia vem do intake, fonte única)."""
+    text = (
+        "RELATÓRIO DE OCORRÊNCIAS\n"
+        "5040778\n"
+        "FULANO DE TAL SILVA - Idade: 79a. - Sexo Feminino - Raça/Cor PARDA\n"
+        "Paciente:\n"
+    )
+
+    assert extract_patient_name(text) == "FULANO DE TAL SILVA"

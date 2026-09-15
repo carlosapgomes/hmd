@@ -29,3 +29,9 @@ O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos pronto
 - **GIVEN** casos aguardando com `days_on_screen` 10, 3 e um sem cabeçalho (upload mais antigo)
 - **WHEN** o agendador acessa a fila
 - **THEN** a ordem é 10, 3 e o caso sem cabeçalho ao fim (desempate FIFO), independentemente do momento do upload
+
+#### Scenario: Aba processada usa rótulo de recebimento
+
+- **GIVEN** um caso já processado pelo agendamento com nome e idade
+- **WHEN** o agendador acessa a aba processados
+- **THEN** o card exibe o rótulo «Recebido há …» e NÃO exibe «Aguardando», com a idade junto do nome

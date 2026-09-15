@@ -11,9 +11,10 @@ expected_files:
   - apps/doctor/presenters.py
   - apps/dashboard/tests/test_event_labels.py
   - apps/dashboard/tests/test_views.py
-  - apps/intake/tests/test_detail.py
+  - apps/intake/tests/test_my_cases.py
   - apps/doctor/tests/test_detail.py
   - apps/doctor/tests/test_decision.py
+  - apps/accounts/tests/test_role_labels.py
 ```
 
 ## Contexto necessário
@@ -62,6 +63,10 @@ NIR e médico sem trilha; caso FAILED com badge de erro.
 
 - `templates/intake/case_detail.html` e `templates/doctor/case_detail.html`:
   bloco da trilha REMOVIDO; views/presenter deixam de montar `events`
+  (colateral previsto: `apps/accounts/tests/test_role_labels.py` pinnava as
+  trilhas removidas — reescrito para as superfícies novas: trilha do PAINEL
+  e comunicações do NIR; testes do detalhe NIR vivem em
+  `apps/intake/tests/test_my_cases.py`)
   para esses templates. **`decision_event` do presenter médico
   PRESERVADO** via consulta dedicada (evento
   `CASE_DOCTOR_DECISIONS_RECORDED` mais recente, query direta) — o card

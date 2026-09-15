@@ -29,15 +29,16 @@ intacta.
 - Items da lista ganham `patient_name`/`patient_age` (do caso, sem
   transformação).
 - Card: linha de identificação `{{ item.patient_name|default:"—" }}` +
-  `{% if item.patient_age %} · {{ item.patient_age }} a{% endif %}`, no
-  estilo visual dos cards atuais; SEM linha de tempo (histórico, não fila
-  de espera).
+  `{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}`
+  (`0 a` é válido e EXIBE), no estilo visual dos cards atuais; SEM linha de
+  tempo (histórico, não fila de espera).
 
 ### R2 — Testes (RED→GREEN)
 
 - Novos (RED): card com nome+idade (`84 a`) para caso identificado; caso
   sem identificação → `—` no nome e ausência do sufixo de idade (assert
-  escopado ao card, não contagem global); ordenação `-created_at`
+  escopado ao card, não contagem global); **`patient_age=0` → `0 a`
+  renderizado** (zero válido); ordenação `-created_at`
   preservada (pinnada); caso de outro NIR continua ausente da lista
   (regressão do escopo por criador).
 - Bateria completa do AGENTS.md.

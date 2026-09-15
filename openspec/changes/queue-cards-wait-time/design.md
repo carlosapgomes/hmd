@@ -28,11 +28,15 @@ acoplamento por 1 linha).
 
 ## D2 — Cards das filas de espera
 
-- Idade junto do nome: `84 a` quando `patient_age` presente; nada quando
-  ausente (não exibir `— a`).
-- Linha de tempo: `⏱ Aguardando há {{ created_at|timesince }}` (sempre) +
-  `· {{ days_on_screen }} d em tela` quando presente (fonte oficial do
-  relatório — distinta do tempo de espera no HMD).
+- Idade junto do nome: `84 a` — condição `is not None` (idade `0` é válida
+  e DEVE exibir `0 a`);
+- Linha de tempo por aba: na aba ATIVA («aguardando») `⏱ Aguardando há
+  {{ created_at|timesince }}`; nas abas HISTÓRICAS («decididos»/
+  «processados») `Recebido há {{ created_at|timesince }}` (o caso não está
+  aguardando — rótulo fiel), com a aba corrente disponível ao template
+  (contexto de aba já existente nas views);
+- Badge `{{ days_on_screen }} d em tela` quando `is not None` (`0 d em tela`
+  é válido e exibe — paciente recém-chegado à tela do regulador);
 - Nada mais muda nos cards (status, procedimentos, nº ocorrência,
   unidade).
 

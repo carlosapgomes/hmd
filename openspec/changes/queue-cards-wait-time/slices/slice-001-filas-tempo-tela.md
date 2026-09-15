@@ -43,20 +43,25 @@ nome+idade, tempo de espera (timesince) e badge de dias em tela.
 
 ### R2 — Cards
 
-- Doctor (`templates/doctor/queue.html`): idade junto do nome —
-  `{{ item.patient_name }}{% if item.patient_age %} · {{ item.patient_age }} a{% endif %}`;
-  linha de tempo `⏱ Aguardando há {{ item.created_at|timesince }}` +
-  `{% if item.days_on_screen %} · {{ item.days_on_screen }} d em tela{% endif %}`
-  (badge pequeno ou texto muted — siga o estilo visual dos cards atuais).
+- Doctor (`templates/doctor/queue.html`): idade junto do nome com
+  `is not None` — `{{ item.patient_name }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}`
+  (`0 a` EXIBE); rótulo de tempo por aba: «⏱ Aguardando há …» na aba
+  aguardando, «Recebido há …» nas abas decididos (aba corrente disponível
+  no contexto); `· {{ item.days_on_screen }} d em tela` com `is not None`
+  (`0 d em tela` EXIBE).
 - Scheduler: row dict ganha `patient_age`/`days_on_screen`; template com a
-  MESMA composição.
+  MESMA composição (mesmos `is not None` e rótulo por aba).
 
 ### R3 — Testes (RED→GREEN)
 
-- Novos/ajustados (RED): ordenação com `days_on_screen` 10/3/None (None ao
-  fim, FIFO no desempate) nas DUAS filas — asserts por ordem dos `case_id`
-  na resposta; card renderiza `84 a` + `6 d em tela` + `Aguardando há`;
-  idade ausente → sem `· X a`; `days_on_screen` ausente → sem badge;
+- Novos/ajustados (RED): ordenação DISCRIMINANTE nas DUAS filas com GIVEN
+  explícito `days_on_screen` 10, 3 e None com `created_at` CONFLITANTES
+  (o None é o mais antigo; o 10 é o mais recente) — asserts pela ORDEM dos
+  `case_id` na resposta (falha contra o FIFO antigo: proved no RED);
+  card renderiza `84 a` + `6 d em tela` + `Aguardando há` (aba ativa);
+  `Recebido há` na aba histórica (assert por aba); **zero válido**:
+  `patient_age=0` → `0 a` renderizado e `days_on_screen=0` → `0 d em tela`
+  renderizado; idade/dias ausentes → sufixo/badge ausentes;
   **atualizar** os asserts FIFO existentes para o novo contrato (casos sem
   `days_on_screen` continuam FIFO entre si).
 - Bateria completa do AGENTS.md: pytest (alvo + suíte) + ruff check/format

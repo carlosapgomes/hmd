@@ -21,5 +21,11 @@ O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos pronto
 #### Scenario: Card do agendador com identificação e tempo
 
 - **GIVEN** um caso em `AWAITING_SCHEDULING` com nome, idade 84 e `days_on_screen` 6
+- **WHEN** o agendador acessa a fila (aba aguardando)
+- **THEN** o card exibe nome e idade (`84 a`), o rótulo «Aguardando há …» com o tempo desde o recebimento e o badge `6 d em tela`
+
+#### Scenario: Fila do agendador ordenada pelo tempo de tela
+
+- **GIVEN** casos aguardando com `days_on_screen` 10, 3 e um sem cabeçalho (upload mais antigo)
 - **WHEN** o agendador acessa a fila
-- **THEN** o card exibe nome e idade (`84 a`), o tempo de espera desde o recebimento e o badge `6 d em tela`
+- **THEN** a ordem é 10, 3 e o caso sem cabeçalho ao fim (desempate FIFO), independentemente do momento do upload

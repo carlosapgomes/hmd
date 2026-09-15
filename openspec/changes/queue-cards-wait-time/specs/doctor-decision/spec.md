@@ -43,5 +43,11 @@ recebem 403.
 #### Scenario: Card com identificação e tempo de espera
 
 - **GIVEN** um caso em `AWAITING_DOCTOR` com nome, idade 84 e `days_on_screen` 6
-- **WHEN** o médico acessa a fila
-- **THEN** o card exibe nome e idade (`84 a`), o tempo de espera desde o recebimento e o badge `6 d em tela`
+- **WHEN** o médico acessa a fila (aba aguardando)
+- **THEN** o card exibe nome e idade (`84 a`), o rótulo «Aguardando há …» com o tempo desde o recebimento e o badge `6 d em tela`
+
+#### Scenario: Aba decidida usa rótulo de recebimento
+
+- **GIVEN** um caso decidido com nome e idade
+- **WHEN** o médico acessa a aba decididos
+- **THEN** o card exibe o rótulo «Recebido há …» (sem «Aguardando», que não faz sentido em histórico) e a idade junto do nome

@@ -35,7 +35,6 @@
       <a href="{% url 'intake:case_detail' item.case.case_id %}"
          class="list-group-item list-group-item-action py-3">
         <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-          <span class="font-monospace small text-muted">Caso {{ item.case.case_id }}</span>
           {% if item.case.status == 'FAILED' %}
           <span class="badge rounded-pill text-bg-danger">{{ item.status_label }}</span>
           {% elif item.case.status == 'LLM_EXTRACTING' and item.case.manual_review_required %}

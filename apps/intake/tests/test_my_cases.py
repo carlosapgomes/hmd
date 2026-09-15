@@ -421,6 +421,11 @@ def _card_slice(body: str, case_id: object) -> str:
     return body[start:end]
 
 
+def _card_visible_text(card: str) -> str:
+    """Corpo visível do card (após a tag de abertura), sem atributos de rota."""
+    return re.sub(r'href="[^"]*"', "", card[card.index(">") + 1 :])
+
+
 def _identification_line(card: str) -> str:
     """Conteúdo da linha ``fw-semibold`` do card (nome + idade)."""
     match = re.search(r'<div class="fw-semibold">(.*?)</div>', card, re.S)
@@ -553,3 +558,57 @@ def test_detail_failed_case_shows_error_badge_without_trail(
     )
     # O motivo técnico não aparece no detalhe do NIR (vive na trilha do painel).
     assert "falha na extração do PDF" not in body
+
+
+# ── R2: cards sem o uid do caso (queues-remove-uid) ───────────────────────
+
+
+@pytest.mark.django_db
+def test_card_does_not_show_case_uid(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R2: o CORPO do card não exibe o uid — nº de ocorrência e paciente bastam.
+
+    O uid permanece apenas no ``href`` da rota (chave técnica): o assert é
+    escopado ao card e o atributo de rota é removido do texto antes da
+    checagem, de modo que a reintrodução de «Caso <uid>» no corpo falha.
+    """
+    case = _create_case(nir_user, pdf_factory)
+    case.patient_name = "Paciente Sem Uid"
+    case.agency_record_number = "5040778"
+    case.save(update_fields=["patient_name", "agency_record_number"])
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases")).content.decode()
+
+    card = _card_slice(body, case.case_id)
+    assert f"Caso {case.case_id}" not in card
+    assert str(case.case_id) not in _card_visible_text(card)
+    assert "Paciente Sem Uid" in card
+    assert "Nº de ocorrência: <strong>5040778</strong>" in card
+    # A rota do card segue levando ao detalhe (uid como chave técnica).
+    assert str(case.case_id) in body
+
+
+@pytest.mark.django_db
+def test_card_without_occurrence_shows_dash_without_uid(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R2/D1 (opção a): sem nº de ocorrência → «—» + paciente, sem fallback uid."""
+    case = _create_case(nir_user, pdf_factory)
+    case.patient_name = "Paciente Sem Ocorrencia"
+    case.agency_record_number = ""
+    case.save(update_fields=["patient_name", "agency_record_number"])
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases")).content.decode()
+
+    card = _card_slice(body, case.case_id)
+    assert "Nº de ocorrência: <strong>—</strong>" in card
+    assert "Paciente Sem Ocorrencia" in card
+    assert f"Caso {case.case_id}" not in card
+    assert str(case.case_id) not in _card_visible_text(card)

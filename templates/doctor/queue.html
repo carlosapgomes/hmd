@@ -49,7 +49,6 @@
       <a class="list-group-item list-group-item-action py-3"
          href="{% url 'doctor:case_detail' case_id=item.case_id %}">
         <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-          <span class="font-monospace small text-muted">Caso {{ item.case_id }}</span>
           <span class="badge rounded-pill text-bg-secondary">{{ item.status_label }}</span>
           <span class="ms-auto small text-nowrap">Abrir caso →</span>
         </div>

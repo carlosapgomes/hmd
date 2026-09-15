@@ -37,6 +37,7 @@ Cobre:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -1420,3 +1421,69 @@ def test_pdf_forbidden_for_non_scheduler_role(
     response = client.get(reverse("scheduler:case_pdf", args=[case.case_id, 1]))
 
     assert response.status_code == 403
+
+
+# ── R2: cards sem o uid do caso (queues-remove-uid) ───────────────────────
+
+
+def _card_slice(body: str, case_id: object) -> str:
+    """Fatia o HTML do card do caso (do ``list-group-item`` ao item seguinte).
+
+    O escopo por card evita assert global de uid: o ``href`` de «Abrir caso»
+    carrega o uid (chave técnica) e o card é localizado por ele.
+    """
+    anchor = body.index(str(case_id))
+    start = body.rindex('<div class="list-group-item', 0, anchor)
+    end = body.find('<div class="list-group-item', anchor)
+    return body[start:] if end == -1 else body[start:end]
+
+
+def _card_visible_text(card: str) -> str:
+    """Corpo visível do card (após a tag de abertura), sem atributos de rota."""
+    return re.sub(r'href="[^"]*"', "", card[card.index(">") + 1 :])
+
+
+@pytest.mark.django_db
+def test_queue_card_does_not_show_case_uid(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R2: o CORPO do card não exibe o uid — nº de ocorrência/paciente bastam."""
+    doctor = user_factory("medico-sem-uid-agendador", (DOCTOR_ROLE,))
+    case = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(case, patient_name="Paciente Sem Uid", agency_record_number="5040778")
+    login_user(user_factory("geral-sem-uid", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    card = _card_slice(body, case.case_id)
+    assert f"Caso {case.case_id}" not in card
+    assert str(case.case_id) not in _card_visible_text(card)
+    assert "Paciente Sem Uid" in card
+    assert "Nº de ocorrência: <strong>5040778</strong>" in card
+    # A rota «Abrir caso» segue técnica (uid no href).
+    assert str(case.case_id) in body
+
+
+@pytest.mark.django_db
+def test_queue_card_without_occurrence_has_no_uid(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R2/D1 (opção a): sem nº de ocorrência → «—» + paciente, sem fallback uid."""
+    doctor = user_factory("medico-sem-ocorrencia-agendador", (DOCTOR_ROLE,))
+    case = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(case, patient_name="Paciente Sem Ocorrencia", agency_record_number="")
+    login_user(user_factory("geral-sem-ocorrencia", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    card = _card_slice(body, case.case_id)
+    assert "Nº de ocorrência: <strong>—</strong>" in card
+    assert "Paciente Sem Ocorrencia" in card
+    assert f"Caso {case.case_id}" not in card
+    assert str(case.case_id) not in _card_visible_text(card)

@@ -33,6 +33,18 @@
             —
             {% endif %}
           </dd>
+          <dt class="col-sm-3">Idade</dt>
+          <dd class="col-sm-9">
+            {% if identification.patient_age is not None %}
+            {{ identification.patient_age }} a
+            {% else %}
+            —
+            {% endif %}
+          </dd>
+          <dt class="col-sm-3">Sexo</dt>
+          <dd class="col-sm-9">{{ identification.patient_gender|default:"—" }}</dd>
+          <dt class="col-sm-3">Raça/Cor</dt>
+          <dd class="col-sm-9">{{ identification.patient_race|default:"—" }}</dd>
         </dl>
         {% if can_decide %}
         <p class="small text-muted mb-2">
@@ -67,6 +79,46 @@
         </ul>
         {% else %}
         <p class="text-muted mb-0">Nenhum procedimento declarado.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Sumário clínico -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Sumário clínico</h2>
+      </div>
+      <div class="card-body">
+        {% if summary_lines %}
+        {% for line in summary_lines %}
+        <p class="mb-2{% if forloop.last %} mb-0{% endif %}">{{ line }}</p>
+        {% endfor %}
+        {% else %}
+        <p class="text-muted mb-0">Sumário clínico não disponível para este caso.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Estrutura extraída -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Estrutura extraída</h2>
+      </div>
+      <div class="card-body">
+        {% for section in sections %}
+        {% if section.lines %}
+        <h3 class="h6 text-muted text-uppercase mt-3{% if forloop.first %} mt-0{% endif %}">{{ section.title }}</h3>
+        <ul class="mb-0">
+          {% for line in section.lines %}
+          <li>{{ line }}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% empty %}
+        <p class="text-muted mb-0">Nenhuma estrutura extraída.</p>
+        {% endfor %}
+        {% if sections and not has_structure %}
+        <p class="text-muted mb-0">Nenhuma estrutura extraída.</p>
         {% endif %}
       </div>
     </div>
@@ -258,46 +310,6 @@
         {% endfor %}
         {% else %}
         <p class="text-muted mb-0">Sem caso prévio do mesmo procedimento no período.</p>
-        {% endif %}
-      </div>
-    </div>
-
-    <!-- Sumário clínico -->
-    <div class="card shadow-sm mb-4">
-      <div class="card-header bg-white">
-        <h2 class="h5 mb-0">Sumário clínico</h2>
-      </div>
-      <div class="card-body">
-        {% if summary_lines %}
-        {% for line in summary_lines %}
-        <p class="mb-2{% if forloop.last %} mb-0{% endif %}">{{ line }}</p>
-        {% endfor %}
-        {% else %}
-        <p class="text-muted mb-0">Sumário clínico não disponível para este caso.</p>
-        {% endif %}
-      </div>
-    </div>
-
-    <!-- Estrutura extraída -->
-    <div class="card shadow-sm mb-4">
-      <div class="card-header bg-white">
-        <h2 class="h5 mb-0">Estrutura extraída</h2>
-      </div>
-      <div class="card-body">
-        {% for section in sections %}
-        {% if section.lines %}
-        <h3 class="h6 text-muted text-uppercase mt-3{% if forloop.first %} mt-0{% endif %}">{{ section.title }}</h3>
-        <ul class="mb-0">
-          {% for line in section.lines %}
-          <li>{{ line }}</li>
-          {% endfor %}
-        </ul>
-        {% endif %}
-        {% empty %}
-        <p class="text-muted mb-0">Nenhuma estrutura extraída.</p>
-        {% endfor %}
-        {% if sections and not has_structure %}
-        <p class="text-muted mb-0">Nenhuma estrutura extraída.</p>
         {% endif %}
       </div>
     </div>

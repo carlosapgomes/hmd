@@ -19,6 +19,7 @@ Cobre:
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Sequence
 from datetime import timedelta
 from types import SimpleNamespace
@@ -33,6 +34,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.attachments.models import AttachmentStatus, CaseAttachment, ExtractionMethod, PatientMatch
 from apps.cases.models import Case, CaseDocument, CaseProcedure, CaseStatus, DoctorDisposition
+from apps.cases.procedures import record_doctor_procedure_decisions
 from apps.doctor.presenters import build_case_detail_context
 
 DOCTOR_ROLE = "doctor"
@@ -84,6 +86,60 @@ def _apply_metadata(
         agency_record_number=agency_record_number,
     )
     case.refresh_from_db()
+
+
+def _apply_demographics(
+    case: Case,
+    *,
+    age: int | None,
+    gender: str,
+    race: str,
+) -> None:
+    """Ajusta a demografia do cabeçalho SESAB exibida no detalhe."""
+    Case.objects.filter(pk=case.pk).update(
+        patient_age=age,
+        patient_gender=gender,
+        patient_race=race,
+    )
+    case.refresh_from_db()
+
+
+_IDENTIFICATION_CARD_START = "<!-- Identificação do paciente -->"
+_IDENTIFICATION_CARD_END = "<!-- Procedimentos declarados -->"
+# Ordem de leitura clínica do detalhe (design D2): quadro clínico antes do
+# consultivo da automação.
+_CLINICAL_ORDER = (
+    "Procedimentos declarados",
+    "Sumário clínico",
+    "Estrutura extraída",
+    "Alertas consultivos",
+)
+
+
+def _identification_card(body: str) -> str:
+    """Recorte do card de identificação (asserts escopados por linha)."""
+    _, card = body.split(_IDENTIFICATION_CARD_START, 1)
+    card, _ = card.split(_IDENTIFICATION_CARD_END, 1)
+    return card
+
+
+def _dd_value(card: str, label: str) -> str:
+    """Valor do ``<dd>`` que segue o ``<dt>`` do rótulo DENTRO do card."""
+    match = re.search(
+        rf'<dt class="col-sm-3">{re.escape(label)}</dt>\s*<dd class="col-sm-9">(.*?)</dd>',
+        card,
+        flags=re.DOTALL,
+    )
+    assert match is not None, f"linha «{label}» ausente no card de identificação"
+    return re.sub(r"\s+", " ", match.group(1)).strip()
+
+
+def _card_title_index(body: str, title: str) -> int:
+    """Índice do título de card no HTML renderizado (ordem dos cards)."""
+    marker = f'<h2 class="h5 mb-0">{title}</h2>'
+    index = body.find(marker)
+    assert index != -1, f"card «{title}» ausente no detalhe"
+    return index
 
 
 def _structured_artifact() -> dict[str, object]:
@@ -366,6 +422,22 @@ class TestBuildCaseDetailContext:
         assert context["identification"]["patient_name"] == "MARIA DA SILVA"
         assert context["identification"]["agency_record_number"] == "33345"
 
+    def test_identification_includes_demographics(
+        self,
+        user_factory: Callable[..., User],
+    ) -> None:
+        """R1/D1: demografia do cabeçalho SESAB entra na identificação."""
+        owner = user_factory("dono-demografia", ("nir",))
+        case = _make_awaiting_case_with_artifacts(owner)
+        _apply_demographics(case, age=84, gender="F", race="Parda")
+
+        context = cast(dict[str, Any], build_case_detail_context(case))
+
+        identification = cast(dict[str, Any], context["identification"])
+        assert identification["patient_age"] == 84
+        assert identification["patient_gender"] == "F"
+        assert identification["patient_race"] == "Parda"
+
     def test_requirements_deduplicated_across_procedures(
         self,
         user_factory: Callable[..., User],
@@ -577,6 +649,103 @@ def test_detail_200_decided_case_read_only(
     # O detalhe é read-only neste slice (sem formulário de decisão).
     assert 'name="decision"' not in body
     assert "Registrar decisão" not in body
+
+
+@pytest.mark.django_db
+def test_detail_renders_patient_demographics(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2/D1: idade, sexo e raça/cor no card de identificação."""
+    case = _make_awaiting_case_with_artifacts(nir_user)
+    _apply_demographics(case, age=84, gender="F", race="Parda")
+    doctor = user_factory("geral-demografia", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    card = _identification_card(response.content.decode())
+    assert _dd_value(card, "Idade") == "84 a"
+    assert _dd_value(card, "Sexo") == "F"
+    assert _dd_value(card, "Raça/Cor") == "Parda"
+
+
+@pytest.mark.django_db
+def test_detail_demographics_absent_show_placeholder(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2/D1: demografia ausente exibe «—» (assert escopado por linha)."""
+    case = _make_awaiting_case_with_artifacts(nir_user)
+    _apply_demographics(case, age=None, gender="", race="")
+    doctor = user_factory("geral-demografia-vazia", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    card = _identification_card(response.content.decode())
+    assert _dd_value(card, "Idade") == "—"
+    assert _dd_value(card, "Sexo") == "—"
+    assert _dd_value(card, "Raça/Cor") == "—"
+    # Os campos existentes do card seguem renderizados.
+    assert _dd_value(card, "Paciente") == "MARIA DA SILVA"
+
+
+@pytest.mark.django_db
+def test_detail_clinical_cards_before_advisory(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2/D2: quadro clínico antes do consultivo (índices crescentes)."""
+    case = _make_awaiting_case_with_artifacts(nir_user)
+    doctor = user_factory("geral-ordem", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    indices = [_card_title_index(body, title) for title in _CLINICAL_ORDER]
+    assert indices == sorted(indices)
+
+
+@pytest.mark.django_db
+def test_detail_decided_keeps_clinical_order(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2/D2: o detalhe decidido (read-only) usa a mesma ordem de leitura."""
+    owner = user_factory("dono-ordem-dec", ("nir",))
+    doctor = user_factory("medico-ordem-dec", (DOCTOR_ROLE,))
+    case = _make_awaiting_case_with_artifacts(owner)
+    record_doctor_procedure_decisions(
+        case,
+        {ANGIO_TYPE: (DoctorDisposition.DENIED, "INR elevado.")},
+        user=doctor,
+        role=DOCTOR_ROLE,
+    )
+    case.refresh_from_db()
+    assert case.status == CaseStatus.DOCTOR_DENIED
+    viewer = user_factory("geral-ordem-dec", (DOCTOR_ROLE,))
+    _login(client, viewer, DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    indices = [_card_title_index(body, title) for title in _CLINICAL_ORDER]
+    assert indices == sorted(indices)
+    # Decisões registradas entre o quadro clínico e o consultivo (D2).
+    estrutura = _card_title_index(body, "Estrutura extraída")
+    decisoes = _card_title_index(body, "Decisões registradas")
+    alertas = _card_title_index(body, "Alertas consultivos")
+    assert estrutura < decisoes < alertas
 
 
 @pytest.mark.django_db

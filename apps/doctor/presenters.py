@@ -657,6 +657,11 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
         "patient_name": case.patient_name,
         "agency_record_number": case.agency_record_number,
         "birth_date": case.patient_birth_date,
+        # Demografia do cabeçalho SESAB (change doctor-detail-context, D1):
+        # campos estruturais do caso, sem transformação.
+        "patient_age": case.patient_age,
+        "patient_gender": case.patient_gender,
+        "patient_race": case.patient_race,
     }
 
     sections = _build_structure_sections(structured)

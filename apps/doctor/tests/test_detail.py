@@ -1147,3 +1147,53 @@ def test_detail_page_renders_status_and_nonprocessed_badges(
     assert "Coincidente" in body
     # Pendente/falhou sem resumo de verificação (só o processado tem).
     assert body.count("Laudo assinado por") == 1
+
+
+# ── Slice 003 (painel-ats-parity): trilha sai do detalhe; badge de falha ───
+
+
+@pytest.mark.django_db
+def test_detail_has_no_event_trail(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R3/D4: a trilha de eventos saiu do detalhe médico (vive no painel) e
+    nenhum rótulo de evento aparece no lugar dela."""
+    case = _make_awaiting_case_with_artifacts(nir_user)
+    doctor = user_factory("geral-sem-trilha", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:case_detail", args=[case.case_id]))
+    body = response.content.decode()
+
+    assert response.status_code == 200
+    assert "Trilha de eventos" not in body
+    # Rótulos de evento do caso (transições + declaração) não são renderizados.
+    assert "Caso encaminhado para avaliação médica" not in body
+    assert "Procedimentos declarados pelo NIR" not in body
+
+
+@pytest.mark.django_db
+def test_detail_failed_case_shows_error_badge(
+    client: Client,
+    user_factory: Callable[..., User],
+) -> None:
+    """R3/D4: caso ``FAILED`` acessível exibe badge de erro (sem trilha/motivo)."""
+    creator = user_factory("nir-caso-falho", ("nir",))
+    case = _create_case_with_declared(creator, (ANGIO_TYPE,))
+    case.start_pdf_extraction(user=None, role=SYSTEM_ROLE)
+    case.fail_processing(reason="falha na extração do PDF", user=None, role=SYSTEM_ROLE)
+    doctor = user_factory("geral-caso-falho", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:case_detail", args=[case.case_id]))
+    body = response.content.decode()
+
+    assert response.status_code == 200
+    assert case.status == CaseStatus.FAILED
+    assert re.search(
+        r'<span class="badge rounded-pill text-bg-danger[^"]*">Falha no processamento</span>',
+        body,
+    )
+    assert "Trilha de eventos" not in body

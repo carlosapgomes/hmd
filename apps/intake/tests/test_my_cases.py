@@ -132,12 +132,14 @@ def test_retention_and_failed_badges(
 
 
 @pytest.mark.django_db
-def test_detail_shows_docs_events_communications(
+def test_detail_shows_docs_and_communications_without_trail(
     client: Client,
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R2/cenário spec: detalhe do próprio caso mostra docs, trilha e comunicações."""
+    """R2/cenário spec: detalhe do próprio caso mostra docs e comunicações —
+    SEM a trilha de eventos (slice 003 do painel-ats-parity: a trilha vive no
+    painel)."""
     case = _retain_for_review(_create_case(nir_user, pdf_factory, "relatorio-sesab.pdf"))
     documents = list(case.documents.all())
     assert len(documents) == 1
@@ -158,10 +160,10 @@ def test_detail_shows_docs_events_communications(
     for document in documents:
         assert document.original_filename in body
         assert reverse("intake:serve_document", args=[case.case_id, document.pk]) in body
-    # Trilha de eventos com labels legíveis.
-    assert "Trilha de eventos" in body
-    assert "Procedimentos declarados pelo NIR" in body
-    assert "Extraindo PDF" in body
+    # Sem trilha de eventos no detalhe do NIR (vive no painel).
+    assert "Trilha de eventos" not in body
+    assert "Procedimentos declarados pelo NIR" not in body
+    assert "CASE_STATUS_PDF_EXTRACTING" not in body
     # Thread de comunicações (change 03).
     assert "Comunicações" in body
     assert "Paciente aguardando complemento do relatório." in body
@@ -527,3 +529,27 @@ def test_foreign_case_identification_not_leaked(
     assert "Paciente Do Criador" in body
     assert str(foreign_case.case_id) not in body
     assert "Paciente Alheio" not in body
+
+
+@pytest.mark.django_db
+def test_detail_failed_case_shows_error_badge_without_trail(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R3/D4: caso ``FAILED`` exibe badge de erro e nenhuma trilha/motivo técnico."""
+    case = _fail_case(_create_case(nir_user, pdf_factory, "relatorio-sesab.pdf"))
+
+    client.force_login(nir_user)
+    response = client.get(reverse("intake:case_detail", args=[case.case_id]))
+    body = response.content.decode()
+
+    assert response.status_code == 200
+    assert case.status == CaseStatus.FAILED
+    assert "Trilha de eventos" not in body
+    assert re.search(
+        r'<span class="badge rounded-pill text-bg-danger[^"]*">Falha no processamento</span>',
+        body,
+    )
+    # O motivo técnico não aparece no detalhe do NIR (vive na trilha do painel).
+    assert "falha na extração do PDF" not in body

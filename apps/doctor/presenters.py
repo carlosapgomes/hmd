@@ -16,10 +16,10 @@ ANONIMIZADO (para o LLM2) e o card do médico re-busca o motivo REAL na row
 reais).
 
 Slice 004 (R5): o contexto ganha a seção de decisões pós-decisão — cada row
-declarada leva ``reason``/``decided_at``, o ator/data do evento
-``CASE_DOCTOR_DECISIONS_RECORDED`` (``decision_event``) e a trilha de eventos
-do caso (``events``, payloads enxutos — nenhum dado clínico real nos
-payloads da trilha por design D5).
+declarada leva ``reason``/``decided_at`` e o ator/data do evento
+``CASE_DOCTOR_DECISIONS_RECORDED`` (``decision_event``). A trilha de eventos
+saiu do detalhe médico no slice 003 do painel-ats-parity (D4): passou a viver
+no painel, e o detalhe médico só mantém o ator/data da decisão.
 
 Anexos (attachment-processing-ocr, slice 004/D5): seção aditiva
 ``attachments`` — card por anexo com nome/método/status/badge e
@@ -461,19 +461,9 @@ def _build_prior_cases(
     return prior_cases
 
 
-# Rótulo legível por tipo canônico de evento da trilha (R5); o tipo é a
-# chave de fallback quando o evento ainda não tem entrada canônica.
-_EVENT_LABELS: dict[str, str] = {event_type: label for event_type, label in CaseEventType.choices}
-
-# Tamanho máximo do resumo de um valor de payload na trilha (R5).
-_PAYLOAD_VALUE_LIMIT = 160
-
 # Formato de exibição de data/hora do contexto (R5) — o contexto é
 # JSON-serializável: timestamps viram strings formatadas como no prior-case.
 _DATETIME_DISPLAY_FORMAT = "%d/%m/%Y %H:%M"
-
-
-# ── Trilha de eventos (slice 004, R5) ──────────────────────────────────────
 
 
 def _format_datetime(value: datetime | None) -> str:
@@ -483,33 +473,21 @@ def _format_datetime(value: datetime | None) -> str:
     return localtime(value).strftime(_DATETIME_DISPLAY_FORMAT)
 
 
-def _summarize_payload(payload: object) -> list[tuple[str, str]]:
-    """Resumo exibível do payload do evento: pares chave → valor enxuto.
+# ── Ator/data da decisão (slice 003 do painel-ats-parity, D4) ──────────────
 
-    Valores aninhados viram sua representação textual truncada — a trilha do
-    detalhe nunca precisa do payload bruto completo (mesmo critério do detalhe
-    do intake).
+
+def _decision_event_summary(event: CaseEvent) -> dict[str, object]:
+    """Ator/data do evento canônico de decisão para o card «Decisões registradas».
+
+    A TRILHA saiu do detalhe médico (vive no painel — slice 003 do
+    painel-ats-parity): o presenter não monta mais a lista de eventos, mas o
+    card pós-decisão continua exibindo quem decidiu e quando, por consulta
+    DEDICADA ao evento ``CASE_DOCTOR_DECISIONS_RECORDED`` mais recente.
     """
-    if not isinstance(payload, dict):
-        return []
-    summaries: list[tuple[str, str]] = []
-    for key, value in payload.items():
-        text = str(value)
-        if len(text) > _PAYLOAD_VALUE_LIMIT:
-            text = f"{text[: _PAYLOAD_VALUE_LIMIT - 3]}..."
-        summaries.append((str(key), text))
-    return summaries
-
-
-def _event_summary(event: CaseEvent) -> dict[str, object]:
-    """Item exibível da trilha: tipo/label, ator (usuário ou sistema) e resumo."""
     return {
-        "event_type": event.event_type,
-        "label": _EVENT_LABELS.get(event.event_type, event.event_type),
         "actor_display": event.actor.display_name if event.actor else "Sistema",
         "actor_role": event.actor_role,
         "timestamp": _format_datetime(event.timestamp),
-        "payload_summary": _summarize_payload(event.payload),
     }
 
 
@@ -597,11 +575,12 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
     (+ motivo/data da decisão nas rows já decididas), sumário e estrutura
     re-identificados por seção, alertas consultivos da policy por procedimento
     com a sugestão do LLM2, requisitos gerais acionáveis, prior-case com motivo
-    real, a flag ``can_decide`` (= estado ``AWAITING_DOCTOR``), o evento de
-    decisão (``decision_event``) e a trilha de eventos do caso (``events``). A
-    re-identificação usa exclusivamente o mapa do caso (tokens de espaços
-    alheios podem sobrar como tokens — sem vazamento). Caso sem artefatos →
-    seções vazias.
+    real, a flag ``can_decide`` (= estado ``AWAITING_DOCTOR``), o ator/data da
+    decisão (``decision_event``, consulta dedicada) e a flag ``is_failed`` para
+    o badge de erro. A trilha de eventos saiu do detalhe médico (vive no
+    painel). A re-identificação usa exclusivamente o mapa do caso (tokens de
+    espaços alheios podem sobrar como tokens — sem vazamento). Caso sem
+    artefatos → seções vazias.
     """
     pseudonym_map = case.pseudonym_map if isinstance(case.pseudonym_map, dict) else {}
 
@@ -666,14 +645,15 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
 
     sections = _build_structure_sections(structured)
 
-    # Trilha de eventos do caso (R5): labels canônicos, ator e payload enxuto.
-    events = [_event_summary(event) for event in case.events.select_related("actor")]
-    # Ator/data da decisão: o evento CASE_DOCTOR_DECISIONS_RECORDED mais recente.
-    decision_event: dict[str, object] | None = None
-    for event in reversed(events):
-        if event["event_type"] == CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED:
-            decision_event = event
-            break
+    # Ator/data da decisão (D4): consulta DEDICADA ao evento canônico mais
+    # recente — a trilha saiu do detalhe médico (vive no painel).
+    decision_event_row = (
+        case.events.filter(event_type=CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED)
+        .select_related("actor")
+        .order_by("-id")
+        .first()
+    )
+    decision_event = _decision_event_summary(decision_event_row) if decision_event_row else None
 
     # Cards de anexo (slice 004, D5): seção aditiva — casos sem anexos
     # permanecem com o contexto do change 07 intacto (chave ausente).
@@ -695,7 +675,7 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
         "aggregate": _build_aggregate(suggestions.get("aggregate")),
         "prior_cases": _build_prior_cases(case, declared_types),
         "decision_event": decision_event,
-        "events": events,
+        "is_failed": case.status == CaseStatus.FAILED,
         "has_structure": any(section["lines"] for section in sections),
     }
     if attachment_cards:

@@ -21,13 +21,13 @@
 
 ## 3. Slice 003 — Trilha legível no detail + remoção NIR/médico
 
-- [ ] 3.1 `apps/dashboard/event_labels.py` (`EVENT_LABELS` cobrindo TODO o
+- [x] 3.1 `apps/dashboard/event_labels.py` (`EVENT_LABELS` cobrindo TODO o
       enum + `EVENT_BADGE_CSS`; teste anti-drift)
-- [ ] 3.2 Trilha collapsible fechada no detail do painel (labels, dot,
+- [x] 3.2 Trilha collapsible fechada no detail do painel (labels, dot,
       data/hora, ator)
-- [ ] 3.3 Trilha removida dos detalhes NIR/médico + badge «Falha no
+- [x] 3.3 Trilha removida dos detalhes NIR/médico + badge «Falha no
       processamento» em FAILED
-- [ ] 3.4 Testes RED→GREEN (cobertura, labels no render, collapsible
+- [x] 3.4 Testes RED→GREEN (cobertura, labels no render, collapsible
       fechado, ausência de trilha em NIR/médico, badge) + bateria
 
 ## 4. Encerramento

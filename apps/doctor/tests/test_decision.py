@@ -641,10 +641,13 @@ def test_presenter_decision_section_after_decision(
     assert decision_event["actor_display"] == decider.username
     assert decision_event["actor_role"] == DOCTOR_ROLE
     assert decision_event["timestamp"]
-    # Trilha de eventos do caso (inclui transições e o evento de decisão).
-    event_types = [event["event_type"] for event in context["events"]]
+    # Slice 003 (painel-ats-parity): a trilha saiu do detalhe médico — o
+    # presenter não monta mais ``events`` (vive no painel).
+    assert "events" not in context
+    # Os eventos continuam na TRILHA do caso (append-only), com a decisão e o
+    # encadeamento da decisão mista (≥1 aprovado) → SCHEDULER_REQUESTED.
+    event_types = [event.event_type for event in case.events.order_by("id")]
     assert CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED in event_types
-    # Decisão mista (≥1 aprovado) → SCHEDULER_REQUESTED no encadeamento.
     assert f"CASE_STATUS_{CaseStatus.SCHEDULER_REQUESTED}" in event_types
 
 
@@ -683,9 +686,9 @@ def test_decided_detail_readonly(
     assert "risco elevado" in body
     # Ator/data do evento de decisão.
     assert decider.username in body
-    # Trilha de eventos do caso.
-    assert "Trilha de eventos" in body
-    assert "Decisões médicas por procedimento registradas" in body
+    # A trilha de eventos saiu do detalhe médico (vive no painel).
+    assert "Trilha de eventos" not in body
+    assert "Decisões médicas por procedimento registradas" not in body
     # Read-only: nenhum formulário/campo de decisão fora de AWAITING_DOCTOR
     # (o único <form> da página é o de logout do base.html — sem ação de
     # decisão nem campos dinâmicos do DoctorDecisionForm).

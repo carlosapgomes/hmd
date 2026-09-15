@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load role_labels %}
 {% block title %}Caso {% if agency_record_number %}{{ agency_record_number }}{% else %}uid {{ short_id }}{% endif %} — {{ app_display_name }}{% endblock %}
 
 {% block content %}
@@ -7,8 +8,9 @@
      paciente — a política de PHI foi corrigida pelo dono: zero-PHI vale para o
      perímetro EXTERNO (LLM); a UI interna de funcionários mostra o paciente —
      a fase do fluxo, os procedimentos declarados e a ação de encerramento
-     administrativo (casos ≠ CLEANED). A trilha de eventos com rótulos legíveis
-     entra neste mesmo template no slice 003. -->
+     administrativo (casos ≠ CLEANED). A trilha de eventos (slice 003, R1/R2)
+     vive AQUI — rótulos legíveis do mapa ``event_labels`` em card collapsible
+     FECHADO por padrão. -->
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
   <h1 class="h4 mb-0">Detalhes do caso</h1>
   <a href="{{ back_url }}" class="btn btn-sm btn-outline-secondary">Voltar ao painel</a>
@@ -50,6 +52,34 @@
     <li class="list-group-item text-muted">—</li>
     {% endfor %}
   </ul>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header d-flex flex-wrap align-items-center gap-2">
+    <span>Trilha de eventos</span>
+    <button class="btn btn-sm btn-outline-secondary ms-auto" type="button"
+            data-bs-toggle="collapse" data-bs-target="#case-event-trail"
+            aria-expanded="false" aria-controls="case-event-trail">Mostrar trilha</button>
+  </div>
+  <div class="collapse" id="case-event-trail">
+    <ul class="list-group list-group-flush">
+      {% for event in events %}
+      <li class="list-group-item">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div>
+            <span class="badge rounded-pill {{ event.badge_css }}">{{ event.label }}</span>
+            <div class="small text-muted mt-1">
+              {{ event.actor_display }}{% if event.actor_role %} · papel {{ event.actor_role|role_label }}{% endif %}
+            </div>
+          </div>
+          <span class="small text-muted text-nowrap">{{ event.timestamp|date:"d/m/Y H:i" }}</span>
+        </div>
+      </li>
+      {% empty %}
+      <li class="list-group-item text-muted">Sem eventos registrados.</li>
+      {% endfor %}
+    </ul>
+  </div>
 </div>
 
 {% if can_close %}

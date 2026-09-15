@@ -37,9 +37,18 @@ from django.utils import timezone
 from apps.accounts.models import Role, User
 from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS
 from apps.cases.events import CaseEventType
-from apps.cases.models import Case, CaseProcedure, CaseStatus, DoctorDisposition, SchedulingUnit
+from apps.cases.models import (
+    ActorType,
+    Case,
+    CaseEvent,
+    CaseProcedure,
+    CaseStatus,
+    DoctorDisposition,
+    SchedulingUnit,
+)
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.dashboard.case_labels import CASE_NEXT_STEP_LABELS, CASE_RESULT_LABELS
+from apps.dashboard.event_labels import EVENT_LABELS
 from apps.dashboard.views import CASE_LIST_PAGE_SIZE, CLOSE_SUCCESS_MESSAGE
 
 SYSTEM_ROLE = "system"
@@ -1076,3 +1085,88 @@ def test_admin_close_live_worker_lease_is_refused(client: Client) -> None:
     assert case.lock_context == "worker_pipeline"
     assert case.locked_until is not None
     assert not case.events.filter(event_type=CaseEventType.CASE_ADMINISTRATIVELY_CLOSED).exists()
+
+
+# ── R2/R3 (painel-ats-parity, slice 003): trilha legível no detail ─────────
+
+
+def _add_event(case: Case, event_type: str, payload: dict[str, object] | None = None) -> None:
+    """Evento de trilha adicional (append-only) com ator de sistema."""
+    CaseEvent.objects.create(
+        case=case,
+        event_type=event_type,
+        actor_type=ActorType.SYSTEM,
+        actor=None,
+        actor_role=SYSTEM_ROLE,
+        payload=payload or {},
+    )
+
+
+def _trail_section(content: str) -> str:
+    """Trecho do HTML a partir do card da trilha (asserts escopados)."""
+    return content.split("Trilha de eventos")[-1]
+
+
+@pytest.mark.django_db
+def test_case_detail_renders_legible_event_trail_collapsed(client: Client) -> None:
+    """R2/D3: a trilha do detail exibe RÓTULOS legíveis (nunca o tipo bruto),
+    com ator de sistema, dentro de um card collapsible FECHADO por padrão."""
+    creator = _make_user("gestor-trilha-legivel")
+    case = _awaiting_doctor_case(creator)
+    client.force_login(creator)
+
+    response = client.get(_detail_url(case))
+    content = response.content.decode()
+    trail = _trail_section(content)
+
+    assert response.status_code == 200
+    assert "Trilha de eventos" in content
+    # Rótulo legível do mapa (não o valor bruto do enum) + ator + data/hora.
+    assert EVENT_LABELS[CaseEventType.CASE_STATUS_AWAITING_DOCTOR] in trail
+    assert "Sistema" in trail
+    last_event = case.events.order_by("-id").first()
+    assert last_event is not None
+    assert timezone.localtime(last_event.timestamp).strftime("%d/%m/%Y %H:%M") in trail
+    # Nenhum tipo bruto na trilha.
+    for value in CaseEventType.values:
+        assert value not in trail
+    # Collapsible FECHADO por padrão (Bootstrap): o container do alvo existe sem
+    # a classe ``show`` e o gatilho aponta para ele.
+    assert '<div class="collapse" id="case-event-trail">' in content
+    assert 'data-bs-toggle="collapse"' in content
+    assert 'data-bs-target="#case-event-trail"' in content
+    assert "collapse show" not in content
+
+
+@pytest.mark.django_db
+def test_case_detail_trail_falls_back_to_raw_event_type(client: Client) -> None:
+    """R1/R4: tipo fora do mapa exibe o valor bruto (fallback do molde)."""
+    creator = _make_user("gestor-trilha-fallback")
+    case = _awaiting_doctor_case(creator)
+    _add_event(case, "LEGACY_UNKNOWN_EVENT")
+    client.force_login(creator)
+
+    response = client.get(_detail_url(case))
+
+    assert response.status_code == 200
+    assert "LEGACY_UNKNOWN_EVENT" in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_case_detail_trail_marks_failed_event_with_danger_badge(client: Client) -> None:
+    """R1: evento de falha recebe badge danger no card da trilha."""
+    creator = _make_user("gestor-trilha-falha")
+    case = Case.objects.create(created_by=creator)
+    case.start_pdf_extraction(user=None, role=SYSTEM_ROLE)
+    case.fail_processing(reason="falha na extração do PDF", user=None, role=SYSTEM_ROLE)
+    client.force_login(creator)
+
+    response = client.get(_detail_url(case))
+    trail = _trail_section(response.content.decode())
+
+    assert response.status_code == 200
+    assert CaseStatus.FAILED == case.status
+    assert (
+        f'<span class="badge rounded-pill text-bg-danger">'
+        f"{EVENT_LABELS[CaseEventType.CASE_STATUS_FAILED]}</span>"
+    ) in trail

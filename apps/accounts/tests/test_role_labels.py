@@ -192,10 +192,11 @@ def test_account_home_lists_label_and_fallback(client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_intake_trail_system_role_falls_back_to_raw_key(client: Client) -> None:
+def test_dashboard_trail_system_role_falls_back_to_raw_key(client: Client) -> None:
     """D3/spec: chave fora do mapeamento (``system``) exibe a própria chave na
-    trilha do detalhe, sem erro de renderização."""
-    creator = _create_user(username="nir.sistema", role_names=["nir"])
+    TRILHA do detalhe do painel (a trilha saiu do NIR/médico no slice 003 do
+    painel-ats-parity), sem erro de renderização."""
+    creator = _create_user(username="gestor.sistema", role_names=[MANAGER_ROLE])
     event_actor = _create_user(username="ator.medico", role_names=[DOCTOR_ROLE])
     message_author = _create_user(username="autor.supervisor", role_names=[MANAGER_ROLE])
     case = _create_case_with_doctor_event_and_manager_message(
@@ -208,9 +209,9 @@ def test_intake_trail_system_role_falls_back_to_raw_key(client: Client) -> None:
         event_type=CaseEventType.CASE_STATUS_PDF_EXTRACTING,
         payload={},
     )
-    _login(client, username=creator.username, role="nir")
+    _login(client, username=creator.username, role=MANAGER_ROLE)
 
-    response = client.get(reverse("intake:case_detail", args=[case.case_id]))
+    response = client.get(reverse("dashboard:case_detail", args=[case.case_id]))
 
     assert response.status_code == 200
     body = response.content.decode()
@@ -218,8 +219,9 @@ def test_intake_trail_system_role_falls_back_to_raw_key(client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_doctor_trail_shows_role_label(client: Client) -> None:
-    """R3: o evento de decisão e a trilha do detalhe médico exibem "papel médico"."""
+def test_doctor_decision_card_shows_role_label(client: Client) -> None:
+    """R3: o card de decisões do detalhe médico exibe "papel médico" (a trilha
+    saiu do detalhe no slice 003 do painel-ats-parity — resta UM ponto)."""
     creator = _create_user(username="nir.criador", role_names=["nir"])
     event_actor = _create_user(username="ator.medico", role_names=[DOCTOR_ROLE])
     message_author = _create_user(username="autor.supervisor", role_names=[MANAGER_ROLE])
@@ -231,14 +233,16 @@ def test_doctor_trail_shows_role_label(client: Client) -> None:
 
     body = client.get(reverse("doctor:case_detail", args=[case.case_id])).content.decode()
 
-    # Evento de decisão (linha 85) + trilha (linha 317): dois pontos.
-    assert body.count("papel médico") == 2
+    # Ator/data do evento de decisão (a trilha não é mais renderizada aqui).
+    assert body.count("papel médico") == 1
     assert "papel doctor" not in body
+    assert "Trilha de eventos" not in body
 
 
 @pytest.mark.django_db
-def test_intake_trail_and_communication_show_labels(client: Client) -> None:
-    """R3: trilha e badge de comunicação do detalhe NIR exibem os rótulos."""
+def test_intake_communication_shows_labels_without_trail(client: Client) -> None:
+    """R3: o badge de comunicação do detalhe NIR exibe o rótulo; a trilha de
+    eventos saiu do detalhe (slice 003 do painel-ats-parity)."""
     creator = _create_user(username="nir.criador", role_names=["nir"])
     event_actor = _create_user(username="ator.medico", role_names=[DOCTOR_ROLE])
     message_author = _create_user(username="autor.supervisor", role_names=[MANAGER_ROLE])
@@ -249,9 +253,28 @@ def test_intake_trail_and_communication_show_labels(client: Client) -> None:
 
     body = client.get(reverse("intake:case_detail", args=[case.case_id])).content.decode()
 
-    assert "papel médico" in body
     assert ">supervisor</span>" in body
     assert "papel manager" not in body
+    assert "Trilha de eventos" not in body
+    assert "papel médico" not in body
+
+
+@pytest.mark.django_db
+def test_dashboard_trail_shows_role_labels(client: Client) -> None:
+    """R3 (superfície nova): a trilha do detalhe do PAINEL exibe "papel médico"
+    (ator do evento de decisão) e o badge da comunicação "supervisor"."""
+    creator = _create_user(username="gestor.trail", role_names=[MANAGER_ROLE])
+    event_actor = _create_user(username="ator.medico", role_names=[DOCTOR_ROLE])
+    message_author = _create_user(username="autor.supervisor", role_names=[MANAGER_ROLE])
+    case = _create_case_with_doctor_event_and_manager_message(
+        creator=creator, event_actor=event_actor, message_author=message_author
+    )
+    _login(client, username=creator.username, role=MANAGER_ROLE)
+
+    body = client.get(reverse("dashboard:case_detail", args=[case.case_id])).content.decode()
+
+    assert "papel médico" in body
+    assert "papel doctor" not in body
 
 
 @pytest.mark.django_db

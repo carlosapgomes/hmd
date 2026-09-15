@@ -39,7 +39,7 @@ destaque na thread); ``case_ack`` (POST novo) confirma o recebimento no estado
 
 import logging
 import uuid
-from typing import Any, cast
+from typing import cast
 
 from django.conf import settings
 from django.contrib import messages
@@ -74,11 +74,6 @@ from .services import (
 
 logger = logging.getLogger(__name__)
 
-# Label legível por tipo canônico de evento (trilha do detalhe); o tipo é a
-# chave de fallback quando o evento ainda não tem entrada canônica (R2).
-_EVENT_TYPE_LABELS: dict[str, str] = {
-    event_type: label for event_type, label in CaseEventType.choices
-}
 # Labels do catálogo por tipo, na ordem canônica do registro (R1/R2).
 _PROCEDURE_LABELS_BY_TYPE: dict[str, str] = {
     profile.procedure_type: profile.label for profile in PROCEDURE_PROFILES
@@ -167,20 +162,6 @@ def _administrative_closure_result(case: Case) -> tuple[str, str] | None:
     reason_label = ADMINISTRATIVE_CLOSURE_REASONS.get(reason_code, reason_code)
     reason_text = payload.get("reason_text", "")
     return f"{_ADMIN_CLOSED_RESULT_PREFIX} — {reason_label}", str(reason_text)
-
-
-def _summarize_payload(payload: dict[str, Any]) -> list[tuple[str, str]]:
-    """Resumo exibível do payload do evento (R2): pares chave → valor enxuto.
-
-    Valores aninhados viram sua representação textual truncada — a trilha do
-    detalhe nunca precisa do payload bruto completo.
-    """
-
-    def _render(value: object) -> str:
-        text = str(value)
-        return text if len(text) <= 160 else f"{text[:157]}..."
-
-    return [(key, _render(value)) for key, value in payload.items()]
 
 
 def _procedure_decisions(case: Case) -> list[dict[str, str]]:
@@ -347,13 +328,14 @@ def my_cases(request: HttpRequest) -> HttpResponse:
 
 @role_required("nir")
 def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
-    """Detalhe do caso do próprio NIR: docs, trilha, comunicações e resultado.
+    """Detalhe do caso do próprio NIR: docs, comunicações e resultado.
 
     O queryset filtra ``created_by=user`` — caso alheio (ou inexistente)
     responde 404 sem vazar informação (D6/D9). Exibe status/timestamps, tipos
     declarados, flag de retenção com motivo, documentos com link de abertura
-    (``serve_document``), trilha de eventos (tipo, ator+papel, timestamp,
-    payload resumido) e a thread de comunicações do change 03. Quando o caso
+    (``serve_document``) e a thread de comunicações do change 03 — SEM a
+    trilha de eventos (slice 003 do painel-ats-parity: a trilha vive no
+    painel; falha aparece como badge de erro). Quando o caso
     passou da decisão médica (slice 003, R1/D3), ganha também a seção de
     resultado: decisões por procedimento (label + disposição + motivo real),
     dados de agendamento (unidade/data/local quando houver) e a resposta final
@@ -369,21 +351,7 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     )
     documents = list(case.documents.all())
     attachments = list(case.attachments.all())
-    events = list(case.events.select_related("actor"))
     communications = list(case.communication_messages.select_related("author"))
-
-    enriched_events = []
-    for event in events:
-        enriched_events.append(
-            {
-                "event_type": event.event_type,
-                "label": _EVENT_TYPE_LABELS.get(event.event_type, event.event_type),
-                "actor_display": event.actor.display_name if event.actor else "Sistema",
-                "actor_role": event.actor_role,
-                "timestamp": event.timestamp,
-                "payload_summary": _summarize_payload(event.payload),
-            }
-        )
 
     procedure_decisions = _procedure_decisions(case)
     # Resposta final em destaque (R1): a última comunicação autoral da thread
@@ -403,7 +371,6 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         "documents": documents,
         "attachments": attachments,
         "procedure_labels": _procedure_labels(_declared_types_from_rows(case)),
-        "events": enriched_events,
         "communications": communications,
         "has_outcome": bool(procedure_decisions),
         "procedure_decisions": procedure_decisions,

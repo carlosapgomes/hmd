@@ -61,6 +61,7 @@ from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.units import unit_label
 
 from .case_labels import CASE_NEXT_STEP_LABELS, CASE_RESULT_LABELS, PROCEDURE_TYPE_OPTIONS
+from .event_labels import event_badge_css, event_label
 from .metrics import (
     DEFAULT_PERIOD,
     VALID_PERIODS,
@@ -421,10 +422,11 @@ def _case_detail_context(case: Case, *, filters: Mapping[str, str]) -> dict[str,
     """Contexto do detalhe do caso no painel (R2/D2).
 
     Identificação completa (nome, idade, sexo, raça/cor, unidade de origem, nº de
-    ocorrência ou uid curto, inserção e fase/status), procedimentos declarados e
-    o destino do encerramento administrativo (casos ≠ ``CLEANED``) com os
-    filtros da lista preservados no retorno. A trilha de eventos com rótulos
-    legíveis entra neste MESMO template no slice 003.
+    ocorrência ou uid curto, inserção e fase/status), procedimentos declarados, a
+    TRILHA de eventos com rótulos legíveis (slice 003, R1/R2 — mapa
+    ``event_labels``, ator e timestamp localizado) e o destino do encerramento
+    administrativo (casos ≠ ``CLEANED``) com os filtros da lista preservados no
+    retorno.
     """
     declared_types = [row.procedure_type for row in case.procedures.all() if row.declared_by_nir]
     return {
@@ -441,6 +443,17 @@ def _case_detail_context(case: Case, *, filters: Mapping[str, str]) -> dict[str,
         "next_step_label": CASE_NEXT_STEP_LABELS[case.status],
         "procedure_labels": _procedure_labels(declared_types),
         "can_close": case.status != CaseStatus.CLEANED,
+        "events": [
+            {
+                "event_type": event.event_type,
+                "label": event_label(event.event_type),
+                "badge_css": event_badge_css(event.event_type, event.payload),
+                "actor_display": event.actor.display_name if event.actor else "Sistema",
+                "actor_role": event.actor_role,
+                "timestamp": timezone.localtime(event.timestamp),
+            }
+            for event in case.events.select_related("actor")
+        ],
         "filter_qs": urlencode(_filter_params(filters)),
         "back_url": _dashboard_url(filters),
     }

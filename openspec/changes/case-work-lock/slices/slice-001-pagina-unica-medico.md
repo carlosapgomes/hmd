@@ -25,8 +25,10 @@ Sem reserva/lock neste slice (vem no 002).
   (`_CLINICAL_ORDER`, lista de títulos dos cards ~l.598) e
   `_procedures_card`; `apps/doctor/tests/test_decision.py` — testes da view.
 - Helpers de teste: `apps/doctor/tests/conftest.py` (`client`, `user_factory`,
-  `_login`), `_create_case_with_declared` e `_advance_to_awaiting_doctor` em
-  `test_detail.py` (reutilizar via import do módulo, como os testes atuais).
+  `_login`); **os testes novos de página única vivem em `test_decision.py` e
+  usam os helpers LOCAIS desse módulo** (duplicados lá em relação ao
+  `test_detail.py` — verificar os nomes existentes no topo do arquivo antes
+  de criar; não importar de `test_detail.py`).
 
 ## Requisitos verificáveis
 
@@ -56,6 +58,9 @@ expected_files:
   - templates/doctor/queue.html            # ação do card da aba aguardando
   - apps/doctor/tests/test_detail.py       # pins de ordem/títulos
   - apps/doctor/tests/test_decision.py     # testes novos (página única)
+  - apps/doctor/tests/test_queue.py        # R1: teste novo + teste existente
+                                           # test_queue_items_link_to_case_detail
+                                           # (l. ~229) atualizado para case_decide
 
 allowed_incidental_files: []
 
@@ -74,7 +79,7 @@ Extração do partial: mover os blocos de card de leitura de
 
 | Requisito | Arquivo(s) | Teste/check |
 | --- | --- | --- |
-| R1 | `templates/doctor/queue.html` | `test_queue.py::test_awaiting_card_links_to_decide` (novo; assert endurecido `0 < found` de `doctor:case_decide` no card e `case_detail` ausente da ação do card) |
+| R1 | `templates/doctor/queue.html`, `test_queue.py` | `test_queue.py::test_awaiting_card_links_to_decide` (novo; assert endurecido `0 < found` de `doctor:case_decide` no card e `case_detail` ausente da ação do card) + atualizar `test_queue_items_link_to_case_detail` existente (aba aguardando → `case_decide`; aba decididos segue `case_detail`) |
 | R2 | `decide.html`, `_case_cards.html` | `test_decision.py::test_work_page_orders_reading_then_form` (novo; posições: alertas < form; form após todos os títulos de leitura) |
 | R3 | `decide.html` | `test_decision.py::test_work_page_has_no_recorded_decisions_block` (novo) |
 | R4 | `decide.html` | `test_decision.py::test_work_page_has_form_anchor` (novo; `href="#doctor-decision-form"` e `id="doctor-decision-form"` — ambos com `0 < pos`) |

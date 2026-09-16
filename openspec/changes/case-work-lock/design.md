@@ -60,13 +60,22 @@ Mecânica já existente em `apps/cases/locks.py` (claim/assert/release/renew com
    - Adquiriu → token no contexto e `<input type="hidden" name="lock_token">`
      no formulário. Mesmo médico reabrindo = renovação com token novo
      (comportamento do claim atual).
-5. **POST exige posse**: `case_decide` (POST) lê `lock_token`; sem token,
-   token inválido ou lease vencida → re-render do formulário com
-   `lock_error` («Sua reserva para este caso expirou ou não é válida. Volte
-   para a fila e tente novamente.») — **nada persiste** (o serviço
-   `record_doctor_procedure_decisions` não é chamado). Posse válida → serviço
-   atômico existente → **release determinístico** (`release_case_lock`) →
-   redirect ao detalhe com flash de sucesso.
+5. **POST exige posse — validada sob row lock**: `case_decide` (POST) lê
+   `lock_token`; a view abre `transaction.atomic()` e re-lê a linha com
+   `Case.objects.select_for_update().get(pk=...)` ANTES de qualquer escrita,
+   valida `assert_case_lock(locked, token)` sobre a linha recém-travada
+   (time-of-check == time-of-use, mesma técnica do `locks.py`) e só então
+   chama o serviço (o `atomic` do serviço vira savepoint da transação da
+   view) e faz o release determinístico — **tudo na mesma transação**, sem
+   janela de expiração/tomada entre validação e persistência.
+   - Sem token, token inválido ou lease vencida → re-render do formulário
+     com
+     `lock_error` («Sua reserva para este caso expirou ou não é válida.
+     Volte para a fila e tente novamente.») — **nada persiste** (o serviço
+     `record_doctor_procedure_decisions` não é chamado).
+   - Posse válida → serviço atômico existente → **release determinístico**
+     (`release_case_lock`, mesma transação) → redirect ao detalhe com flash
+     de sucesso.
    - A proteção contra corrida permanece dupla: FSM + `TransitionNotAllowed`
      no serviço (já existente) e agora também a posse do lock.
 6. **Fila médica**: `expire_stale_locks_for_statuses([AWAITING_DOCTOR])`

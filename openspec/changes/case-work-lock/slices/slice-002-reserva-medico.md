@@ -52,8 +52,13 @@ Reserva vencida expira de forma lazy na fila. Sem JavaScript neste slice
   `lock_error` visível («Sua reserva para este caso expirou ou não é válida.
   Volte para a fila e tente novamente.») e **nada persiste** (rows/status/
   eventos de decisão inalterados).
-- **R7** POST válido: decisão persiste (fluxo atual) + `release_case_lock`
-  antes do redirect → caso sem lock e trilha com `CASE_LOCK_RELEASED`.
+- **R7** POST válido: a view valida a posse **sob row lock** —
+  `transaction.atomic()` + `Case.objects.select_for_update().get(...)` +
+  `assert_case_lock(locked, token)` → `record_doctor_procedure_decisions`
+  (savepoint da mesma transação) → `release_case_lock` na MESMA transação
+  → commit — sem janela de expiração/tomada entre validação e persistência
+  (design D2 item 5). Resultado: decisão persiste, caso sem lock e trilha
+  com `CASE_LOCK_RELEASED`.
 - **R8** Fila médica: expiração lazy (`[AWAITING_DOCTOR]`) +
   `select_related("locked_by")`; card aguardando: sem reserva → «Avaliar»;
   próprio → «Continuar avaliação»; outro → «Reservado» desabilitado + nome.
@@ -95,7 +100,7 @@ correto).
 | R4 | `views.py`, `decide.html` | `test_decision.py::test_open_work_page_claims_case` |
 | R5 | `views.py` | `test_decision.py::test_other_doctor_blocked_by_active_lock` + `::test_reopen_renews_own_lock` |
 | R6 | `views.py`, `decide.html` | `test_decision.py::test_submit_without_valid_token_persists_nothing` |
-| R7 | `views.py` | `test_decision.py::test_decision_releases_lock` |
+| R7 | `views.py` | `test_decision.py::test_decision_releases_lock` (+ teste da janela: expirar a lease ENTRE o render e o POST — ex. retroagir `locked_until` — e provar que nada persiste; provas de atomicidade via rows/eventos/status) |
 | R8 | `views.py`, `queue.html` | `test_queue.py::test_awaiting_cards_reflect_lock_state` |
 
 ## RED

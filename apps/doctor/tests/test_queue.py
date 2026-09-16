@@ -35,6 +35,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.cases.locks import claim_case_lock
 from apps.cases.models import Case, CaseProcedure, CaseStatus
 from apps.doctor.access import can_access_case
 
@@ -232,17 +233,49 @@ def test_queue_items_link_to_case_detail(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """Fila → detalhe: cada item da fila leva ao card do paciente (resumo,
-    recomendação e registro da opinião vivem no detalhe)."""
-    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
-    login_user(user_factory("medico-link", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+    """Fila → página de trabalho/detalhe (case-work-lock slice 001).
+
+    A aba ``aguardando`` abre a página de trabalho (``doctor:case_decide`` —
+    leitura completa + formulário no mesmo fluxo); a aba ``decididos`` segue no
+    detalhe read-only, onde vivem as decisões registradas.
+    """
+    awaiting = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-link", (DOCTOR_ROLE,))
+    decided = _make_decided_case(nir_user, doctor, (CARDIO_TYPE,), accepted=False)
+    login_user(doctor, DOCTOR_ROLE)
 
     response = client.get(reverse("doctor:queue"))
 
     assert response.status_code == 200
     body = response.content.decode()
-    href = reverse("doctor:case_detail", args=[case.case_id])
-    assert f'href="{href}"' in body
+    assert f'href="{reverse("doctor:case_decide", args=[awaiting.case_id])}"' in body
+
+    decided_body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
+    assert f'href="{reverse("doctor:case_detail", args=[decided.case_id])}"' in decided_body
+
+
+@pytest.mark.django_db
+def test_awaiting_card_links_to_decide(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R1 (case-work-lock slice 001): o card da aba aguardando abre a página de
+    trabalho (leitura + decisão) — o detalhe read-only NÃO é o alvo."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    login_user(user_factory("medico-card-decide", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue")).content.decode()
+
+    card = _card_slice(body, case.case_id)
+    decide_href = f'href="{reverse("doctor:case_decide", args=[case.case_id])}"'
+    # ``find`` devolve -1 quando não acha — exigir o href real no card.
+    assert card.find(decide_href) > 0
+    detail_href = f'href="{reverse("doctor:case_detail", args=[case.case_id])}"'
+    # O href de detalhe é SUBSTRING do href de decisão (…/case/<uid>/decide/):
+    # comparar o atributo completo, nunca a URL solta.
+    assert detail_href not in card
 
 
 @pytest.mark.django_db
@@ -935,11 +968,107 @@ def test_queue_cards_close_anchor(
     body = client.get(reverse("doctor:queue")).content.decode()
 
     anchor = '<a class="list-group-item list-group-item-action py-3"'
-    first_open = body.find(f'{anchor}\n         href="/doctor/case/{first.case_id}/"')
-    second_open = body.find(f'{anchor}\n         href="/doctor/case/{second.case_id}/"')
+    first_open = body.find(
+        f'{anchor}\n         href="{reverse("doctor:case_decide", args=[first.case_id])}"'
+    )
+    second_open = body.find(
+        f'{anchor}\n         href="{reverse("doctor:case_decide", args=[second.case_id])}"'
+    )
     assert first_open > 0 and second_open > first_open
     # O fechamento do PRIMEIRO card deve vir antes da abertura do segundo:
     # sem isso, o <a> aberto engole os cards seguintes (distorção em cascata).
     # ``find`` devolve -1 quando não acha — exigir fechamento real (> 0).
     first_close = body.find("</a>", first_open)
     assert 0 < first_close < second_open
+
+
+# ── case-work-lock slice 002: reserva nos cards da fila (R8) ──────────────
+
+# Aberturas possíveis do item de lista: link (caso livre/próprio) ou bloco
+# estático (reservado por outro — sem ação primária, padrão ats-web).
+_CARD_OPENINGS = ('<a class="list-group-item', '<div class="list-group-item')
+
+LOCK_CONTEXT = "doctor_decision"
+
+
+def _card_block(body: str, marker: object) -> str:
+    """Fatia o item de lista localizado pelo ``marker`` (uid ou nome único).
+
+    ``rfind``/``find`` (não ``rindex``/``index``): a ausência de uma das
+    aberturas possíveis devolve -1 em vez de levantar ``ValueError``. O uid
+    só existe no corpo quando o card tem ação (``<a href>``); o card reservado
+    por outro médico é um bloco sem link e é localizado por um marcador visível
+    único (nome do paciente).
+    """
+    anchor = body.index(str(marker))
+    starts = [
+        index for index in (body.rfind(mark, 0, anchor) for mark in _CARD_OPENINGS) if index != -1
+    ]
+    ends = [index for index in (body.find(mark, anchor) for mark in _CARD_OPENINGS) if index != -1]
+    start = max(starts)
+    return body[start : min(ends) if ends else len(body)]
+
+
+@pytest.mark.django_db
+def test_awaiting_cards_reflect_lock_state(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R8/D2: card da aba aguardando reflete a reserva (livre/meu/de outro).
+
+    Livre → [Avaliar] para a página de trabalho; do próprio médico →
+    [▶ Continuar avaliação]; de outro → botão desabilitado [🔒 Reservado] com o
+    portador e SEM ação de abrir (evita leitura duplicada).
+    """
+    free = _make_awaiting_case(nir_user, (ANGIO_TYPE,), patient_name="Paciente Livre")
+    mine = _make_awaiting_case(nir_user, (ANGIO_TYPE,), patient_name="Paciente Meu")
+    other = _make_awaiting_case(nir_user, (ANGIO_TYPE,), patient_name="Paciente Outro")
+    doctor = user_factory("medico-fila-reserva", (DOCTOR_ROLE,))
+    other_doctor = user_factory("medico-fila-reserva-outro", (DOCTOR_ROLE,))
+    claim_case_lock(mine, user=doctor, context=LOCK_CONTEXT, role=DOCTOR_ROLE)
+    claim_case_lock(other, user=other_doctor, context=LOCK_CONTEXT, role=DOCTOR_ROLE)
+    login_user(doctor, DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue")).content.decode()
+
+    free_card = _card_block(body, free.case_id)
+    assert "Avaliar" in free_card
+    assert f'href="{reverse("doctor:case_decide", args=[free.case_id])}"' in free_card
+
+    mine_card = _card_block(body, mine.case_id)
+    assert "Continuar avaliação" in mine_card
+    assert f'href="{reverse("doctor:case_decide", args=[mine.case_id])}"' in mine_card
+
+    # O card reservado não carrega o uid (sem href): localizar pelo paciente.
+    other_card = _card_block(body, "Paciente Outro")
+    assert "Reservado" in other_card
+    assert other_doctor.display_name in other_card
+    assert "disabled" in other_card
+    # Sem ação primária: o card reservado por outro não abre a página de trabalho.
+    assert f'href="{reverse("doctor:case_decide", args=[other.case_id])}"' not in other_card
+
+
+@pytest.mark.django_db
+def test_queue_expires_stale_lock_before_rendering(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R8/D2: reserva vencida é expirada de forma lazy antes de montar a fila."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,), patient_name="Paciente Expirado")
+    holder = user_factory("medico-reserva-expirada", (DOCTOR_ROLE,))
+    claim_case_lock(case, user=holder, context=LOCK_CONTEXT, role=DOCTOR_ROLE)
+    Case.objects.filter(pk=case.pk).update(locked_until=timezone.now() - timedelta(seconds=1))
+    login_user(holder, DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue")).content.decode()
+
+    card = _card_block(body, case.case_id)
+    assert "Avaliar" in card
+    assert "Reservado" not in card
+    case.refresh_from_db()
+    assert case.lock_token is None
+    assert case.locked_by is None

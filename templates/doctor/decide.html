@@ -1,10 +1,11 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}{{ app_display_name }} — Caso {{ case_id }}: decisão médica{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center mt-4">
-  <div class="col-12 col-lg-8">
+  <div class="col-12 col-lg-10">
     <nav aria-label="breadcrumb" class="mb-3">
       <ol class="breadcrumb mb-0">
         <li class="breadcrumb-item"><a href="{% url 'doctor:queue' %}">Fila médica</a></li>
@@ -15,37 +16,61 @@
       </ol>
     </nav>
 
-    <!-- Identificação do paciente -->
-    <div class="card shadow-sm mb-4">
-      <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
-        <h1 class="h5 mb-0">Decisão médica por procedimento</h1>
-        <span class="badge rounded-pill text-bg-secondary ms-auto">{{ status_label }}</span>
-      </div>
-      <div class="card-body">
-        <dl class="row mb-2">
-          <dt class="col-sm-3">Paciente</dt>
-          <dd class="col-sm-9">{{ identification.patient_name|default:"—" }}</dd>
-          <dt class="col-sm-3">Nº de ocorrência</dt>
-          <dd class="col-sm-9">{{ identification.agency_record_number|default:"—" }}</dd>
-        </dl>
-        <p class="small text-muted mb-0">
-          Informe a decisão por procedimento declarado. A <strong>negativa exige
-          motivo</strong>; a aprovação pode ser registrada sem observações. O
-          registro é único e atômico — a decisão vale para todo o caso.
-        </p>
-      </div>
-    </div>
+    {% comment %} Página de trabalho única (case-work-lock D1): os mesmos cards
+    de leitura do detalhe read-only em ordem única, com a âncora «Ir para o
+    formulário de decisão» no primeiro card. {% endcomment %}
+    {% include "doctor/_case_cards.html" with work_page=True %}
 
-    <form method="post" action="{% url 'doctor:case_decide' case_id %}">
+    <form method="post" action="{% url 'doctor:case_decide' case_id %}" id="doctor-decision-form">
       {% csrf_token %}
+      {% comment %} Reserva do caso (case-work-lock D2): o token da abertura
+      volta no POST e é validado sob row lock antes de qualquer escrita.
+      {% endcomment %}
+      <input type="hidden" name="lock_token" value="{{ lock_token|default:'' }}">
 
-      {% if form.non_field_errors %}
-      <div class="alert alert-danger" role="alert">
-        <ul class="mb-0">
-          {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
-        </ul>
+      {% comment %} Heartbeat da reserva (D3): config lida por
+      static/js/work_lock.js — renovação enquanto houver atividade e release
+      best-effort ao navegar. Sem token (POST inválido sem posse) a config não
+      é renderizada e o script sai cedo, sem heartbeat. {% endcomment %}
+      {% if lock_token %}
+      <div id="work-lock-config"
+           data-work-lock-config
+           data-renew-url="{% url 'doctor:lock_renew' case_id %}"
+           data-release-url="{% url 'doctor:lock_release' case_id %}"
+           data-lock-token="{{ lock_token }}"
+           data-heartbeat-ms="60000"
+           data-grace-ms="240000"
+           style="display:none;"></div>
+      <div id="work-lock-warning" class="alert alert-warning mb-3" style="display:none;"></div>
+      {% endif %}
+
+      {% if lock_error %}
+      <div class="alert alert-warning" role="alert">
+        <p class="mb-2">{{ lock_error }}</p>
+        <a href="{% url 'doctor:queue' %}" class="alert-link">Voltar para a fila</a>
       </div>
       {% endif %}
+
+      <div class="card shadow-sm mb-3">
+        <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
+          <h2 class="h5 mb-0">Decisão médica por procedimento</h2>
+          <span class="badge rounded-pill text-bg-secondary ms-auto">{{ status_label }}</span>
+        </div>
+        <div class="card-body">
+          {% if form.non_field_errors %}
+          <div class="alert alert-danger" role="alert">
+            <ul class="mb-0">
+              {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+          <p class="small text-muted mb-0">
+            Informe a decisão por procedimento declarado. A <strong>negativa exige
+            motivo</strong>; a aprovação pode ser registrada sem observações. O
+            registro é único e atômico — a decisão vale para todo o caso.
+          </p>
+        </div>
+      </div>
 
       {% for item in decision_fields %}
       <div class="card shadow-sm mb-3">
@@ -82,13 +107,28 @@
       </div>
       {% endfor %}
 
-      <div class="d-flex flex-wrap gap-2">
-        <button type="submit" class="btn btn-primary">Registrar decisão</button>
-        <a href="{% url 'doctor:case_detail' case_id %}" class="btn btn-outline-secondary">
-          Voltar ao detalhe
-        </a>
-      </div>
     </form>
+
+    {% comment %} Ações de saída/registro (D1/D3): o submit fica FORA do
+    formulário e o referencia por ``form`` (HTML5) para que «Sair sem decidir»
+    seja um mini-form próprio (POST server-side que libera a reserva na hora —
+    o JS apenas antecipa o release em navegação). {% endcomment %}
+    <div class="d-flex flex-wrap align-items-center gap-2">
+      <button type="submit" form="doctor-decision-form" id="btn-submit" class="btn btn-primary">
+        Registrar decisão
+      </button>
+      <form method="post" action="{% url 'doctor:case_leave' case_id %}" class="m-0">
+        {% csrf_token %}
+        <input type="hidden" name="lock_token" value="{{ lock_token|default:'' }}">
+        <button type="submit" class="btn btn-outline-secondary">Sair sem decidir</button>
+      </form>
+    </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+{% if lock_token %}
+<script src="{% static 'js/work_lock.js' %}" defer></script>
+{% endif %}
 {% endblock %}

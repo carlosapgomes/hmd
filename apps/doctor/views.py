@@ -29,6 +29,15 @@ segundo POST perde a corrida no atomic do serviço e é desfeito por inteiro).
 O detalhe pós-decisão (R5) continua read-only — decisões por procedimento,
 ator/data do evento e trilha vêm do presenter estendido.
 
+case-work-lock, slice 003 (R1–R3, D3): ``doctor:lock_renew`` e
+``doctor:lock_release`` são os endpoints JSON consumidos pelo
+``static/js/work_lock.js`` (heartbeat com detecção de atividade e release
+best-effort em navegação) e ``doctor:case_leave`` é o POST server-side do
+«Sair sem decidir» — libera a reserva com flash informativo e volta à fila,
+sem depender de JavaScript. Todos reutilizam o guard único do fluxo
+(``_lock_endpoint_case``) e nunca levantam 500: token ausente/ilegível ou sem
+posse vigente viram JSON/redirect idempotente.
+
 Fechamento da negativa total (nir-result-closure, slice 001): a decisão de
 negação de TODOS os procedimentos é seguida, no POST do ``case_decide``, da
 publicação automática da resposta final ao NIR (``post_doctor_denial_reply``
@@ -51,15 +60,26 @@ from urllib.parse import urlencode
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import F, QuerySet
-from django.http import FileResponse, HttpRequest, HttpResponse
+from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.views.decorators.http import require_POST
 from django_fsm import TransitionNotAllowed
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
 from apps.cases.closure import post_doctor_denial_reply
+from apps.cases.locks import (
+    CaseLockConflictError,
+    assert_case_lock,
+    claim_case_lock,
+    compute_lock_display,
+    expire_stale_locks_for_statuses,
+    release_case_lock,
+    renew_case_lock,
+)
 from apps.cases.models import Case, CaseDocument, CaseStatus
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES, VALID_DOCTOR_SUBTYPES
 from apps.cases.procedures import get_declared_procedure_types, record_doctor_procedure_decisions
@@ -104,6 +124,23 @@ NO_DECLARED_PROCEDURES_MESSAGE = "Não há procedimentos declarados para este ca
 DENIAL_REPLY_ERROR_MESSAGE = (
     "Decisão registrada, mas a resposta final ao NIR não pôde ser publicada."
 )
+
+# Reserva do caso na página de trabalho (case-work-lock, D2): contexto/papel do
+# lock da decisão médica (lease de 1h renovável — slice 003) e as duas
+# mensagens de audiência: reserva ativa de outro médico e perda da reserva.
+DOCTOR_LOCK_CONTEXT = "doctor_decision"
+DOCTOR_LOCK_ROLE = "doctor"
+LOCK_RESERVED_MESSAGE = (
+    "Este caso está reservado por {holder}. Aguarde até que a reserva expire para acessá-lo."
+)
+LOCK_LOST_MESSAGE = (
+    "Sua reserva para este caso expirou ou não é válida. Volte para a fila e tente novamente."
+)
+# Heartbeat e «sair sem decidir» (case-work-lock, slice 003, D3): o token da
+# reserva chega no corpo dos endpoints JSON; a liberação explícita pelo botão
+# é server-side (independe do JavaScript, que só a antecipa em navegação).
+LOCK_TOKEN_MISSING_MESSAGE = "Token de reserva não fornecido."
+CASE_LEAVE_MESSAGE = "Reserva liberada — o caso voltou a ficar disponível na fila."
 
 # Perfil do catálogo por tipo (ordem/rotulo/subtipo dos cards da fila).
 _PROFILE_BY_TYPE = {profile.procedure_type: profile for profile in PROCEDURE_PROFILES}
@@ -154,9 +191,40 @@ def _accessible_cases(
             procedures__declared_by_nir=True,
             procedures__procedure_type__in=_TYPES_BY_SUBTYPE[subtype],
         ).distinct()
-    return cases.order_by(
-        F("days_on_screen").desc(nulls_last=True), "created_at", "case_id"
-    ).prefetch_related("procedures")
+    return (
+        cases.order_by(F("days_on_screen").desc(nulls_last=True), "created_at", "case_id")
+        .select_related("locked_by")
+        .prefetch_related("procedures")
+    )
+
+
+def _lock_token_from_request(request: HttpRequest) -> uuid.UUID | None:
+    """Token de reserva do corpo do POST (ausente/ilegível → ``None``).
+
+    Formato canônico ``uuid.UUID``: qualquer outro valor é tratado como "sem
+    posse" e nunca vira erro (os endpoints do heartbeat respondem JSON e a
+    página de trabalho reexibe o formulário — nunca 500, D3).
+    """
+    raw_token = request.POST.get("lock_token", "")
+    try:
+        return uuid.UUID(raw_token) if raw_token else None
+    except (ValueError, AttributeError):
+        return None
+
+
+def _lock_endpoint_case(request: HttpRequest, case_id: uuid.UUID) -> Case:
+    """Caso dos endpoints de reserva, com o guard único do fluxo (D3).
+
+    Mesmo predicado das demais views do médico: papel ativo ``doctor``/
+    ``admin`` (decorator ``role_required``) + ``can_access_case`` (matriz de
+    subtipo). Caso inexistente → 404; sem acesso → 403.
+    """
+    user = _require_user(request)
+    active_role = request.session.get("active_role", "")
+    case = get_object_or_404(Case, case_id=case_id)
+    if not can_access_case(user, case, active_role=active_role):
+        raise PermissionDenied
+    return case
 
 
 def _declared_types_of_case(case: Case) -> tuple[str, ...]:
@@ -199,12 +267,13 @@ def _pending_counts_by_subtype(
     return counts
 
 
-def _queue_item(case: Case) -> dict[str, object]:
+def _queue_item(case: Case, *, user: User) -> dict[str, object]:
     """Item de card da fila: campos de exibição + tipos declarados por subtipo.
 
     Os tipos saem das rows já pré-carregadas (``prefetch_related``),
     declaradas pelo NIR, na ordem canônica do catálogo; cada tipo leva o label
-    e o ``doctor_subtipo`` (badge no template).
+    e o ``doctor_subtipo`` (badge no template). O estado de reserva (D2) entra
+    em ``lock`` para o card escolher a ação (Avaliar/Continuar/Reservado).
     """
     rows = [row for row in case.procedures.all() if row.declared_by_nir]
     rows.sort(key=lambda row: _CATALOG_INDEX[row.procedure_type])
@@ -216,6 +285,7 @@ def _queue_item(case: Case) -> dict[str, object]:
         "days_on_screen": case.days_on_screen,
         "agency_record_number": case.agency_record_number or "—",
         "created_at": case.created_at,
+        "lock": compute_lock_display(case, user),
         "procedures": [
             {
                 "label": _PROFILE_BY_TYPE[row.procedure_type].label,
@@ -247,12 +317,17 @@ def queue(request: HttpRequest) -> HttpResponse:
     subtype = requested_subtype if requested_subtype in subtype_options else ""
 
     cases = _accessible_cases(statuses=TAB_STATUSES[tab], access=access, subtype=subtype)
+    if tab == "aguardando":
+        # Expiração LAZY das reservas vencidas (D2/R8) antes de montar a fila:
+        # sem isso uma aba abandonada bloquearia o card de outro médico até a
+        # varredura seguinte.
+        expire_stale_locks_for_statuses(TAB_STATUSES["aguardando"])
     page = Paginator(cases, QUEUE_PAGE_SIZE).get_page(request.GET.get("page", "1"))
     # Predicado único re-aplicado por caso da página como invariante do filtro
     # SQL — tipos declarados derivados das rows já pré-carregadas, sem query
     # por card (P2).
     items = [
-        _queue_item(case)
+        _queue_item(case, user=user)
         for case in page.object_list
         if access.allows_declared_types(_declared_types_of_case(case))
     ]
@@ -329,20 +404,52 @@ def case_pdf(
     )
 
 
+def _render_decision_page(
+    request: HttpRequest,
+    case: Case,
+    *,
+    form: DoctorDecisionForm,
+    lock_token: str = "",
+    lock_error: str = "",
+) -> HttpResponse:
+    """Página de trabalho (D1): cards de leitura + formulário no fim.
+
+    GET válido e POST inválido/perdido renderizam a MESMA página — o token da
+    reserva volta ao formulário (``lock_token``) e ``lock_error`` explica a
+    perda da posse (D2 item 5) sem nunca perder as demais entradas digitadas.
+    """
+    context = build_case_detail_context(case)
+    context["documents"] = list(case.documents.all())
+    context["form"] = form
+    context["decision_fields"] = form.procedure_fields()
+    context["lock_token"] = lock_token
+    context["lock_error"] = lock_error
+    return render(request, "doctor/decide.html", context)
+
+
 @role_required("doctor", "admin")
 def case_decide(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     """Decide o caso por procedimento declarado (R1–R4, D4/D6).
 
     GET: presenter (slice 003) + ``DoctorDecisionForm`` dinâmico — apenas em
     ``AWAITING_DOCTOR``; caso já decidido → redirect ao detalhe com mensagem.
-    POST: guard completo ANTES de qualquer escrita; form válido → serviço
-    atômico do change 03 (rows + evento + transição FSM no mesmo atomic) e,
-    para a negativa total, o fechamento automático (resposta final ao NIR na
-    thread, D1) → redirect ao detalhe com flash "decisão registrada". Como o
-    serviço devolve ``None`` e trabalha sobre um ``locked`` re-buscado, o caso
-    em memória fica STALE: a view o re-lê (``refresh_from_db``) e chama
-    ``post_doctor_denial_reply`` somente se o status for ``DOCTOR_DENIED``;
-    decisão parcial → ``SCHEDULER_REQUESTED`` sem fechamento. Caso fora de
+    GET válido (``AWAITING_DOCTOR``): RESERVA o caso (claim com contexto
+    ``doctor_decision`` e a lease longa do contexto — case-work-lock D2) e
+    renderiza a página de trabalho (cards de leitura + formulário no fim, D1).
+    Reserva ativa de outro médico → aviso com o portador + redirect à fila,
+    nunca 500.
+    POST: guard completo ANTES de qualquer escrita; o ``lock_token`` da reserva
+    é obrigatório — a posse é validada SOB ROW LOCK na MESMA transação da
+    escrita (``select_for_update`` + ``assert_case_lock``), e o release da
+    reserva acontece logo após o serviço atômico do change 03 (rows + evento +
+    transição FSM). Para a negativa total, o fechamento automático (resposta
+    final ao NIR na thread, D1) → redirect ao detalhe com flash "decisão
+    registrada". Como o serviço devolve ``None`` e trabalha sobre um ``locked``
+    re-buscado, o caso em memória fica STALE: a view o re-lê
+    (``refresh_from_db``) e chama ``post_doctor_denial_reply`` somente se o
+    status for ``DOCTOR_DENIED``; decisão parcial → ``SCHEDULER_REQUESTED`` sem
+    fechamento. Sem reserva vigente (token ausente/inválido/vencido) ou form
+    inválido → re-render da página sem NENHUMA escrita; caso fora de
     ``AWAITING_DOCTOR``, perda da corrida concorrente (``TransitionNotAllowed``
     do serviço) ou falha do fechamento (``ValueError``) → mensagem + redirect
     ao detalhe — HTTP redirect, nunca 500.
@@ -358,6 +465,8 @@ def case_decide(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     detail_url = reverse("doctor:case_detail", args=[case.case_id])
 
     if request.method == "POST":
+        raw_token = request.POST.get("lock_token", "")
+        token = _lock_token_from_request(request)
         if not get_declared_procedure_types(case):
             # Defensivo (produção não deve chegar aqui: o intake declara >=1
             # tipo na criação): sem procedimentos declarados não há decisão a
@@ -381,59 +490,172 @@ def case_decide(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
             messages.error(request, ALREADY_DECIDED_RACE_MESSAGE)
             return redirect(detail_url)
         form = DoctorDecisionForm(request.POST, case=case)
-        if form.is_valid():
+        if token is None or not form.is_valid():
+            # R6/D2: sem reserva vigente (token ausente/ilegível) o POST não
+            # tem posse — nada persiste. Com posse mas form inválido, o token
+            # volta ao formulário para o reenvio após corrigir os erros.
+            return _render_decision_page(
+                request,
+                case,
+                form=form,
+                lock_token=raw_token,
+                lock_error=LOCK_LOST_MESSAGE if token is None else "",
+            )
+
+        race = False
+        try:
+            with transaction.atomic():
+                # D2 item 5: posse validada SOB ROW LOCK na MESMA transação da
+                # escrita (time-of-check == time-of-use) — expiração/tomada da
+                # lease entre a validação e a persistência é impossível.
+                locked = Case.objects.select_for_update().get(pk=case.pk)
+                assert_case_lock(locked, token)
+                try:
+                    record_doctor_procedure_decisions(
+                        locked,
+                        form.decisions(),
+                        user=user,
+                        role=active_role,
+                    )
+                except TransitionNotAllowed:
+                    # D4: submit concorrente perdeu a corrida — o savepoint do
+                    # serviço desfaz tudo dele (sem escrita parcial); a reserva
+                    # fica com o portador para o retorno à fila.
+                    race = True
+                else:
+                    # R7/D2: decisão registrada → release determinístico da
+                    # reserva na MESMA transação.
+                    release_case_lock(locked, token)
+        except CaseLockConflictError:
+            # R6/D2: token divergente/expirado ou caso sem reserva — a linha
+            # não foi tocada em nenhum ponto.
+            logger.warning("doctor_decide_lock_lost user=%s case=%s", user.pk, case.case_id)
+            return _render_decision_page(request, case, form=form, lock_error=LOCK_LOST_MESSAGE)
+
+        if race:
+            logger.warning(
+                "doctor_decide_race user=%s case=%s status=%s",
+                user.pk,
+                case.case_id,
+                case.status,
+            )
+            messages.error(request, ALREADY_DECIDED_RACE_MESSAGE)
+            return redirect(detail_url)
+
+        # Fechamento da negativa total (nir-result-closure): o serviço do
+        # change 03 devolve None e trabalha sobre um ``locked`` re-buscado —
+        # o ``case`` em memória fica stale (e com os campos de lock antigos);
+        # re-lemos o caso e publicamos a resposta final SOMENTE quando todos os
+        # procedimentos foram negados (DOCTOR_DENIED). Decisão parcial (≥1
+        # aprovado, em SCHEDULER_REQUESTED) segue o fluxo existente.
+        case.refresh_from_db()
+        if case.status == CaseStatus.DOCTOR_DENIED:
             try:
-                record_doctor_procedure_decisions(
-                    case,
-                    form.decisions(),
-                    user=user,
-                    role=active_role,
-                )
-            except TransitionNotAllowed:
-                # D4: submit concorrente perdeu a corrida no atomic do serviço
-                # (caso saiu de AWAITING_DOCTOR entre a validação e o lock) —
-                # nada foi escrito parcialmente; traduz para mensagem+redirect.
+                post_doctor_denial_reply(case, user=user, role=active_role)
+            except ValueError:
+                # D1 (risco residual aceito): falha rara entre a decisão e
+                # o fechamento deixa o caso em DOCTOR_DENIED, visível e
+                # operável via admin — mensagem + redirect, nunca 500.
                 logger.warning(
-                    "doctor_decide_race user=%s case=%s status=%s",
+                    "doctor_decide_closure_error user=%s case=%s status=%s",
                     user.pk,
                     case.case_id,
                     case.status,
                 )
-                messages.error(request, ALREADY_DECIDED_RACE_MESSAGE)
+                messages.error(request, DENIAL_REPLY_ERROR_MESSAGE)
                 return redirect(detail_url)
-            # Fechamento da negativa total (nir-result-closure): o serviço do
-            # change 03 devolve None e trabalha sobre um ``locked`` re-buscado
-            # — o ``case`` em memória fica stale; re-lemos o caso e publicamos
-            # a resposta final SOMENTE quando todos os procedimentos foram
-            # negados (DOCTOR_DENIED). Decisão parcial (≥1 aprovado, em
-            # SCHEDULER_REQUESTED) segue o fluxo existente, sem fechamento.
-            case.refresh_from_db()
-            if case.status == CaseStatus.DOCTOR_DENIED:
-                try:
-                    post_doctor_denial_reply(case, user=user, role=active_role)
-                except ValueError:
-                    # D1 (risco residual aceito): falha rara entre a decisão e
-                    # o fechamento deixa o caso em DOCTOR_DENIED, visível e
-                    # operável via admin — mensagem + redirect, nunca 500.
-                    logger.warning(
-                        "doctor_decide_closure_error user=%s case=%s status=%s",
-                        user.pk,
-                        case.case_id,
-                        case.status,
-                    )
-                    messages.error(request, DENIAL_REPLY_ERROR_MESSAGE)
-                    return redirect(detail_url)
-            messages.success(request, DECISION_RECORDED_MESSAGE)
-            return redirect(detail_url)
-    else:
-        if case.status != CaseStatus.AWAITING_DOCTOR:
-            # R2: GET de caso já decidido → detalhe read-only com mensagem.
-            messages.info(request, ALREADY_DECIDED_DETAIL_MESSAGE)
-            return redirect(detail_url)
-        form = DoctorDecisionForm(case=case)
+        messages.success(request, DECISION_RECORDED_MESSAGE)
+        return redirect(detail_url)
 
-    # GET válido ou POST inválido: presenter + form com erros inline.
-    context = build_case_detail_context(case)
-    context["form"] = form
-    context["decision_fields"] = form.procedure_fields()
-    return render(request, "doctor/decide.html", context)
+    if case.status != CaseStatus.AWAITING_DOCTOR:
+        # R2: GET de caso já decidido → detalhe read-only com mensagem.
+        messages.info(request, ALREADY_DECIDED_DETAIL_MESSAGE)
+        return redirect(detail_url)
+    # R4/D2: abrir a página de trabalho RESERVA o caso (claim atômico com a
+    # lease longa do contexto). Reserva ativa de OUTRO médico barra a abertura
+    # com aviso identificando o portador + volta à fila, sem tocar o lock dele;
+    # o mesmo médico reabrindo renova a reserva com token novo.
+    try:
+        lock = claim_case_lock(
+            case,
+            user=user,
+            context=DOCTOR_LOCK_CONTEXT,
+            role=DOCTOR_LOCK_ROLE,
+        )
+    except CaseLockConflictError:
+        case.refresh_from_db()
+        holder = case.locked_by.display_name if case.locked_by is not None else "outro médico"
+        logger.warning("doctor_decide_reserved user=%s case=%s", user.pk, case.case_id)
+        messages.warning(request, LOCK_RESERVED_MESSAGE.format(holder=holder))
+        return redirect(reverse("doctor:queue"))
+
+    form = DoctorDecisionForm(case=case)
+    return _render_decision_page(request, case, form=form, lock_token=str(lock.token))
+
+
+@role_required("doctor", "admin")
+@require_POST
+def lock_renew(request: HttpRequest, case_id: uuid.UUID) -> JsonResponse:
+    """POST: renova a reserva do caso (heartbeat da página de trabalho, D3).
+
+    Requer ``lock_token`` no corpo. Nunca 500: token ausente/ilegível ou sem
+    posse vigente → JSON ``success=false`` com a mensagem ao usuário (o JS
+    exibe o aviso e desabilita o submit; a reabertura pela fila refaz a
+    reserva). Posse válida → lease renovada pela duração do CONTEXTO do lock
+    vigente (1h no ``doctor_decision``), com ``locked_until`` devolvido em ISO
+    e evento ``CASE_LOCK_RENEWED`` na trilha.
+    """
+    case = _lock_endpoint_case(request, case_id)
+    token = _lock_token_from_request(request)
+    if token is None:
+        return JsonResponse({"success": False, "error": LOCK_TOKEN_MISSING_MESSAGE})
+    try:
+        lock = renew_case_lock(case, token)
+    except CaseLockConflictError:
+        logger.warning("doctor_lock_renew_lost case=%s", case.case_id)
+        return JsonResponse({"success": False, "error": LOCK_LOST_MESSAGE})
+    return JsonResponse({"success": True, "locked_until": lock.locked_until.isoformat()})
+
+
+@role_required("doctor", "admin")
+@require_POST
+def lock_release(request: HttpRequest, case_id: uuid.UUID) -> JsonResponse:
+    """POST: libera a reserva do caso (release best-effort do JS, D3).
+
+    Requer ``lock_token`` no corpo. Idempotente por contrato: sem posse vigente
+    (reserva já liberada pela decisão/saída, expirada ou token de outra aba)
+    responde ``success=false`` — nada a liberar, nunca erro. Posse válida →
+    ``CASE_LOCK_RELEASED`` na trilha.
+    """
+    case = _lock_endpoint_case(request, case_id)
+    token = _lock_token_from_request(request)
+    if token is None:
+        return JsonResponse({"success": False, "error": LOCK_TOKEN_MISSING_MESSAGE})
+    try:
+        release_case_lock(case, token)
+    except CaseLockConflictError:
+        return JsonResponse({"success": False})
+    return JsonResponse({"success": True})
+
+
+@role_required("doctor", "admin")
+@require_POST
+def case_leave(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    """POST: «Sair sem decidir» — libera a reserva na hora e volta à fila (R3/D3).
+
+    A liberação é server-side (não depende do JavaScript do heartbeat): com
+    posse válida o ``release_case_lock`` devolve o caso à fila imediatamente e
+    a página da fila mostra o flash informativo. Sem token ou sem posse (caso
+    já decidido, reserva expirada, token de outra aba) → apenas o redirect,
+    idempotente e sem erro.
+    """
+    case = _lock_endpoint_case(request, case_id)
+    token = _lock_token_from_request(request)
+    if token is not None:
+        try:
+            release_case_lock(case, token)
+        except CaseLockConflictError:
+            pass
+        else:
+            messages.info(request, CASE_LEAVE_MESSAGE)
+    return redirect(reverse("doctor:queue"))

@@ -46,11 +46,30 @@
     {% if items %}
     <div class="list-group shadow-sm">
       {% for item in items %}
+      {% comment %}
+      A aba aguardando abre a página de trabalho (leitura + decisão); a aba
+      decididos segue no detalhe read-only (case-work-lock slice 001).
+      {% endcomment %}
+      {% if tab == 'aguardando' %}
+      {% url 'doctor:case_decide' case_id=item.case_id as card_url %}
+      {% else %}
+      {% url 'doctor:case_detail' case_id=item.case_id as card_url %}
+      {% endif %}
+      {% if tab == 'aguardando' and item.lock.is_locked and not item.lock.is_locked_by_current_user %}
+      {% comment %}
+      Reservado por outro médico (case-work-lock D2): card SEM ação primária
+      — o clique não abre a página de trabalho (evita leitura duplicada).
+      {% endcomment %}
+      <div class="list-group-item py-3">
+      {% else %}
       <a class="list-group-item list-group-item-action py-3"
-         href="{% url 'doctor:case_detail' case_id=item.case_id %}">
+         href="{{ card_url }}">
+      {% endif %}
         <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
           <span class="badge rounded-pill text-bg-secondary">{{ item.status_label }}</span>
+          {% if tab == 'decididos' %}
           <span class="ms-auto small text-nowrap">Abrir caso →</span>
+          {% endif %}
         </div>
         <div class="fw-semibold">{{ item.patient_name }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}</div>
         <div class="small text-muted">
@@ -68,7 +87,24 @@
           {% endfor %}
         </div>
         {% endif %}
+        {% if tab == 'aguardando' %}
+        <div class="mt-2">
+          {% if item.lock.is_locked_by_current_user %}
+          <span class="btn btn-sm btn-success">▶ Continuar avaliação</span>
+          {% elif item.lock.is_locked %}
+          <button type="button" class="btn btn-sm btn-secondary" disabled
+                  title="Reservado por {{ item.lock.locked_by_display }}">🔒 Reservado</button>
+          <div class="small text-muted mt-1">por {{ item.lock.locked_by_display }}</div>
+          {% else %}
+          <span class="btn btn-sm btn-primary">Avaliar</span>
+          {% endif %}
+        </div>
+        {% endif %}
+      {% if tab == 'aguardando' and item.lock.is_locked and not item.lock.is_locked_by_current_user %}
+      </div>
+      {% else %}
       </a>
+      {% endif %}
       {% endfor %}
     </div>
     {% else %}

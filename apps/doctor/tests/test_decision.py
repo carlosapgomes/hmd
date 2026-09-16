@@ -30,17 +30,34 @@ Cobre:
 
 from __future__ import annotations
 
+import re
+import uuid
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from django.conf import settings
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.attachments.models import AttachmentStatus, CaseAttachment, ExtractionMethod, PatientMatch
 from apps.cases.events import CaseEventType
-from apps.cases.models import Case, CaseProcedure, CaseStatus, DoctorDisposition, MessageType
+from apps.cases.locks import claim_case_lock
+from apps.cases.models import (
+    ActorType,
+    Case,
+    CaseDocument,
+    CaseEvent,
+    CaseProcedure,
+    CaseStatus,
+    DoctorDisposition,
+    MessageType,
+)
 from apps.cases.procedures import record_doctor_procedure_decisions
 from apps.doctor import views as doctor_views
 from apps.doctor.forms import DoctorDecisionForm
@@ -49,6 +66,10 @@ from apps.doctor.presenters import build_case_detail_context
 DOCTOR_ROLE = "doctor"
 NIR_ROLE = "nir"
 SYSTEM_ROLE = "system"
+
+# Contexto do lock da página de trabalho (case-work-lock D2).
+LOCK_CONTEXT = "doctor_decision"
+LOCK_LOST_TEXT = "Sua reserva para este caso expirou ou não é válida"
 
 # Tipos declarados representativos (catálogo).
 ANGIO_TYPE = "art_perif"
@@ -102,6 +123,29 @@ def _form_payload(decisions: Mapping[str, tuple[str, str]]) -> dict[str, str]:
         payload[f"procedure_{procedure_type}__disposition"] = disposition
         payload[f"procedure_{procedure_type}__reason"] = reason
     return payload
+
+
+def _extract_lock_token(body: str) -> str:
+    """Token do lock embutido no formulário da página de trabalho (D2)."""
+    match = re.search(r'name="lock_token" value="([^"]+)"', body)
+    assert match is not None, "lock_token ausente no formulário da página de trabalho"
+    return match.group(1)
+
+
+def _claim_token(case: Case, user: User) -> str:
+    """Reserva o caso para o médico (claim direto) e devolve o token do POST."""
+    lock = claim_case_lock(case, user=user, context=LOCK_CONTEXT, role=DOCTOR_ROLE)
+    return str(lock.token)
+
+
+def _with_token(payload: dict[str, str], token: str) -> dict[str, str]:
+    """Payload do POST com a reserva vigente (R6: o token é obrigatório)."""
+    return {**payload, "lock_token": token}
+
+
+def _row_state(case: Case, procedure_type: str) -> tuple[str, str, object]:
+    row = case.procedures.get(procedure_type=procedure_type)
+    return (row.doctor_disposition, row.doctor_reason, row.doctor_decided_at)
 
 
 def _rows_by_type(case: Case) -> dict[str, CaseProcedure]:
@@ -270,15 +314,19 @@ def test_decide_all_denied_posts_final_reply(
     case = _make_awaiting_case(nir_user, (ANGIO_TYPE, RADIO_TYPE))
     doctor = user_factory("medico-denies-all", (DOCTOR_ROLE,))
     _login(client, doctor, DOCTOR_ROLE)
+    token = _claim_token(case, doctor)
     decide_url = reverse("doctor:case_decide", args=[case.case_id])
 
     response = client.post(
         decide_url,
-        _form_payload(
-            {
-                ANGIO_TYPE: ("denied", "sem indicação clínica"),
-                RADIO_TYPE: ("denied", "risco elevado"),
-            }
+        _with_token(
+            _form_payload(
+                {
+                    ANGIO_TYPE: ("denied", "sem indicação clínica"),
+                    RADIO_TYPE: ("denied", "risco elevado"),
+                }
+            ),
+            token,
         ),
     )
 
@@ -298,11 +346,13 @@ def test_decide_all_denied_posts_final_reply(
     decision_event = case.events.get(event_type=CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED)
     assert decision_event.actor == doctor
     assert decision_event.actor_role == DOCTOR_ROLE
-    # Encadeamento do wiring: decisão → DOCTOR_DENIED → FINAL_REPLY_POSTED.
+    # Encadeamento do wiring: decisão → DOCTOR_DENIED → release da reserva
+    # (R7) → FINAL_REPLY_POSTED (fechamento, fora da transação da decisão).
     event_types = [event.event_type for event in case.events.order_by("id")]
-    assert event_types[-3:] == [
+    assert event_types[-4:] == [
         CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED,
         f"CASE_STATUS_{CaseStatus.DOCTOR_DENIED}",
+        CaseEventType.CASE_LOCK_RELEASED,
         f"CASE_STATUS_{CaseStatus.FINAL_REPLY_POSTED}",
     ]
     final_event = case.events.get(event_type=f"CASE_STATUS_{CaseStatus.FINAL_REPLY_POSTED}")
@@ -337,11 +387,14 @@ def test_decide_partial_no_final_reply(
 
     response = client.post(
         reverse("doctor:case_decide", args=[case.case_id]),
-        _form_payload(
-            {
-                ANGIO_TYPE: ("approved", ""),
-                RADIO_TYPE: ("denied", "via de acesso inviável"),
-            }
+        _with_token(
+            _form_payload(
+                {
+                    ANGIO_TYPE: ("approved", ""),
+                    RADIO_TYPE: ("denied", "via de acesso inviável"),
+                }
+            ),
+            _claim_token(case, doctor),
         ),
     )
 
@@ -375,11 +428,14 @@ def test_decide_closure_error_no_500(
 
     response = client.post(
         reverse("doctor:case_decide", args=[case.case_id]),
-        _form_payload(
-            {
-                ANGIO_TYPE: ("denied", "sem indicação clínica"),
-                RADIO_TYPE: ("denied", "risco elevado"),
-            }
+        _with_token(
+            _form_payload(
+                {
+                    ANGIO_TYPE: ("denied", "sem indicação clínica"),
+                    RADIO_TYPE: ("denied", "risco elevado"),
+                }
+            ),
+            _claim_token(case, doctor),
         ),
     )
 
@@ -416,11 +472,14 @@ def test_submit_mixed_accepts(
 
     response = client.post(
         reverse("doctor:case_decide", args=[case.case_id]),
-        _form_payload(
-            {
-                ANGIO_TYPE: ("approved", ""),
-                RADIO_TYPE: ("denied", "via de acesso inviável"),
-            }
+        _with_token(
+            _form_payload(
+                {
+                    ANGIO_TYPE: ("approved", ""),
+                    RADIO_TYPE: ("denied", "via de acesso inviável"),
+                }
+            ),
+            _claim_token(case, doctor),
         ),
     )
 
@@ -433,10 +492,11 @@ def test_submit_mixed_accepts(
     assert rows[RADIO_TYPE].doctor_disposition == DoctorDisposition.DENIED
     assert rows[RADIO_TYPE].doctor_reason == "via de acesso inviável"
     event_types = [event.event_type for event in case.events.order_by("id")]
-    assert event_types[-3:] == [
+    assert event_types[-4:] == [
         CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED,
         f"CASE_STATUS_{CaseStatus.DOCTOR_ACCEPTED}",
         f"CASE_STATUS_{CaseStatus.SCHEDULER_REQUESTED}",
+        CaseEventType.CASE_LOCK_RELEASED,
     ]
 
 
@@ -481,7 +541,10 @@ def test_submit_invalid_form_rerenders_with_errors(
 
     response = client.post(
         reverse("doctor:case_decide", args=[case.case_id]),
-        _form_payload({ANGIO_TYPE: ("denied", ""), RADIO_TYPE: ("approved", "")}),
+        _with_token(
+            _form_payload({ANGIO_TYPE: ("denied", ""), RADIO_TYPE: ("approved", "")}),
+            _claim_token(case, doctor),
+        ),
     )
 
     assert response.status_code == 200
@@ -578,11 +641,14 @@ def test_concurrent_submit_no_partial_write(
 
     response = client.post(
         reverse("doctor:case_decide", args=[case.case_id]),
-        _form_payload(
-            {
-                ANGIO_TYPE: ("denied", "sem indicação clínica"),
-                RADIO_TYPE: ("denied", "risco elevado"),
-            }
+        _with_token(
+            _form_payload(
+                {
+                    ANGIO_TYPE: ("denied", "sem indicação clínica"),
+                    RADIO_TYPE: ("denied", "risco elevado"),
+                }
+            ),
+            _claim_token(case, doctor),
         ),
     )
 
@@ -744,7 +810,7 @@ def test_decide_with_mismatch_attachment_ok(
 
     response = client.post(
         reverse("doctor:case_decide", args=[case.case_id]),
-        _form_payload({ANGIO_TYPE: ("approved", "")}),
+        _with_token(_form_payload({ANGIO_TYPE: ("approved", "")}), _claim_token(case, doctor)),
     )
 
     assert response.status_code == 302
@@ -759,3 +825,710 @@ def test_decide_with_mismatch_attachment_ok(
     attachment.refresh_from_db()
     assert attachment.status == AttachmentStatus.PROCESSED
     assert attachment.patient_match == PatientMatch.MISMATCH
+
+
+# ── case-work-lock slice 001: página de trabalho única (R2–R5) ─────────────
+
+# Ordem de leitura da página de trabalho (design D1): quadro clínico →
+# artefatos originais → síntese da automação → formulário. «Identificação do
+# paciente» é o ``h1`` do primeiro card e é conferida à parte.
+_WORK_PAGE_CARD_ORDER = (
+    "Procedimentos do caso",
+    "Sumário clínico",
+    "Estrutura extraída",
+    "Prior-case",
+    "Documentos",
+    "Anexos",
+    "Requisitos gerais acionáveis",
+    "Recomendação agregada do pipeline",
+    "Alertas consultivos",
+)
+
+
+def _card_title_index(body: str, title: str) -> int:
+    """Índice do título (``h2``) do card na página de trabalho renderizada."""
+    marker = f'<h2 class="h5 mb-0">{title}</h2>'
+    index = body.find(marker)
+    assert index != -1, f"card «{title}» ausente na página de trabalho"
+    return index
+
+
+def _make_work_page_case(created_by: User, uploaded_by: User) -> Case:
+    """Caso em ``AWAITING_DOCTOR`` com os cards condicionais renderizáveis.
+
+    «Anexos» depende de um anexo processado e «Recomendação agregada do
+    pipeline» da sugestão do LLM2 (chave ``aggregate``): sem os dois, o teste
+    de ordem não poderia exigir a lista completa de cards de leitura.
+    """
+    case = _make_awaiting_case(created_by, (ANGIO_TYPE,))
+    _add_mismatch_attachment(case, uploaded_by)
+    case.suggested_action = {
+        "aggregate": {
+            "suggestion": "recusar",
+            "motivos": ["plaquetas 80000 abaixo do mínimo da seção S1"],
+        },
+    }
+    case.save(update_fields=["suggested_action"])
+    return case
+
+
+def _add_case_document(case: Case, uploaded_by: User, *, position: int) -> CaseDocument:
+    """Documento PDF fake do caso (card «Documentos» da página de trabalho)."""
+    uploaded = SimpleUploadedFile(
+        f"relatorio-{position}.pdf",
+        f"%PDF-1.4 conteudo do pdf {position}".encode(),
+        content_type="application/pdf",
+    )
+    return CaseDocument.objects.create(
+        case=case,
+        file=uploaded,
+        position=position,
+        original_filename=f"relatorio-sesab-{position}.pdf",
+        content_type="application/pdf",
+        size_bytes=len(uploaded.read()),
+        uploaded_by=uploaded_by,
+    )
+
+
+@pytest.mark.django_db
+def test_work_page_lists_case_documents(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2/D1: a página de trabalho lista os documentos do caso.
+
+    O card «Documentos» vem do partial compartilhado: sem a chave de contexto o
+    médico veria «Nenhum documento neste caso.» mesmo com PDFs no caso.
+    """
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    document = _add_case_document(case, nir_user, position=1)
+    doctor = user_factory("medico-documentos", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:case_decide", args=[case.case_id])).content.decode()
+
+    assert document.original_filename in body
+    assert reverse("doctor:case_pdf", args=[case.case_id, document.position]) in body
+    assert "Nenhum documento neste caso." not in body
+
+
+@pytest.mark.django_db
+def test_work_page_orders_reading_then_form(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2/D1: leitura completa em ordem única, formulário como ÚLTIMO bloco."""
+    case = _make_work_page_case(nir_user, nir_user)
+    doctor = user_factory("medico-pagina-unica", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:case_decide", args=[case.case_id]))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    indices = [_card_title_index(body, title) for title in _WORK_PAGE_CARD_ORDER]
+    assert indices == sorted(indices)
+    # Identificação é o primeiro card da página (h1).
+    assert body.index("Identificação do paciente") < indices[0]
+    # O formulário fecha a sequência, depois de TODOS os cards de leitura.
+    assert indices[-1] < body.index('id="doctor-decision-form"')
+
+
+@pytest.mark.django_db
+def test_work_page_has_no_recorded_decisions_block(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R3/D1: «Decisões registradas» fica fora da página de trabalho."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-sem-historico", (DOCTOR_ROLE,))
+    # Evento de decisão no caso SEM tirá-lo de AWAITING_DOCTOR: prova que a
+    # ausência do bloco na página de trabalho é do desenho, não da falta de
+    # evento — o MESMO caso exibe o bloco no detalhe read-only.
+    CaseEvent.objects.create(
+        case=case,
+        event_type=CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED,
+        actor_type=ActorType.USER,
+        actor=doctor,
+        actor_role=DOCTOR_ROLE,
+        payload={"decisions": {ANGIO_TYPE: "approved"}},
+    )
+    _login(client, doctor, DOCTOR_ROLE)
+
+    detail_body = client.get(reverse("doctor:case_detail", args=[case.case_id])).content.decode()
+    assert "Decisões registradas" in detail_body
+
+    work_body = client.get(reverse("doctor:case_decide", args=[case.case_id])).content.decode()
+    assert "Decisões registradas" not in work_body
+
+
+@pytest.mark.django_db
+def test_work_page_has_form_anchor(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R4/D1: âncora «Ir para o formulário de decisão» no topo → form no fim."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-ancora", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:case_decide", args=[case.case_id])).content.decode()
+
+    anchor = body.find('href="#doctor-decision-form"')
+    form = body.find('id="doctor-decision-form"')
+    # ``find`` devolve -1 quando não acha — exigir as duas posições reais.
+    assert 0 < anchor < form
+    assert "Ir para o formulário de decisão" in body
+
+
+@pytest.mark.django_db
+def test_work_page_footer_buttons(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R5/D3: [Registrar decisão] e «Sair sem decidir» juntos ao fim do form.
+
+    Slice 003 (R4): «Sair sem decidir» deixou de ser link e virou mini-form
+    POST que libera a reserva server-side; a ordem (formulário da decisão →
+    submit → sair) e a adjacência dos dois controles seguem o desenho D1/D3.
+    """
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-botoes", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:case_decide", args=[case.case_id])).content.decode()
+
+    form = body.index('id="doctor-decision-form"')
+    closed = body.index("</form>", form)
+    submit = body.index(
+        '<button type="submit" form="doctor-decision-form" id="btn-submit" class="btn btn-primary">'
+    )
+    leave = body.index(">Sair sem decidir</button>")
+    assert 0 < form < closed < submit < leave
+    leave_form = body.rindex("<form ", 0, leave)
+    assert f'action="{reverse("doctor:case_leave", args=[case.case_id])}"' in body[leave_form:leave]
+
+
+# ── case-work-lock slice 002: reserva do caso (R4–R7) ─────────────────────
+
+
+@pytest.mark.django_db
+def test_open_work_page_claims_case(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R4/D2: GET da página de trabalho reserva o caso e embute o token.
+
+    Claim com contexto ``doctor_decision``, papel ``doctor`` e a lease do
+    médico (``CASE_LOCK_LEASE_SECONDS_DOCTOR`` — 1h), com evento na trilha.
+    """
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-claim-get", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:case_decide", args=[case.case_id]))
+
+    assert response.status_code == 200
+    case.refresh_from_db()
+    assert case.locked_by == doctor
+    assert case.lock_context == LOCK_CONTEXT
+    assert case.lock_role == DOCTOR_ROLE
+    assert case.lock_token is not None
+    assert case.locked_at is not None
+    assert case.locked_until is not None and case.locked_until > timezone.now()
+    # Lease do contexto doctor_decision (D2): 1h, não o default de 300s.
+    assert (case.locked_until - case.locked_at).total_seconds() == 3600
+    body = response.content.decode()
+    assert f'name="lock_token" value="{case.lock_token}"' in body
+    assert CaseEventType.CASE_LOCK_CLAIMED in [
+        event.event_type for event in case.events.order_by("id")
+    ]
+
+
+@pytest.mark.django_db
+def test_other_doctor_blocked_by_active_lock(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R5/D2: reserva ativa de outro médico barra a abertura (warning + fila).
+
+    A reserva do portador fica INTACTA e a fila mostra o card como reservado.
+    """
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    holder = user_factory("medico-reserva-a", (DOCTOR_ROLE,))
+    blocked = user_factory("medico-reserva-b", (DOCTOR_ROLE,))
+    lock = claim_case_lock(case, user=holder, context=LOCK_CONTEXT, role=DOCTOR_ROLE)
+    events_before = case.events.count()
+    _login(client, blocked, DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:case_decide", args=[case.case_id]))
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == reverse("doctor:queue")
+    case.refresh_from_db()
+    assert case.lock_token == lock.token
+    assert case.locked_by == holder
+    assert case.events.count() == events_before
+    # Mensagem de aviso com o portador (renderizada na fila após o redirect).
+    body = client.get(reverse("doctor:queue")).content.decode()
+    assert "está reservado por" in body
+    assert holder.display_name in body
+
+
+@pytest.mark.django_db
+def test_reopen_renews_own_lock(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R5/D2: o mesmo médico reabrindo renova a reserva (token novo, sem barrar)."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-reserva-propria", (DOCTOR_ROLE,))
+    first = claim_case_lock(case, user=doctor, context=LOCK_CONTEXT, role=DOCTOR_ROLE)
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:case_decide", args=[case.case_id]))
+
+    assert response.status_code == 200
+    case.refresh_from_db()
+    assert case.locked_by == doctor
+    assert case.lock_token is not None and case.lock_token != first.token
+    assert f'name="lock_token" value="{case.lock_token}"' in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_submit_without_valid_token_persists_nothing(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R6/D2: POST sem ``lock_token`` → lock_error visível e NADA persistido."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE, RADIO_TYPE))
+    doctor = user_factory("medico-sem-token", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.post(
+        reverse("doctor:case_decide", args=[case.case_id]),
+        _form_payload({ANGIO_TYPE: ("approved", ""), RADIO_TYPE: ("approved", "")}),
+    )
+
+    assert response.status_code == 200
+    assert LOCK_LOST_TEXT in response.content.decode()
+    case.refresh_from_db()
+    assert case.status == CaseStatus.AWAITING_DOCTOR
+    assert not case.events.filter(event_type=CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED).exists()
+    for procedure_type in (ANGIO_TYPE, RADIO_TYPE):
+        disposition, reason, decided_at = _row_state(case, procedure_type)
+        assert disposition == DoctorDisposition.PENDING
+        assert reason == ""
+        assert decided_at is None
+
+
+@pytest.mark.django_db
+def test_submit_with_stale_token_persists_nothing(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R6/D2: token que não é o VIGENTE (renovado) → lock_error e nada persistido.
+
+    Reabrir a página renova a reserva com token novo (R5): um POST de uma aba
+    antiga carrega o token anterior e não tem mais posse.
+    """
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-token-renovado", (DOCTOR_ROLE,))
+    stale = claim_case_lock(case, user=doctor, context=LOCK_CONTEXT, role=DOCTOR_ROLE)
+    current = claim_case_lock(case, user=doctor, context=LOCK_CONTEXT, role=DOCTOR_ROLE)
+    assert current.token != stale.token
+    _login(client, doctor, DOCTOR_ROLE)
+
+    response = client.post(
+        reverse("doctor:case_decide", args=[case.case_id]),
+        _with_token(_form_payload({ANGIO_TYPE: ("approved", "")}), str(stale.token)),
+    )
+
+    assert response.status_code == 200
+    assert LOCK_LOST_TEXT in response.content.decode()
+    case.refresh_from_db()
+    assert case.status == CaseStatus.AWAITING_DOCTOR
+    disposition, reason, decided_at = _row_state(case, ANGIO_TYPE)
+    assert (disposition, reason, decided_at) == (DoctorDisposition.PENDING, "", None)
+
+
+@pytest.mark.django_db
+def test_submit_after_lease_expired_in_window_persists_nothing(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R7/D2 (janela): lease vencida ENTRE a abertura e o POST → nada persiste.
+
+    A posse é validada sob row lock na MESMA transação da escrita: expirar a
+    lease depois do render (aba aberta sem heartbeat, slice 003) não pode
+    deixar a decisão passar.
+    """
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-janela-lease", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+    body = client.get(reverse("doctor:case_decide", args=[case.case_id])).content.decode()
+    token = _extract_lock_token(body)
+    Case.objects.filter(pk=case.pk).update(locked_until=timezone.now() - timedelta(seconds=1))
+
+    response = client.post(
+        reverse("doctor:case_decide", args=[case.case_id]),
+        _with_token(_form_payload({ANGIO_TYPE: ("approved", "")}), token),
+    )
+
+    assert response.status_code == 200
+    assert LOCK_LOST_TEXT in response.content.decode()
+    case.refresh_from_db()
+    assert case.status == CaseStatus.AWAITING_DOCTOR
+    assert not case.events.filter(event_type=CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED).exists()
+    disposition, reason, decided_at = _row_state(case, ANGIO_TYPE)
+    assert (disposition, reason, decided_at) == (DoctorDisposition.PENDING, "", None)
+
+
+@pytest.mark.django_db
+def test_decision_releases_lock(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R7/D2: decisão com posse válida libera a reserva na MESMA transação."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-libera-reserva", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+    body = client.get(reverse("doctor:case_decide", args=[case.case_id])).content.decode()
+    token = _extract_lock_token(body)
+
+    response = client.post(
+        reverse("doctor:case_decide", args=[case.case_id]),
+        _with_token(_form_payload({ANGIO_TYPE: ("approved", "")}), token),
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == reverse("doctor:case_detail", args=[case.case_id])
+    case.refresh_from_db()
+    assert case.status == CaseStatus.SCHEDULER_REQUESTED
+    assert case.locked_by is None
+    assert case.locked_at is None
+    assert case.locked_until is None
+    assert case.lock_token is None
+    assert case.lock_context == ""
+    assert case.lock_role == ""
+    release_events = case.events.filter(event_type=CaseEventType.CASE_LOCK_RELEASED)
+    assert release_events.count() == 1
+    assert release_events.get().payload["context"] == LOCK_CONTEXT
+    row = case.procedures.get(procedure_type=ANGIO_TYPE)
+    assert row.doctor_disposition == DoctorDisposition.APPROVED
+
+
+# ── case-work-lock slice 003: heartbeat e «sair sem decidir» (R1–R7) ──────
+
+# Script do heartbeat (R6) e seus marcos obrigatórios: o projeto não tem
+# runner de JavaScript — o contrato do arquivo (atividade, grace, submit
+# guard, release best-effort) é verificado pelo conteúdo, e o carregamento
+# pelo render da página de trabalho.
+WORK_LOCK_SCRIPT = Path(settings.BASE_DIR) / "static" / "js" / "work_lock.js"
+
+
+@pytest.mark.django_db
+def test_lock_renew_endpoint_extends_lease(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R1/D3: o heartbeat renova a lease do portador e devolve ``locked_until``.
+
+    A lease é encurtada antes da chamada para provar a renovação real (não o
+    eco do valor gravado no claim): o endpoint responde JSON de sucesso com o
+    novo vencimento e a trilha ganha ``CASE_LOCK_RENEWED``.
+    """
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-heartbeat", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+    body = client.get(reverse("doctor:case_decide", args=[case.case_id])).content.decode()
+    token = _extract_lock_token(body)
+    shortened = timezone.now() + timedelta(minutes=5)
+    Case.objects.filter(pk=case.pk).update(locked_until=shortened)
+
+    response = client.post(
+        reverse("doctor:lock_renew", args=[case.case_id]),
+        {"lock_token": token},
+    )
+
+    assert response.status_code == 200
+    payload = cast(dict[str, Any], response.json())
+    assert payload["success"] is True
+    renewed_until = datetime.fromisoformat(cast(str, payload["locked_until"]))
+    assert renewed_until > shortened + timedelta(minutes=30)
+    case.refresh_from_db()
+    assert case.locked_until is not None and case.locked_until > shortened
+    assert (case.locked_until - timezone.now()).total_seconds() > 3000
+    assert case.events.filter(event_type=CaseEventType.CASE_LOCK_RENEWED).exists()
+
+
+@pytest.mark.django_db
+def test_lock_renew_endpoint_without_token_fails(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R1/D3: renovação sem ``lock_token`` responde falha e não toca a lease."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-heartbeat-sem-token", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+    claim = claim_case_lock(case, user=doctor, context=LOCK_CONTEXT, role=DOCTOR_ROLE)
+
+    response = client.post(reverse("doctor:lock_renew", args=[case.case_id]), {})
+
+    assert response.status_code == 200
+    payload = cast(dict[str, Any], response.json())
+    assert payload["success"] is False
+    case.refresh_from_db()
+    assert case.lock_token == claim.token
+    assert case.locked_until == claim.locked_until
+    assert not case.events.filter(event_type=CaseEventType.CASE_LOCK_RENEWED).exists()
+
+
+@pytest.mark.django_db
+def test_lock_renew_endpoint_with_wrong_token_fails(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R1/D3: a posse é do token, não do usuário — token errado não renova.
+
+    Cobre também o token malformado (não-UUID): tratado como "sem posse" e
+    respondido em JSON — nunca 500.
+    """
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-heartbeat-token-errado", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+    claim = claim_case_lock(case, user=doctor, context=LOCK_CONTEXT, role=DOCTOR_ROLE)
+
+    response = client.post(
+        reverse("doctor:lock_renew", args=[case.case_id]),
+        {"lock_token": str(uuid.uuid4())},
+    )
+
+    assert response.status_code == 200
+    payload = cast(dict[str, Any], response.json())
+    assert payload["success"] is False
+    assert payload["error"]
+    case.refresh_from_db()
+    assert case.lock_token == claim.token
+    assert case.locked_until == claim.locked_until
+
+    malformed = client.post(
+        reverse("doctor:lock_renew", args=[case.case_id]),
+        {"lock_token": "nao-e-uuid"},
+    )
+    assert malformed.status_code == 200
+    assert cast(dict[str, Any], malformed.json())["success"] is False
+    case.refresh_from_db()
+    assert case.lock_token == claim.token
+
+
+@pytest.mark.django_db
+def test_lock_release_endpoint_clears_lock_and_is_idempotent(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2/D3: release explícito limpa a reserva; repetir devolve falha sem erro.
+
+    O segundo POST (token já consumido) é o cenário do release best-effort
+    disparado em navegação depois do POST da decisão: nunca 500.
+    """
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-release-endpoint", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+    body = client.get(reverse("doctor:case_decide", args=[case.case_id])).content.decode()
+    token = _extract_lock_token(body)
+
+    first = client.post(reverse("doctor:lock_release", args=[case.case_id]), {"lock_token": token})
+    assert first.status_code == 200
+    assert cast(dict[str, Any], first.json())["success"] is True
+    case.refresh_from_db()
+    assert case.locked_by is None
+    assert case.lock_token is None
+    assert case.lock_context == ""
+    assert case.locked_until is None
+    release_events = case.events.filter(event_type=CaseEventType.CASE_LOCK_RELEASED)
+    assert release_events.count() == 1
+    assert release_events.get().payload["context"] == LOCK_CONTEXT
+
+    second = client.post(reverse("doctor:lock_release", args=[case.case_id]), {"lock_token": token})
+    assert second.status_code == 200
+    assert cast(dict[str, Any], second.json())["success"] is False
+    assert case.events.filter(event_type=CaseEventType.CASE_LOCK_RELEASED).count() == 1
+
+
+@pytest.mark.django_db
+def test_case_leave_releases_and_redirects(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R3/D3: «Sair sem decidir» libera a reserva na hora e volta à fila.
+
+    A liberação é server-side (não depende do JavaScript): o caso fica
+    disponível imediatamente e a trilha registra o release.
+    """
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-sai-sem-decidir", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+    body = client.get(reverse("doctor:case_decide", args=[case.case_id])).content.decode()
+    token = _extract_lock_token(body)
+
+    response = client.post(
+        reverse("doctor:case_leave", args=[case.case_id]),
+        {"lock_token": token},
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == reverse("doctor:queue")
+    case.refresh_from_db()
+    assert case.locked_by is None
+    assert case.lock_token is None
+    assert case.locked_until is None
+    release_events = case.events.filter(event_type=CaseEventType.CASE_LOCK_RELEASED)
+    assert release_events.count() == 1
+    assert release_events.get().payload["context"] == LOCK_CONTEXT
+    queue_body = client.get(reverse("doctor:queue")).content.decode()
+    assert "Reserva liberada" in queue_body
+
+
+@pytest.mark.django_db
+def test_case_leave_without_token_only_redirects(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R3/D3: sair sem token é idempotente — redirect à fila, reserva intacta."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-sai-sem-token", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+    claim = claim_case_lock(case, user=doctor, context=LOCK_CONTEXT, role=DOCTOR_ROLE)
+
+    response = client.post(reverse("doctor:case_leave", args=[case.case_id]), {})
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == reverse("doctor:queue")
+    case.refresh_from_db()
+    assert case.lock_token == claim.token
+    assert case.locked_by == doctor
+    assert not case.events.filter(event_type=CaseEventType.CASE_LOCK_RELEASED).exists()
+
+
+@pytest.mark.django_db
+def test_leave_button_is_form_post(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R4/D3: «Sair sem decidir» é mini-form POST (não link) com ``lock_token``."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-botao-sair", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:case_decide", args=[case.case_id])).content.decode()
+
+    action = reverse("doctor:case_leave", args=[case.case_id])
+    form = body.find(f'<form method="post" action="{action}"')
+    label = body.find(">Sair sem decidir</button>")
+    # ``find`` devolve -1 quando não acha — exigir as duas posições reais.
+    assert 0 < form < label
+    leave_form = body[form:label]
+    assert 'name="lock_token"' in leave_form
+    # CSRF próprio do mini-form (não herda o do formulário de decisão).
+    assert 'name="csrfmiddlewaretoken"' in leave_form
+    # O link antigo (slice 001) não existe mais no formulário.
+    assert ">Sair sem decidir</a>" not in body
+
+
+@pytest.mark.django_db
+def test_work_lock_config_rendered(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R5/D3: a página de trabalho exporta a config do heartbeat + o aviso."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-config-lock", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:case_decide", args=[case.case_id])).content.decode()
+    token = _extract_lock_token(body)
+
+    for marker in (
+        'id="work-lock-config"',
+        "data-work-lock-config",
+        f'data-renew-url="{reverse("doctor:lock_renew", args=[case.case_id])}"',
+        f'data-release-url="{reverse("doctor:lock_release", args=[case.case_id])}"',
+        f'data-lock-token="{token}"',
+        'data-heartbeat-ms="60000"',
+        'data-grace-ms="240000"',
+    ):
+        assert 0 < body.find(marker), f"config do work lock ausente: {marker}"
+    warning = body.find('id="work-lock-warning"')
+    assert 0 < warning
+    assert 'style="display:none;"' in body[warning : warning + 200]
+
+
+@pytest.mark.django_db
+def test_work_page_loads_work_lock_script(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R6/D3: a página de trabalho carrega o script do heartbeat.
+
+    A asserção é pela TAG do script (e não pela menção ao caminho, que também
+    existe em comentário de template): ``{# … #}`` multilinha não é comentário
+    no Django e vazaria o texto para a página — o mesmo teste guarda isso.
+    """
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    doctor = user_factory("medico-carrega-script", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:case_decide", args=[case.case_id])).content.decode()
+
+    assert 0 < body.find('<script src="/static/js/work_lock.js"')
+    assert "{#" not in body
+
+
+def test_work_lock_script_implements_heartbeat_marks() -> None:
+    """R6/D3: o script cobre atividade, grace, heartbeat, guard e release.
+
+    Sem runner de JavaScript no projeto, os marcos do contrato do arquivo são
+    verificados no conteúdo (adaptação do ATS Web, change case-work-lock D3).
+    """
+    source = WORK_LOCK_SCRIPT.read_text(encoding="utf-8")
+
+    for marker in (
+        "data-heartbeat-ms",
+        "data-grace-ms",
+        "mousemove",
+        "keydown",
+        "touchstart",
+        "setInterval(sendRenew",
+        "hasRecentActivity",
+        "HMD_WORK_LOCK_SUBMITTING",
+        'input[name="lock_token"]',
+        "keepalive",
+        "pagehide",
+        "work-lock-warning",
+    ):
+        assert marker in source, f"marco ausente no script do work lock: {marker}"
+    # Sem dependências externas (script vanilla, como o do ATS Web).
+    assert "import " not in source
+    assert "require(" not in source

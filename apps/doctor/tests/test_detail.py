@@ -748,11 +748,13 @@ def test_detail_decided_keeps_clinical_order(
     body = response.content.decode()
     indices = [_card_title_index(body, title) for title in _CLINICAL_ORDER]
     assert indices == sorted(indices)
-    # Decisões registradas entre o quadro clínico e o consultivo (D2).
+    # «Decisões registradas» fica FORA do partial de leitura (case-work-lock
+    # D1): no detalhe read-only o bloco de histórico entra DEPOIS de todos os
+    # cards de leitura — o resultado registrado fecha a página.
     estrutura = _card_title_index(body, "Estrutura extraída")
-    decisoes = _card_title_index(body, "Decisões registradas")
     alertas = _card_title_index(body, "Alertas consultivos")
-    assert estrutura < decisoes < alertas
+    decisoes = _card_title_index(body, "Decisões registradas")
+    assert 0 < estrutura < alertas < decisoes
 
 
 @pytest.mark.django_db

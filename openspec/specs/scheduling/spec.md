@@ -8,7 +8,7 @@ Confirmar, negar e reabrir o agendamento de casos aceitos pelo médico nas duas 
 
 ### Requirement: Fila do agendador completa
 
-O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos prontos para agendamento (estados `SCHEDULER_REQUESTED` e `AWAITING_SCHEDULING` — pedidos novos e casos reabertos por intercorrência), ordenada por **tempo de tela** — `days_on_screen` (descendente, casos sem o campo ao fim), desempate FIFO por `created_at` — paginada, **sem diferenciação por unidade**, com aba de casos processados do agendamento; os cards exibem nome e idade do paciente (quando presentes), nº de ocorrência, tempo de espera e o tempo de tela oficial quando presente. Outros papéis ativos recebem 403; anônimo é redirecionado ao login. Os cards NÃO exibem o identificador interno do caso (uid).
+O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos prontos para agendamento (estados `SCHEDULER_REQUESTED` e `AWAITING_SCHEDULING` — pedidos novos e casos reabertos por intercorrência), ordenada por **tempo de tela** — `days_on_screen` (descendente, casos sem o campo ao fim), desempate FIFO por `created_at` — paginada, **sem diferenciação por unidade**, com aba de casos processados do agendamento; os cards exibem nome e idade do paciente (quando presentes), nº de ocorrência, tempo de espera e o tempo de tela oficial quando presente. Antes de montar a aba aguardando, o sistema SHALL expirar reservas vencidas dos casos nesses estados; cada card dessa aba SHALL refletir o estado de reserva: sem reserva → ação livre que abre a página de confirmação; reservado pelo próprio agendador → ação «Continuar»; reservado por outro portador → botão desabilitado «Reservado» com o nome do portador. Outros papéis ativos recebem 403; anônimo é redirecionado ao login. Os cards NÃO exibem o identificador interno do caso (uid).
 
 #### Scenario: Agendador vê a fila completa
 
@@ -46,9 +46,21 @@ O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos pronto
 - **WHEN** a fila é renderizada
 - **THEN** nenhum card exibe o uid do caso — o nº de ocorrência (com `—` quando ausente) e a identificação do paciente são os identificadores do card
 
+#### Scenario: Caso reservado por outro agendador aparece bloqueado
+
+- **GIVEN** um caso pronto para agendamento com reserva ativa de outro agendador (unidade distinta)
+- **WHEN** o agendador acessa a fila (aba aguardando)
+- **THEN** o card exibe o botão «Reservado» desabilitado com o nome do portador, sem ação livre
+
+#### Scenario: Continuar a própria reserva do agendador
+
+- **GIVEN** um caso pronto para agendamento com reserva ativa do próprio agendador
+- **WHEN** ele acessa a fila (aba aguardando)
+- **THEN** o card exibe a ação «Continuar» que reabre a página de trabalho do agendamento
+
 ### Requirement: Confirmação de agendamento com unidade e resposta final
 
-O sistema SHALL confirmar o agendamento de um caso em `SCHEDULER_REQUESTED` ou `AWAITING_SCHEDULING` registrando unidade (1 ou 2), data/hora e local, encadeando as transições até `FINAL_REPLY_POSTED` no mesmo atomic (na origem `AWAITING_SCHEDULING` a transição de entrada de fila não é re-disparada) e postando na thread do caso a resposta final ao NIR: para unidade 1, o texto padrão com local e data/hora; para unidade 2, exatamente "Recusar o relatório — caso agendado na {label da unidade 2 configurada}, que comunicará a Secretaria" (com os defaults de ambiente: "Recusar o relatório — caso agendado na Unidade 2, que comunicará a Secretaria"). Data/hora no passado é rejeitada.
+O sistema SHALL confirmar o agendamento de um caso em `SCHEDULER_REQUESTED` ou `AWAITING_SCHEDULING` registrando unidade (1 ou 2), data/hora e local, encadeando as transições até `FINAL_REPLY_POSTED` no mesmo atomic (na origem `AWAITING_SCHEDULING` a transição de entrada de fila não é re-disparada) e postando na thread do caso a resposta final ao NIR: para unidade 1, o texto padrão com local e data/hora; para unidade 2, exatamente "Recusar o relatório — caso agendado na {label da unidade 2 configurada}, que comunicará a Secretaria" (com os defaults de ambiente: "Recusar o relatório — caso agendado na Unidade 2, que comunicará a Secretaria"). Data/hora no passado é rejeitada. A abertura da página de confirmação reserva o caso (contexto próprio do agendador) e a submissão exige reserva vigente (token de lock), liberando-a ao concluir com sucesso.
 
 #### Scenario: Confirmação na unidade 1 publica resposta com data
 
@@ -67,6 +79,12 @@ O sistema SHALL confirmar o agendamento de um caso em `SCHEDULER_REQUESTED` ou `
 - **GIVEN** um caso em `SCHEDULER_REQUESTED`
 - **WHEN** a confirmação usa data/hora no passado
 - **THEN** a submissão é rejeitada com erro de validação e nada é persistido
+
+#### Scenario: Confirmação sem reserva vigente falha
+
+- **GIVEN** um caso em `SCHEDULER_REQUESTED` cujo token de reserva está ausente, inválido ou expirado
+- **WHEN** o agendador envia a confirmação
+- **THEN** o formulário é reexibido com mensagem de reserva expirada e nada é persistido
 
 ### Requirement: Negação de agendamento com motivo obrigatório
 
@@ -149,3 +167,25 @@ O sistema SHALL exibir os nomes das unidades de agendamento a partir das variáv
 - **GIVEN** as variáveis de ambiente de labels não definidas (ou vazias)
 - **WHEN** qualquer fluxo de agendamento é executado
 - **THEN** todas as exibições usam "Unidade 1"/"Unidade 2" e os textos permanecem idênticos aos atuais
+
+### Requirement: Reserva de caso durante o agendamento
+
+O sistema SHALL reservar o caso para o agendador quando ele abre a página de confirmação ou de negação (`SCHEDULER_REQUESTED`/`AWAITING_SCHEDULING`): claim atômico com contexto próprio e lease renovável por heartbeat enquanto há atividade. Reserva ativa de outro portador SHALL barrar a abertura com mensagem identificando o portador e retorno à fila; a reserva SHALL ser liberada imediatamente ao sair sem decidir ou ao concluir a confirmação/negação, e SHALL expirar sozinha sem renovação. O mesmo agendador reabrindo renova a reserva com novo token.
+
+#### Scenario: Abrir a confirmação reserva o caso
+
+- **GIVEN** um caso em `SCHEDULER_REQUESTED` sem reserva
+- **WHEN** o agendador abre a página de confirmação
+- **THEN** o caso fica reservado para ele (evento de claim na trilha) e o formulário carrega o token da reserva
+
+#### Scenario: Outro agendador é barrado pela reserva ativa
+
+- **GIVEN** um caso pronto para agendamento reservado pelo agendador da unidade 1
+- **WHEN** o agendador da unidade 2 tenta abrir a confirmação
+- **THEN** ele recebe mensagem de que o caso está reservado (com o portador) e é redirecionado à fila, sem alterar a reserva
+
+#### Scenario: Sair sem decidir libera imediatamente
+
+- **GIVEN** um caso pronto para agendamento reservado pelo agendador
+- **WHEN** ele aciona «Sair sem decidir»
+- **THEN** a reserva é liberada na hora e ele volta à fila com o caso disponível

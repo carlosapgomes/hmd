@@ -20,7 +20,12 @@ procedimento: `Todas` + os subtipos atribuídos ao usuário (generalista sem
 subtipo e `admin` veem `Todas` e qualquer subtipo). Os cards SHALL exibir a
 identificação do paciente (nome e idade quando presentes), nº de ocorrência,
 tempo de espera (desde `created_at`) e o tempo de tela oficial do cabeçalho
-(dias em tela) quando presente. Outros papéis ativos
+(dias em tela) quando presente. Antes de montar a aba aguardando, o sistema
+SHALL expirar reservas vencidas dos casos em `AWAITING_DOCTOR`; cada card
+dessa aba SHALL refletir o estado de reserva do caso: sem reserva → ação
+«Avaliar» que abre a página de trabalho de decisão; reservado pelo próprio
+médico → ação «Continuar avaliação»; reservado por outro portador → botão
+desabilitado «Reservado» com o nome do portador. Outros papéis ativos
 recebem 403. Os cards NÃO exibem o identificador interno do caso (uid).
 
 #### Scenario: Médico de subtipo filtra a fila
@@ -64,6 +69,24 @@ recebem 403. Os cards NÃO exibem o identificador interno do caso (uid).
 - **GIVEN** casos com uid interno e nº de ocorrência
 - **WHEN** a fila é renderizada
 - **THEN** nenhum card exibe o uid do caso — o nº de ocorrência (com `—` quando ausente) e a identificação do paciente são os identificadores do card
+
+#### Scenario: Caso reservado por outro médico aparece bloqueado
+
+- **GIVEN** um caso em `AWAITING_DOCTOR` com reserva ativa de outro médico
+- **WHEN** o médico acessa a fila (aba aguardando)
+- **THEN** o card exibe o botão «Reservado» desabilitado com o nome do portador, sem ação primária
+
+#### Scenario: Reserva do próprio médico oferece continuar
+
+- **GIVEN** um caso em `AWAITING_DOCTOR` com reserva ativa do próprio médico
+- **WHEN** ele acessa a fila (aba aguardando)
+- **THEN** o card exibe a ação «Continuar avaliação» que reabre a página de trabalho
+
+#### Scenario: Reserva vencida não bloqueia o card
+
+- **GIVEN** um caso em `AWAITING_DOCTOR` com reserva cuja lease venceu
+- **WHEN** o médico acessa a fila
+- **THEN** a reserva vencida é expirada antes da montagem e o card exibe a ação «Avaliar» normalmente
 
 ### Requirement: Access control por subtipo no conjunto declarado
 
@@ -167,9 +190,17 @@ O sistema SHALL registrar a decisão médica por procedimento declarado
 (`approved`/`denied`) com motivo obrigatório quando negado, validando no
 formulário e persistindo rows, evento auditável e transição FSM no mesmo
 atomic (todos negados → `DOCTOR_DENIED`; ao menos um aprovado →
-`DOCTOR_ACCEPTED` com encadeamento para a fila de agendamento). Submissão
-concorrente ou fora de `AWAITING_DOCTOR` SHALL falhar sem efeito parcial,
-com mensagem clara ao usuário.
+`DOCTOR_ACCEPTED` com encadeamento para a fila de agendamento). A avaliação
+acontece numa **página de trabalho única**: a leitura completa do caso
+(identificação, procedimentos, sumário, estrutura, prior-case, documentos,
+anexos, requisitos, recomendação agregada e alertas consultivos) precede o
+formulário de decisão como último bloco da mesma página, com âncora
+«Ir para o formulário de decisão» no topo e as ações [Registrar decisão] e
+[Sair sem decidir] juntas ao fim do formulário. A submissão SHALL exigir
+reserva vigente do caso (token de lock emitido na abertura) e, ao concluir
+com sucesso, liberar a reserva. Submissão concorrente ou fora de
+`AWAITING_DOCTOR` SHALL falhar sem efeito parcial, com mensagem clara ao
+usuário.
 
 #### Scenario: Negação exige motivo
 
@@ -189,6 +220,24 @@ com mensagem clara ao usuário.
 - **WHEN** uma segunda submissão chega para o mesmo caso
 - **THEN** ela falha com mensagem de estado e nenhuma decisão adicional é gravada
 
+#### Scenario: Avaliação e decisão num fluxo único
+
+- **GIVEN** um caso em `AWAITING_DOCTOR`
+- **WHEN** o médico abre a página de trabalho a partir da fila
+- **THEN** a página apresenta a leitura completa e, ao fim, o formulário de decisão; a âncora «Ir para o formulário de decisão» existe no topo e o bloco «Decisões registradas» (histórico) não é renderizado nesta página
+
+#### Scenario: Submissão sem reserva vigente falha
+
+- **GIVEN** um caso em `AWAITING_DOCTOR` cujo token de reserva está ausente, inválido ou com lease vencida
+- **WHEN** o médico envia o formulário de decisão
+- **THEN** o formulário é reexibido com mensagem de reserva expirada e nada é persistido
+
+#### Scenario: Decidir libera a reserva do caso
+
+- **GIVEN** um caso em `AWAITING_DOCTOR` reservado pelo médico que decide
+- **WHEN** a decisão é registrada com sucesso
+- **THEN** a reserva é liberada e o caso segue o fluxo pós-decisão imediatamente disponível às filas seguintes
+
 ### Requirement: Caso decidido consultável
 
 O sistema SHALL exibir, para `doctor`/`admin` com acesso ao caso (regra de subtipo), o detalhe read-only de casos decididos com as decisões por procedimento, motivos, ator e data — **sem a trilha de eventos** (vive no painel) — e sem permitir nova decisão fora de `AWAITING_DOCTOR`.
@@ -198,3 +247,46 @@ O sistema SHALL exibir, para `doctor`/`admin` com acesso ao caso (regra de subti
 - **GIVEN** um caso em `DOCTOR_DENIED`
 - **WHEN** o médico autorizado abre o detalhe
 - **THEN** as decisões e motivos são exibidos, nenhum formulário de decisão é renderizado e nenhum bloco de trilha de eventos aparece
+
+### Requirement: Reserva de caso durante a avaliação médica
+
+O sistema SHALL reservar o caso para o médico no momento em que ele abre a
+página de trabalho de decisão (`AWAITING_DOCTOR`): claim atômico com
+contexto próprio e lease longa (renovável), gravando evento auditável na
+trilha. Reserva ativa de outro portador SHALL barrar a abertura com mensagem
+identificando o portador e retorno à fila — nunca erro 500. A reserva SHALL
+ser renovada automaticamente enquanto houver atividade na página (heartbeat
+com grace de inatividade) e SHALL ser liberada imediatamente quando o médico
+sai sem decidir ou quando a decisão é registrada; sem renovação, a reserva
+SHALL expirar sozinha e devolver o caso à fila. O mesmo médico reabrindo o
+caso renova a reserva com novo token.
+
+#### Scenario: Abrir a avaliação reserva o caso
+
+- **GIVEN** um caso em `AWAITING_DOCTOR` sem reserva
+- **WHEN** o médico abre a página de trabalho
+- **THEN** o caso fica reservado para ele (portador registrado, lease no futuro, evento de claim na trilha) e o formulário carrega o token da reserva
+
+#### Scenario: Outro médico é barrado pela reserva ativa
+
+- **GIVEN** um caso em `AWAITING_DOCTOR` reservado pelo médico A
+- **WHEN** o médico B tenta abrir a página de trabalho
+- **THEN** ele recebe mensagem de que o caso está reservado (com o portador) e é redirecionado à fila, sem alterar a reserva
+
+#### Scenario: Sair sem decidir libera imediatamente
+
+- **GIVEN** um caso em `AWAITING_DOCTOR` reservado pelo médico
+- **WHEN** ele aciona «Sair sem decidir»
+- **THEN** a reserva é liberada na hora (evento de release na trilha) e ele volta à fila com o caso disponível
+
+#### Scenario: Inatividade expira a reserva
+
+- **GIVEN** um caso em `AWAITING_DOCTOR` com reserva cuja lease venceu sem renovação
+- **WHEN** qualquer médico acessa a fila
+- **THEN** a reserva vencida é expirada e o caso volta a exibir a ação livre
+
+#### Scenario: Reabrir o próprio caso renova a reserva
+
+- **GIVEN** um caso em `AWAITING_DOCTOR` reservado pelo médico A
+- **WHEN** o médico A reabre a página de trabalho
+- **THEN** a reserva é renovada com novo token e nova lease, sem barrar o acesso

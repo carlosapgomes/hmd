@@ -46,7 +46,9 @@ Sem reserva/lock neste slice (vem no 002).
 - **R5** Ao fim do formulário: [Registrar decisão] (submit) e «Sair sem
   decidir» (link para `doctor:queue` neste slice).
 - **R6** Detalhe read-only (`case_detail`) inclui os mesmos cards (mesmo
-  partial, mesma ordem) + «Decisões registradas».
+  partial, mesma ordem) + «Decisões registradas» anexado DEPOIS do partial
+  (decisão de supervisão 2: pin vira `alertas < decisoes` — ler tudo, depois
+  o resultado registrado).
 
 ## Escopo e expected blast radius
 
@@ -56,6 +58,9 @@ expected_files:
   - templates/doctor/decide.html           # página de trabalho completa
   - templates/doctor/case_detail.html      # passa a incluir o partial
   - templates/doctor/queue.html            # ação do card da aba aguardando
+  - apps/doctor/views.py                   # APENAS context["documents"] no
+                                           # case_decide (decisão de supervisão
+                                           # 1; nada de lock — é do slice 002)
   - apps/doctor/tests/test_detail.py       # pins de ordem/títulos
   - apps/doctor/tests/test_decision.py     # testes novos (página única)
   - apps/doctor/tests/test_queue.py        # R1: teste novo + teste existente

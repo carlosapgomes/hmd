@@ -218,8 +218,15 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Locks/lease de casos (change 03, slice 004, design D6): duração default da
 # lease de exclusividade de mutação por caso, em segundos (default 300 = 5min,
-# alinhado ao ats-web). Sem variantes por papel/contexto no HMD.
+# alinhado ao ats-web).
 CASE_LOCK_LEASE_SECONDS = int(os.environ.get("CASE_LOCK_LEASE_SECONDS", "300"))
+
+# Lease por contexto (case-work-lock, design D2 — padrão ats-web): a leitura
+# clínica na página de trabalho é longa e é renovada por heartbeat enquanto há
+# atividade (slice 003), então o contexto ``doctor_decision`` usa 1h (default
+# CASE_LOCK_LEASE_SECONDS_DOCTOR = 3600, mesmo valor do ats-web em produção).
+# Contextos sem variante (``worker``/``scheduler_confirm``) seguem o default.
+CASE_LOCK_LEASE_SECONDS_DOCTOR = int(os.environ.get("CASE_LOCK_LEASE_SECONDS_DOCTOR", "3600"))
 
 # Intake do relatório NIR (change intake-batch-semantics, slice 001, design D3):
 # limites do ENVIO EM LOTE — cada PDF é o relatório de um paciente (um caso por

@@ -39,7 +39,7 @@ from apps.cases.locks import (
     release_case_lock,
     renew_case_lock,
 )
-from apps.cases.models import ActorType, Case
+from apps.cases.models import ActorType, Case, CaseStatus
 
 DOCTOR_CONTEXT = "doctor_decision"
 DOCTOR_ROLE = "doctor"
@@ -58,6 +58,15 @@ _LOCK_FIELDS = (
 
 def _create_case(created_by: User) -> Case:
     return Case.objects.create(created_by=created_by)
+
+
+def _case_in_status(created_by: User, status: CaseStatus) -> Case:
+    """Caso com o status pedido (update direto — a expiração lazy filtra por
+    status, sem depender do pipeline FSM neste módulo)."""
+    case = _create_case(created_by)
+    Case.objects.filter(pk=case.pk).update(status=status)
+    case.refresh_from_db()
+    return case
 
 
 def _expire_lock(case: Case) -> None:
@@ -114,9 +123,10 @@ def test_lock_fields_exist_and_indexed() -> None:
 
 
 @pytest.mark.django_db
-def test_claim_grants_token_and_default_lease(nir_user: User, doctor_user: User) -> None:
-    """R2/cenário spec: claim em caso livre concede token e lease de
-    ``CASE_LOCK_LEASE_SECONDS`` (default 300s) com evento na trilha."""
+def test_claim_grants_token_and_context_lease(nir_user: User, doctor_user: User) -> None:
+    """R2/cenário spec: claim em caso livre concede token e a lease do
+    CONTEXTO (``doctor_decision`` → ``CASE_LOCK_LEASE_SECONDS_DOCTOR``, D2)
+    com evento na trilha."""
     case = _create_case(nir_user)
 
     lock = claim_case_lock(case, user=doctor_user, context=DOCTOR_CONTEXT, role=DOCTOR_ROLE)
@@ -130,9 +140,9 @@ def test_claim_grants_token_and_default_lease(nir_user: User, doctor_user: User)
     assert case.lock_role == DOCTOR_ROLE
     assert case.locked_at is not None
     assert case.locked_until == lock.locked_until
-    # Lease = now + settings.CASE_LOCK_LEASE_SECONDS (ambos setados no claim).
+    # Lease = now + lease do contexto doctor_decision (ambos setados no claim).
     assert (case.locked_until - case.locked_at).total_seconds() == (
-        settings.CASE_LOCK_LEASE_SECONDS
+        settings.CASE_LOCK_LEASE_SECONDS_DOCTOR
     )
 
     event = case.events.get(event_type=CaseEventType.CASE_LOCK_CLAIMED)
@@ -142,7 +152,7 @@ def test_claim_grants_token_and_default_lease(nir_user: User, doctor_user: User)
     assert event.payload == {
         "context": DOCTOR_CONTEXT,
         "role": DOCTOR_ROLE,
-        "lease_seconds": settings.CASE_LOCK_LEASE_SECONDS,
+        "lease_seconds": settings.CASE_LOCK_LEASE_SECONDS_DOCTOR,
     }
 
 
@@ -235,8 +245,8 @@ def test_expired_lease_taken_over_with_event(
     case.refresh_from_db()
     assert case.locked_by_id == other_doctor.pk
     assert case.lock_token == second.token
-    # Lease nova: volta ao default das settings (lease reiniciada no takeover).
-    assert _lease_seconds(case) == settings.CASE_LOCK_LEASE_SECONDS
+    # Lease nova: a do contexto do claim (lease reiniciada no takeover).
+    assert _lease_seconds(case) == settings.CASE_LOCK_LEASE_SECONDS_DOCTOR
 
     assert _event_types(case)[-2:] == [
         CaseEventType.CASE_LOCK_EXPIRED,
@@ -338,12 +348,13 @@ def test_renew_extends_lease_with_event(nir_user: User, doctor_user: User) -> No
     assert case.locked_by_id == doctor_user.pk
     assert case.locked_until == renewed.locked_until
     assert case.locked_until > original_until
-    assert _lease_seconds(case) == settings.CASE_LOCK_LEASE_SECONDS
+    # Renew sem lease explícita usa a lease do CONTEXTO vigente do lock (D2).
+    assert _lease_seconds(case) == settings.CASE_LOCK_LEASE_SECONDS_DOCTOR
 
     renewed_event = case.events.get(event_type=CaseEventType.CASE_LOCK_RENEWED)
     assert renewed_event.actor == doctor_user
     assert renewed_event.actor_role == DOCTOR_ROLE
-    assert renewed_event.payload["lease_seconds"] == settings.CASE_LOCK_LEASE_SECONDS
+    assert renewed_event.payload["lease_seconds"] == settings.CASE_LOCK_LEASE_SECONDS_DOCTOR
 
 
 @pytest.mark.django_db
@@ -572,7 +583,7 @@ def test_claim_takes_over_lease_expired_while_waiting_on_row_lock(
     assert case.locked_until is not None
     assert case.locked_until > timezone.now()
     assert (case.locked_until - case.locked_at).total_seconds() == (
-        settings.CASE_LOCK_LEASE_SECONDS
+        settings.CASE_LOCK_LEASE_SECONDS_DOCTOR
     )
     assert _event_types(case)[-2:] == [
         CaseEventType.CASE_LOCK_EXPIRED,
@@ -640,3 +651,166 @@ def test_renew_conflicts_on_lease_expired_while_waiting_on_row_lock(
     assert case.locked_until is not None
     assert case.locked_until < timezone.now()
     assert case.events.count() == events_before
+
+
+# ── case-work-lock slice 002: lease por contexto, display e expiração lazy ─
+
+
+@pytest.mark.django_db
+def test_lease_por_contexto_doctor(
+    nir_user: User,
+    doctor_user: User,
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R1/D2: `doctor_decision` usa CASE_LOCK_LEASE_SECONDS_DOCTOR (1h default).
+
+    Precedência: override explícito > setting por contexto > default; contexto
+    desconhecido (ex.: worker) segue o default CASE_LOCK_LEASE_SECONDS e a
+    ausência do setting do contexto cai no default.
+    """
+    from apps.cases import locks
+
+    assert locks._CONTEXT_LEASE_SETTINGS["doctor_decision"] == "CASE_LOCK_LEASE_SECONDS_DOCTOR"
+    assert settings.CASE_LOCK_LEASE_SECONDS_DOCTOR == 3600
+
+    case = _create_case(nir_user)
+    lock = claim_case_lock(case, user=doctor_user, context=DOCTOR_CONTEXT, role=DOCTOR_ROLE)
+    case.refresh_from_db()
+    assert _lease_seconds(case) == 3600
+    assert (lock.locked_until - timezone.now()).total_seconds() > 3500
+
+    # Contexto sem override segue o default (worker/agendador — 300s).
+    worker_case = _create_case(nir_user)
+    claim_case_lock(worker_case, user=None, context="worker", role="system")
+    worker_case.refresh_from_db()
+    assert _lease_seconds(worker_case) == settings.CASE_LOCK_LEASE_SECONDS == 300
+
+    # Setting do contexto com outro valor → precedência sobre o default.
+    override_case = _create_case(nir_user)
+    settings.CASE_LOCK_LEASE_SECONDS_DOCTOR = 120
+    claim_case_lock(override_case, user=doctor_user, context=DOCTOR_CONTEXT, role=DOCTOR_ROLE)
+    override_case.refresh_from_db()
+    assert _lease_seconds(override_case) == 120
+
+    # Setting do contexto AUSENTE → fallback para o default (300s). Sem
+    # ``delattr`` no settings real: o monkeypatch de LazySettings não restaura
+    # de forma confiável entre testes e vaza para o resto da sessão — o
+    # fallback é provado apontando o contexto para um setting inexistente
+    # (mesma semântica de getattr com default).
+    monkeypatch.setitem(
+        locks._CONTEXT_LEASE_SETTINGS,
+        "doctor_decision",
+        "CASE_LOCK_LEASE_SECONDS_DOCTOR_ABSENT_FOR_TEST",
+    )
+    fallback_case = _create_case(nir_user)
+    claim_case_lock(fallback_case, user=doctor_user, context=DOCTOR_CONTEXT, role=DOCTOR_ROLE)
+    fallback_case.refresh_from_db()
+    assert _lease_seconds(fallback_case) == settings.CASE_LOCK_LEASE_SECONDS == 300
+    monkeypatch.setitem(
+        locks._CONTEXT_LEASE_SETTINGS,
+        "doctor_decision",
+        "CASE_LOCK_LEASE_SECONDS_DOCTOR",
+    )
+
+    # Override explícito continua vencendo tudo.
+    explicit_case = _create_case(nir_user)
+    claim_case_lock(
+        explicit_case,
+        user=doctor_user,
+        context=DOCTOR_CONTEXT,
+        role=DOCTOR_ROLE,
+        lease_seconds=42,
+    )
+    explicit_case.refresh_from_db()
+    assert _lease_seconds(explicit_case) == 42
+
+
+@pytest.mark.django_db
+def test_compute_lock_display_estados(
+    nir_user: User, doctor_user: User, user_factory: Callable[..., User]
+) -> None:
+    """R2/D2: display do lock — livre, ativo do próprio, ativo de outro, vencido."""
+    from apps.cases.locks import compute_lock_display
+
+    other_doctor = user_factory("medico-display-outro", ("doctor",))
+    case = _create_case(nir_user)
+
+    free = compute_lock_display(case, doctor_user)
+    assert free == {
+        "is_locked": False,
+        "is_locked_by_current_user": False,
+        "locked_by_display": "",
+        "locked_until": "",
+        "lock_context": "",
+    }
+
+    lock = claim_case_lock(case, user=doctor_user, context=DOCTOR_CONTEXT, role=DOCTOR_ROLE)
+    case.refresh_from_db()
+    mine = compute_lock_display(case, doctor_user)
+    assert mine["is_locked"] is True
+    assert mine["is_locked_by_current_user"] is True
+    assert mine["locked_by_display"] == doctor_user.display_name
+    assert mine["lock_context"] == DOCTOR_CONTEXT
+    assert mine["locked_until"] == lock.locked_until.isoformat()
+
+    # Mesmo caso para OUTRO médico: ativo, mas não do usuário corrente.
+    other = compute_lock_display(case, other_doctor)
+    assert other["is_locked"] is True
+    assert other["is_locked_by_current_user"] is False
+    assert other["locked_by_display"] == doctor_user.display_name
+
+    # Sem usuário (contextos não interativos) o display segue consistente.
+    anonymous = compute_lock_display(case, None)
+    assert anonymous["is_locked"] is True
+    assert anonymous["is_locked_by_current_user"] is False
+
+    # Lease vencida = não travado (nenhum campo de portador vaza).
+    _expire_lock(case)
+    expired = compute_lock_display(case, doctor_user)
+    assert expired == {
+        "is_locked": False,
+        "is_locked_by_current_user": False,
+        "locked_by_display": "",
+        "locked_until": "",
+        "lock_context": "",
+    }
+
+
+@pytest.mark.django_db
+def test_expire_stale_locks_por_status(nir_user: User, doctor_user: User) -> None:
+    """R3/D2: expiração lazy limpa só locks vencidos dos status pedidos.
+
+    Sem eventos na trilha (padrão ats-web) e sem tocar a varredura genérica
+    ``expire_stale_locks`` (que permanece com a semântica própria).
+    """
+    from apps.cases import locks
+
+    expired_awaiting = _case_in_status(nir_user, CaseStatus.AWAITING_DOCTOR)
+    claim_case_lock(expired_awaiting, user=doctor_user, context=DOCTOR_CONTEXT, role=DOCTOR_ROLE)
+    _expire_lock(expired_awaiting)
+
+    fresh_awaiting = _case_in_status(nir_user, CaseStatus.AWAITING_DOCTOR)
+    claim_case_lock(fresh_awaiting, user=doctor_user, context=DOCTOR_CONTEXT, role=DOCTOR_ROLE)
+
+    expired_other_status = _case_in_status(nir_user, CaseStatus.SCHEDULER_REQUESTED)
+    claim_case_lock(expired_other_status, user=None, context="worker", role="system")
+    _expire_lock(expired_other_status)
+    events_before = expired_other_status.events.count()
+
+    cleared = locks.expire_stale_locks_for_statuses([CaseStatus.AWAITING_DOCTOR])
+
+    assert cleared == 1
+    _assert_lock_cleared(expired_awaiting)
+    # Sem evento na trilha (a trilha auditável vem de claim/release/tomada).
+    assert _event_types(expired_awaiting) == [CaseEventType.CASE_LOCK_CLAIMED]
+
+    fresh_awaiting.refresh_from_db()
+    assert fresh_awaiting.lock_token is not None
+    # Status fora da lista intocado — mesmo com a lease vencida.
+    expired_other_status.refresh_from_db()
+    assert expired_other_status.lock_token is not None
+    assert expired_other_status.events.count() == events_before
+
+    # Idempotente: nada mais a expirar.
+    assert locks.expire_stale_locks_for_statuses([CaseStatus.AWAITING_DOCTOR]) == 0

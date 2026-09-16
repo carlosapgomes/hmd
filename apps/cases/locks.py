@@ -4,9 +4,15 @@ Mecanismo espelhado do ats-web ``apps/cases/services.py`` com as divergências
 deliberadas do HMD (documentadas no design D6): os serviços vivem aqui em
 ``apps/cases/locks.py``; ``renew_case_lock`` grava evento ``CASE_LOCK_RENEWED``
 e ``expire_stale_locks()`` é genérica (o ats-web tem
-``expire_stale_locks_for_statuses``, sem eventos e com variantes por status);
-sem variantes de lease por papel/contexto — ``CASE_LOCK_LEASE_SECONDS``
-(default 300s) vale para todos os atores.
+``expire_stale_locks_for_statuses``, sem eventos e com variantes por status).
+
+case-work-lock (D2): lease POR CONTEXTO no mesmo molde do ats-web
+(``_CONTEXT_LEASE_SETTINGS``) — ``doctor_decision`` usa
+``CASE_LOCK_LEASE_SECONDS_DOCTOR`` (1h, leitura clínica longa) e os demais
+contextos seguem ``CASE_LOCK_LEASE_SECONDS`` (300s); precedência: override
+explícito > setting do contexto > default. ``compute_lock_display`` alimenta os
+cards das filas e ``expire_stale_locks_for_statuses`` é a expiração lazy
+filtrada por status (sem eventos) chamada antes de montar cada fila.
 
 Exclusividade: ``claim_case_lock`` roda em ``transaction.atomic()`` com
 ``select_for_update`` no case — dois claims sobrepostos disputam a linha e
@@ -21,6 +27,7 @@ posse que os consumers ligam nas mutações dos seus fluxos nos changes 04+
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -30,7 +37,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.cases.events import CaseEventType
-from apps.cases.models import ActorType, Case, CaseEvent
+from apps.cases.models import ActorType, Case, CaseEvent, CaseStatus
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
@@ -63,10 +70,26 @@ _LOCK_FIELDS = (
 )
 
 
-def _default_lease_seconds(lease_seconds: int | None) -> int:
-    """Resolve a duração da lease: override explícito ou default das settings."""
+# Setting por contexto de lock (padrão ats-web): contexto → nome do setting
+# que sobrescreve a lease default. Contexto desconhecido usa o default.
+_CONTEXT_LEASE_SETTINGS: dict[str, str] = {
+    "doctor_decision": "CASE_LOCK_LEASE_SECONDS_DOCTOR",
+}
+
+
+def _default_lease_seconds(lease_seconds: int | None, *, context: str | None = None) -> int:
+    """Resolve a duração da lease (D2).
+
+    Precedência: override explícito > setting do contexto >
+    ``CASE_LOCK_LEASE_SECONDS`` (default 300s).
+    """
     if lease_seconds is not None:
         return lease_seconds
+    setting_name = _CONTEXT_LEASE_SETTINGS.get(context or "")
+    if setting_name is not None:
+        override = getattr(settings, setting_name, None)
+        if override is not None:
+            return int(override)
     return int(getattr(settings, "CASE_LOCK_LEASE_SECONDS", 300))
 
 
@@ -143,6 +166,32 @@ def case_has_lock(case: Case) -> bool:
     )
 
 
+def compute_lock_display(case: Case, user: User | None = None) -> dict[str, object]:
+    """Estado de reserva do caso para cards de fila (D2/R8).
+
+    Lease vencida = não travado (nenhum campo de portador é exposto);
+    ``is_locked_by_current_user`` compara o portador com ``user`` (``None`` em
+    contextos não interativos nunca é o portador).
+    """
+    now = timezone.now()
+    is_locked = (
+        case.locked_by_id is not None and case.locked_until is not None and case.locked_until > now
+    )
+    return {
+        "is_locked": is_locked,
+        "is_locked_by_current_user": bool(
+            is_locked and user is not None and case.locked_by_id == user.pk
+        ),
+        "locked_by_display": case.locked_by.display_name
+        if is_locked and case.locked_by is not None
+        else "",
+        "locked_until": case.locked_until.isoformat()
+        if is_locked and case.locked_until is not None
+        else "",
+        "lock_context": case.lock_context if is_locked else "",
+    }
+
+
 def _expired_payload(case: Case, *, context: str, role: str) -> dict[str, object]:
     """Payload do CASE_LOCK_EXPIRED com os dados do portador expirado."""
     return {
@@ -181,7 +230,7 @@ def claim_case_lock(
     e evento ``CASE_LOCK_CLAIMED``. Lock ativo de outro ator →
     ``CaseLockConflictError`` (dono/contexto na mensagem) sem alterar nada.
     """
-    seconds = _default_lease_seconds(lease_seconds)
+    seconds = _default_lease_seconds(lease_seconds, context=context)
     token = uuid.uuid4()
 
     with transaction.atomic():
@@ -339,12 +388,13 @@ def renew_case_lock(
 ) -> CaseLock:
     """Renova a lease do caso (R5): o portador estende ``locked_until``.
 
-    Mesmo token, ``locked_until = now + lease`` (default das settings ou
-    ``lease_seconds``) e evento ``CASE_LOCK_RENEWED`` na trilha. Token
-    divergente, caso sem lock ou lease expirada → ``CaseLockConflictError`` sem
-    efeito (nesses casos o fluxo deve refazer o claim).
+    Mesmo token, ``locked_until = now + lease`` (a lease do CONTEXTO do lock
+    vigente — D2 — ou ``lease_seconds``) e evento ``CASE_LOCK_RENEWED`` na
+    trilha. Token divergente, caso sem lock ou lease expirada →
+    ``CaseLockConflictError`` sem efeito (nesses casos o fluxo deve refazer o
+    claim).
     """
-    seconds = _default_lease_seconds(lease_seconds)
+    seconds = _default_lease_seconds(lease_seconds, context=case.lock_context)
 
     with transaction.atomic():
         locked = Case.objects.select_for_update().get(pk=case.pk)
@@ -399,3 +449,33 @@ def expire_stale_locks() -> int:
             _clear_lock_fields(case)
             cleared += 1
     return cleared
+
+
+def expire_stale_locks_for_statuses(statuses: Iterable[CaseStatus]) -> int:
+    """Expira locks vencidos apenas dos casos nos ``statuses`` (D2/R3).
+
+    Expiração LAZY (padrão ats-web): chamada antes de montar a fila, para que
+    uma lease vencida não continue bloqueando o card. Sem eventos na trilha —
+    a trilha auditável vem de claim/release/tomada de lease vencida; aqui o
+    efeito é o mesmo de o caso nunca ter sido reservado. Retorna quantos locks
+    foram limpos.
+    """
+    now = timezone.now()
+    stale = Case.objects.filter(
+        status__in=list(statuses),
+        locked_by__isnull=False,
+        locked_until__isnull=False,
+        locked_until__lte=now,
+    )
+    count = stale.count()
+    if count == 0:
+        return 0
+    stale.update(
+        locked_by=None,
+        locked_at=None,
+        locked_until=None,
+        lock_token=None,
+        lock_context="",
+        lock_role="",
+    )
+    return count

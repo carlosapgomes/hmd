@@ -100,7 +100,7 @@ Testes existentes de `test_views.py` que POSTam confirm/deny: claim (ou
 | R2 | `views.py` | `test_views.py::test_other_scheduler_blocked` + `::test_reopen_renews_own_lock` |
 | R3 | `views.py` | `test_views.py::test_processed_detail_no_claim` (lock_token ausente do render) |
 | R4 | `views.py` | `test_views.py::test_confirm_without_valid_token_persists_nothing` (+ variante deny) |
-| R5 | `views.py` | `test_views.py::test_confirm_releases_lock` (+ teste da janela: expirar a lease ENTRE o render e o POST — ex. retroagir `locked_until` — e provar que nada persiste, espelho do slice 002) |
+| R5 | `views.py` | `test_views.py::test_confirm_releases_lock` (+ teste da janela nas DUAS variantes — confirm e deny: expirar a lease ENTRE o render e o POST, ex. retroagir `locked_until`, e provar que nada persiste — espelho do slice 002; ex.: `test_deny_window_expired_token_persists_nothing`) |
 | R6 | `views.py`, `queue.html` | `test_views.py::test_queue_cards_reflect_lock_state` |
 | R7 | `case_detail.html`, `urls.py`, `views.py` | `test_views.py::test_work_lock_config_rendered` + `::test_lock_renew_endpoint` + `::test_lock_release_endpoint` (JSON/posse, espelho do slice 003) |
 | R8 | `case_detail.html`, `urls.py`, `views.py` | `test_views.py::test_case_leave_releases_and_redirects` |

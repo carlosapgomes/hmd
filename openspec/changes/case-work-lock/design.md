@@ -130,8 +130,9 @@ Mecânica já existente em `apps/cases/locks.py` (claim/assert/release/renew com
 - Fila do agendador: expiração lazy por
   `[SCHEDULER_REQUESTED, AWAITING_SCHEDULING]`, `select_related("locked_by")`,
   cards 🔒 Reservado/▶ Continuar/ação livre («Confirmar»).
-- Páginas de confirmação/negação ganham o `work-lock-config` + JS (lease
-  300s default — tarefa curta, igual ATS).
+- O `case_detail` de caso agendável (página de trabalho do agendador) ganha
+  o `work-lock-config` + `work_lock.js` (lease 300s default — tarefa curta,
+  igual ATS).
 
 ## D5 — Interação com workers e eventos
 

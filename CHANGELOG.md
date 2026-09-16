@@ -4,6 +4,19 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.14] — 2026-09-16
+
+**Contraste dos radio buttons** (quick fix, espelho do ATS v0.8.2).
+Suíte 1511 → **1516**. Sem migrations (deploy direto).
+
+- Radios não selecionados quase desapareciam sobre superfícies brancas
+  (tipo de procedimento no upload). Borda de repouso 2px com o novo
+  token `--hmd-control-border` (#78909c — 3.35:1 de contraste não-texto
+  sobre branco, WCAG 1.4.11); `:checked`/`:focus` passam a usar os
+  tokens do tema (primary/accent) em vez do azul default do Bootstrap.
+  Guardas estruturais + cálculo de contraste em
+  `apps/accounts/tests/test_theme_css.py`.
+
 ## [0.1.13] — 2026-09-16
 
 **Reserva de caso (work lock) + página de trabalho única** — 1 change

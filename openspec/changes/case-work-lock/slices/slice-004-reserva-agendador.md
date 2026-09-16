@@ -45,11 +45,16 @@ páginas de trabalho.
   reabrindo: renova sem barrar.
 - **R3** GET de caso processado (fora dos status agendáveis): render
   read-only **sem claim** e sem `lock_token` (comportamento atual preservado).
-- **R4** POST confirm/deny sem token válido: re-render/mensagem de reserva
-  expirada («Sua reserva para este caso expirou ou não é válida. Volte para
-  a fila e tente novamente.») + redirect, **nada persiste**.
-- **R5** POST válido: fluxo atual (serviço + flash) + `release_case_lock`
-  antes do redirect.
+- **R4** POST confirm/deny sem token válido: mensagem de reserva expirada
+  («Sua reserva para este caso expirou ou não é válida. Volte para a fila e
+  tente novamente.») + redirect ao detalhe, **nada persiste** (rows/status/
+  eventos/agendamento inalterados).
+- **R5** POST válido: posse validada **sob row lock** (design D4, espelho do
+  D2 item 5 do médico) — `transaction.atomic()` +
+  `Case.objects.select_for_update().get(...)` + `assert_case_lock(locked,
+  token)` → serviço (`confirm_case_scheduling`/negação, savepoint da mesma
+  transação) → `release_case_lock` na MESMA transação → commit; flash +
+  redirect. Sem janela de expiração/tomada entre validação e persistência.
 - **R6** Fila do agendador (aba aguardando): expiração lazy por
   `[SCHEDULER_REQUESTED, AWAITING_SCHEDULING]` + `select_related("locked_by")`;
   cards: sem reserva → ação livre para o detalhe; próprio → «Continuar»;
@@ -94,8 +99,8 @@ Testes existentes de `test_views.py` que POSTam confirm/deny: claim (ou
 | R1 | `views.py`, `case_detail.html` | `test_views.py::test_open_schedulable_detail_claims_case` |
 | R2 | `views.py` | `test_views.py::test_other_scheduler_blocked` + `::test_reopen_renews_own_lock` |
 | R3 | `views.py` | `test_views.py::test_processed_detail_no_claim` (lock_token ausente do render) |
-| R4 | `views.py` | `test_views.py::test_confirm_without_valid_token_persists_nothing` |
-| R5 | `views.py` | `test_views.py::test_confirm_releases_lock` |
+| R4 | `views.py` | `test_views.py::test_confirm_without_valid_token_persists_nothing` (+ variante deny) |
+| R5 | `views.py` | `test_views.py::test_confirm_releases_lock` (+ teste da janela: expirar a lease ENTRE o render e o POST — ex. retroagir `locked_until` — e provar que nada persiste, espelho do slice 002) |
 | R6 | `views.py`, `queue.html` | `test_views.py::test_queue_cards_reflect_lock_state` |
 | R7 | `case_detail.html`, `urls.py`, `views.py` | `test_views.py::test_work_lock_config_rendered` + `::test_lock_renew_endpoint` + `::test_lock_release_endpoint` (JSON/posse, espelho do slice 003) |
 | R8 | `case_detail.html`, `urls.py`, `views.py` | `test_views.py::test_case_leave_releases_and_redirects` |

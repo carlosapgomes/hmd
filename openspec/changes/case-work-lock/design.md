@@ -112,11 +112,21 @@ Mecânica já existente em `apps/cases/locks.py` (claim/assert/release/renew com
 
 ## D4 — Agendador espelhado
 
-- `scheduler:case_confirm` e `scheduler:case_deny` (GET) fazem claim com
-  `context="scheduler_confirm"`, `role="scheduler"` após os guards; bloqueado
-  por outro portador → warning + redirect à fila do agendador.
-- POSTs de confirmação/negação exigem `lock_token` (mesma semântica de
-  `lock_error` do médico) e fazem release determinístico após o sucesso.
+- **Diferença estrutural do HMD**: os formulários de confirmação/negação
+  vivem DENTRO de `scheduler:case_detail` (as rotas `case_confirm`/
+  `case_deny` são `@require_POST`, sem GET próprio como o ATS
+  `confirm.html`). A página de trabalho do agendador É o detalhe: o claim
+  acontece no GET do `case_detail` quando o caso está agendável
+  (`SCHEDULER_REQUESTED`/`AWAITING_SCHEDULING`, contexto
+  `scheduler_confirm`, `role="scheduler"`); casos processados abrem
+  read-only, **sem claim**. Bloqueado por outro portador → warning +
+  redirect à fila do agendador.
+- POSTs de confirmação/negação seguem a mesma regra de posse do médico
+  (D2 item 5): `transaction.atomic()` + `select_for_update().get()` +
+  `assert_case_lock(locked, token)` sobre a linha travada → serviço
+  (`confirm_case_scheduling`/negação — atomic interno vira savepoint) →
+  `release_case_lock` na MESMA transação; sem token/posse → mensagem de
+  reserva expirada + redirect, nada persiste.
 - Fila do agendador: expiração lazy por
   `[SCHEDULER_REQUESTED, AWAITING_SCHEDULING]`, `select_related("locked_by")`,
   cards 🔒 Reservado/▶ Continuar/ação livre («Confirmar»).

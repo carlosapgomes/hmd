@@ -4,6 +4,25 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.13] — 2026-09-16
+
+**Reserva de caso (work lock) + página de trabalho única** — 1 change
+(28º archive), espelhado do desenho validado do ATS Web. Suíte 1466 →
+**1511**. Sem migrations (deploy direto).
+
+- **`case-work-lock`** — a decisão médica acontece numa página única:
+  a fila abre a leitura completa com o formulário no fim (âncora «Ir
+  para o formulário de decisão», botões [Registrar decisão] e [Sair sem
+  decidir] juntos). Ao abrir, o caso fica **reservado** para o médico
+  (lease 1h renovável por heartbeat enquanto há atividade); outro
+  médico vê «Reservado por {nome}» e é barrado; sair sem decidir
+  libera na hora; a decisão grava só sob reserva vigente (posse
+  validada sob row lock na mesma transação) e libera ao concluir;
+  inatividade expira a reserva sozinha. Agendador espelhado (reserva ao
+  abrir o detalhe agendável, confirmação/negação sob posse) — crítico
+  para duas unidades trabalhando separadas. Filas mostram
+  🔒 Reservado / ▶ Continuar / ação livre, com expiração lazy.
+
 ## [0.1.12] — 2026-09-15
 
 **Procedimentos declarados × detectados visíveis nos detalhes** — 1 change

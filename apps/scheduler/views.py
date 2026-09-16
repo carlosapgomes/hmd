@@ -22,6 +22,16 @@ transacionais do slice 001/002; erros de serviço/estado/concorrência
 (``ValueError`` nomeado e ``TransitionNotAllowed``) viram mensagem + redirect
 ao detalhe — nunca 500, nenhuma escrita parcial (R5/D5).
 
+case-work-lock, slice 004 (R1–R8, D4): a página de trabalho do agendador É o
+detalhe de caso agendável (não há GET dedicado de confirmação/negação como no
+ATS): o GET RESERVA o caso (claim com contexto ``scheduler_confirm`` e papel
+``scheduler``), os forms carregam o ``lock_token``, os POSTs de
+confirmação/negação exigem a posse (validada sob row lock na MESMA transação da
+escrita, com release determinístico ao concluir), a fila mostra o estado de
+reserva (🔒 Reservado/▶ Continuar/ação livre) e o heartbeat/«Sair sem decidir»
+vivem nos endpoints ``scheduler:lock_renew``/``lock_release``/``case_leave``.
+Casos processados abrem read-only, sem claim.
+
 R7: ``scheduler:case_pdf`` serve os PDFs do relatório original por position
 (padrão do doctor do change 07; decisão do supervisor — o HMD é multi-PDF via
 ``CaseDocument`` e não tem ``Case.pdf_file``): SOMENTE quando
@@ -42,8 +52,9 @@ from urllib.parse import urlencode
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import F
-from django.http import FileResponse, Http404, HttpRequest, HttpResponse
+from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
@@ -51,6 +62,15 @@ from django_fsm import TransitionNotAllowed
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
+from apps.cases.locks import (
+    CaseLockConflictError,
+    assert_case_lock,
+    claim_case_lock,
+    compute_lock_display,
+    expire_stale_locks_for_statuses,
+    release_case_lock,
+    renew_case_lock,
+)
 from apps.cases.models import Case, CaseDocument, CaseStatus
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.units import unit_label
@@ -107,6 +127,21 @@ DENY_SUCCESS_MESSAGE = "Agendamento negado."
 REOPEN_SUCCESS_MESSAGE = "Agendamento desmarcado — o caso retornou à fila de agendamento."
 RACE_MESSAGE = "Estado do caso mudou — ação não registrada. Atualize a página e tente novamente."
 
+# Reserva do caso na página de trabalho do agendador (case-work-lock, slice
+# 004, D4): contexto/papel do lock (lease default de 300s — tarefa curta, sem
+# override por contexto), as duas mensagens de audiência (reserva ativa de
+# outro agendador e perda da reserva) e o flash do «Sair sem decidir».
+SCHEDULER_LOCK_CONTEXT = "scheduler_confirm"
+SCHEDULER_LOCK_ROLE = "scheduler"
+LOCK_RESERVED_MESSAGE = (
+    "Este caso está reservado por {holder}. Aguarde até que a reserva expire para acessá-lo."
+)
+LOCK_LOST_MESSAGE = (
+    "Sua reserva para este caso expirou ou não é válida. Volte para a fila e tente novamente."
+)
+LOCK_TOKEN_MISSING_MESSAGE = "Token de reserva não fornecido."
+CASE_LEAVE_MESSAGE = "Reserva liberada — o caso voltou a ficar disponível na fila."
+
 # Perfil do catálogo por tipo (ordem/rotulo/subtipo dos cards da fila).
 _PROFILE_BY_TYPE = {profile.procedure_type: profile for profile in PROCEDURE_PROFILES}
 _CATALOG_INDEX: dict[str, int] = {
@@ -127,6 +162,30 @@ def _case_detail_url(case: Case) -> str:
     return reverse("scheduler:case_detail", args=[case.case_id])
 
 
+def _lock_token_from_request(request: HttpRequest) -> uuid.UUID | None:
+    """Token de reserva do corpo do POST (ausente/ilegível → ``None``).
+
+    Formato canônico ``uuid.UUID``: qualquer outro valor é tratado como "sem
+    posse" e nunca vira erro (os endpoints do heartbeat respondem JSON e os
+    POSTs de ação respondem mensagem + redirect — nunca 500, D4).
+    """
+    raw_token = request.POST.get("lock_token", "")
+    try:
+        return uuid.UUID(raw_token) if raw_token else None
+    except (ValueError, AttributeError):
+        return None
+
+
+def _lock_endpoint_case(request: HttpRequest, case_id: uuid.UUID) -> Case:
+    """Caso dos endpoints de reserva/«sair sem decidir» (R7/R8, D4).
+
+    O guard do agendador é por papel ativo (decorator ``role_required``) — sem
+    matriz por caso (fila completa). Caso inexistente → 404.
+    """
+    _require_user(request)
+    return get_object_or_404(Case, case_id=case_id)
+
+
 def _form_error_text(form: SchedulerConfirmForm) -> str:
     """Primeiro erro do form de confirmação como texto da mensagem.
 
@@ -141,12 +200,14 @@ def _form_error_text(form: SchedulerConfirmForm) -> str:
     return " ".join(errors) if errors else "Formulário inválido."
 
 
-def _queue_item(case: Case) -> dict[str, object]:
-    """Item de card da fila: identificação + tipos declarados + unidade.
+def _queue_item(case: Case, *, user: User) -> dict[str, object]:
+    """Item de card da fila: identificação + tipos declarados + unidade + reserva.
 
     Os tipos saem das rows já pré-carregadas (``prefetch_related``),
     declaradas pelo NIR, na ordem canônica do catálogo; a unidade de destino
-    aparece apenas quando já definida no agendamento (R2).
+    aparece apenas quando já definida no agendamento (R2). O estado de reserva
+    (``compute_lock_display``) alimenta as três variantes de ação do card
+    aguardando: livre (ação), própria (▶ Continuar) e de outro (🔒 Reservado).
     """
     rows = [row for row in case.procedures.all() if row.declared_by_nir]
     rows.sort(key=lambda row: _CATALOG_INDEX[row.procedure_type])
@@ -161,6 +222,7 @@ def _queue_item(case: Case) -> dict[str, object]:
         "agency_record_number": case.agency_record_number or "—",
         "created_at": case.created_at,
         "unit_label": unit_label_text,
+        "lock": compute_lock_display(case, user),
         "procedures": [
             {
                 "label": _PROFILE_BY_TYPE[row.procedure_type].label,
@@ -182,18 +244,23 @@ def queue(request: HttpRequest) -> HttpResponse:
     ``case_id`` — mesma expressão da fila médica. Sem filtro por unidade (fila
     completa, plano §4). Aba desconhecida cai no default ``aguardando``.
     """
-    _require_user(request)
+    user = _require_user(request)
     tab = request.GET.get("tab", "aguardando")
     if tab not in TAB_STATUSES:
         tab = "aguardando"
 
+    # R6/D4: expiração lazy das reservas vencidas antes de montar a fila — uma
+    # lease vencida não pode continuar bloqueando o card.
+    expire_stale_locks_for_statuses(TAB_STATUSES["aguardando"])
+
     cases = (
         Case.objects.filter(status__in=TAB_STATUSES[tab])
         .order_by(F("days_on_screen").desc(nulls_last=True), "created_at", "case_id")
+        .select_related("locked_by")
         .prefetch_related("procedures")
     )
     page = Paginator(cases, QUEUE_PAGE_SIZE).get_page(request.GET.get("page", "1"))
-    items = [_queue_item(case) for case in page.object_list]
+    items = [_queue_item(case, user=user) for case in page.object_list]
 
     context: dict[str, object] = {
         "tab": tab,
@@ -217,10 +284,39 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     SCHEDULER_REQUESTED/AWAITING_SCHEDULING; desmarcar em FINAL_REPLY_POSTED
     com unidade 1) e dos documentos PDF apenas quando a condição R7 vale
     (``scheduled_by == request.user`` E status pós-decisão).
+
+    R1–R3/D4 (case-work-lock, slice 004): caso agendável RESERVA o caso no
+    GET (claim ``scheduler_confirm``) e exporta o token nos forms; reserva de
+    outro agendador → aviso + redirect à fila; caso processado sem claim.
     """
     user = _require_user(request)
     case = get_object_or_404(Case, case_id=case_id)
+    # R1/R3/D4: abrir a página de trabalho (detalhe de caso AGENDÁVEL) RESERVA
+    # o caso — claim atômico com o contexto do agendador. Reserva ativa de
+    # OUTRO agendador barra a abertura (aviso com o portador + volta à fila),
+    # sem tocar o lock dele; o mesmo agendador reabrindo renova com token novo.
+    # Caso processado abre read-only, SEM claim.
+    lock_token = ""
+    if case.status in TAB_STATUSES["aguardando"]:
+        try:
+            lock = claim_case_lock(
+                case,
+                user=user,
+                context=SCHEDULER_LOCK_CONTEXT,
+                role=SCHEDULER_LOCK_ROLE,
+            )
+        except CaseLockConflictError:
+            case.refresh_from_db()
+            holder = (
+                case.locked_by.display_name if case.locked_by is not None else "outro agendador"
+            )
+            logger.warning("scheduler_detail_reserved user=%s case=%s", user.pk, case.case_id)
+            messages.warning(request, LOCK_RESERVED_MESSAGE.format(holder=holder))
+            return redirect(reverse("scheduler:queue"))
+        lock_token = str(lock.token)
+
     context = build_scheduler_case_detail_context(case)
+    context["lock_token"] = lock_token
     if bool(context["can_decide_scheduling"]):
         context["confirm_form"] = SchedulerConfirmForm()
         context["deny_form"] = SchedulerDenyForm()
@@ -250,30 +346,51 @@ def _schedule_confirm_datetime(form: SchedulerConfirmForm) -> datetime:
 def case_confirm(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     """POST de confirmação do agendamento (unidade 1|2 + data/hora + local).
 
-    Form válido → ``confirm_case_scheduling`` (atomic + transições FSM até
-    ``FINAL_REPLY_POSTED`` + resposta final ao NIR); sucesso → flash + redirect
-    ao detalhe. Form inválido ou erro de serviço/estado/concorrência
-    (``ValueError``/``TransitionNotAllowed``) → mensagem + redirect — nunca
-    500, sem escrita parcial (R5/D5).
+    Form válido COM posse da reserva → ``confirm_case_scheduling`` (atomic +
+    transições FSM até ``FINAL_REPLY_POSTED`` + resposta final ao NIR); sucesso
+    → flash + redirect ao detalhe. A posse é validada SOB ROW LOCK na MESMA
+    transação da escrita (``select_for_update`` + ``assert_case_lock``, D4 =
+    espelho do D2 item 5 do médico) e a reserva é liberada na mesma transação —
+    sem janela de expiração/tomada entre validação e persistência. Sem posse
+    (token ausente/ilegível) o POST não escreve NADA; token divergente/vencido
+    → ``CaseLockConflictError`` do assert (rollback, nada escrito). Form
+    inválido ou erro de serviço/estado/concorrência (``ValueError``/
+    ``TransitionNotAllowed``) → mensagem + redirect — nunca 500 (R4/R5/D5).
     """
     user = _require_user(request)
     active_role = request.session.get("active_role", "")
     case = get_object_or_404(Case, case_id=case_id)
     detail_url = _case_detail_url(case)
+    token = _lock_token_from_request(request)
+    if token is None:
+        logger.warning("scheduler_confirm_no_lock user=%s case=%s", user.pk, case.case_id)
+        messages.error(request, LOCK_LOST_MESSAGE)
+        return redirect(detail_url)
     form = SchedulerConfirmForm(request.POST)
     if not form.is_valid():
         logger.warning("scheduler_confirm_invalid user=%s case=%s", user.pk, case.case_id)
         messages.error(request, _form_error_text(form))
         return redirect(detail_url)
     try:
-        confirm_case_scheduling(
-            case,
-            unit=form.cleaned_data["unit"],
-            scheduled_datetime=_schedule_confirm_datetime(form),
-            scheduled_location=form.cleaned_data["scheduled_location"],
-            user=user,
-            role=active_role,
-        )
+        with transaction.atomic():
+            # D4: posse validada SOB ROW LOCK na MESMA transação da escrita
+            # (time-of-check == time-of-use); o atomic do serviço vira savepoint.
+            locked = Case.objects.select_for_update().get(pk=case.pk)
+            assert_case_lock(locked, token)
+            confirm_case_scheduling(
+                locked,
+                unit=form.cleaned_data["unit"],
+                scheduled_datetime=_schedule_confirm_datetime(form),
+                scheduled_location=form.cleaned_data["scheduled_location"],
+                user=user,
+                role=active_role,
+            )
+            # Release determinístico na MESMA transação (espelho do médico).
+            release_case_lock(locked, token)
+    except CaseLockConflictError:
+        logger.warning("scheduler_confirm_lock_lost user=%s case=%s", user.pk, case.case_id)
+        messages.error(request, LOCK_LOST_MESSAGE)
+        return redirect(detail_url)
     except ValueError as exc:
         logger.warning(
             "scheduler_confirm_rejected user=%s case=%s erro=%s", user.pk, case.case_id, exc
@@ -293,11 +410,21 @@ def case_confirm(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
 @role_required("scheduler", "admin")
 @require_POST
 def case_deny(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
-    """POST de negação do agendamento com motivo obrigatório (R4/R5)."""
+    """POST de negação do agendamento com motivo obrigatório (R4/R5).
+
+    Mesma regra de posse da confirmação (D4): sem ``lock_token`` nada é
+    escrito; a posse é validada sob row lock na mesma transação da escrita e a
+    reserva é liberada ao concluir.
+    """
     user = _require_user(request)
     active_role = request.session.get("active_role", "")
     case = get_object_or_404(Case, case_id=case_id)
     detail_url = _case_detail_url(case)
+    token = _lock_token_from_request(request)
+    if token is None:
+        logger.warning("scheduler_deny_no_lock user=%s case=%s", user.pk, case.case_id)
+        messages.error(request, LOCK_LOST_MESSAGE)
+        return redirect(detail_url)
     form = SchedulerDenyForm(request.POST)
     if not form.is_valid():
         logger.warning("scheduler_deny_invalid user=%s case=%s", user.pk, case.case_id)
@@ -306,12 +433,20 @@ def case_deny(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         messages.error(request, DENY_REASON_REQUIRED_MESSAGE)
         return redirect(detail_url)
     try:
-        deny_case_scheduling(
-            case,
-            reason=form.cleaned_data["reason"],
-            user=user,
-            role=active_role,
-        )
+        with transaction.atomic():
+            locked = Case.objects.select_for_update().get(pk=case.pk)
+            assert_case_lock(locked, token)
+            deny_case_scheduling(
+                locked,
+                reason=form.cleaned_data["reason"],
+                user=user,
+                role=active_role,
+            )
+            release_case_lock(locked, token)
+    except CaseLockConflictError:
+        logger.warning("scheduler_deny_lock_lost user=%s case=%s", user.pk, case.case_id)
+        messages.error(request, LOCK_LOST_MESSAGE)
+        return redirect(detail_url)
     except ValueError as exc:
         logger.warning(
             "scheduler_deny_rejected user=%s case=%s erro=%s", user.pk, case.case_id, exc
@@ -368,6 +503,75 @@ def case_reopen(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         return redirect(detail_url)
     messages.success(request, REOPEN_SUCCESS_MESSAGE)
     return redirect(detail_url)
+
+
+# ── case-work-lock D4: heartbeat e «Sair sem decidir» (R7/R8) ─────────────
+
+
+@role_required("scheduler", "admin")
+@require_POST
+def lock_renew(request: HttpRequest, case_id: uuid.UUID) -> JsonResponse:
+    """POST: renova a reserva do caso (heartbeat da página de trabalho, R7/D4).
+
+    Requer ``lock_token`` no corpo. Nunca 500: token ausente/ilegível ou sem
+    posse vigente → JSON ``success=false`` (o JS exibe o aviso e desabilita o
+    submit; reabrir pela fila refaz a reserva). Posse válida → lease renovada
+    (300s do contexto do agendador), com ``locked_until`` em ISO e evento
+    ``CASE_LOCK_RENEWED`` na trilha.
+    """
+    case = _lock_endpoint_case(request, case_id)
+    token = _lock_token_from_request(request)
+    if token is None:
+        return JsonResponse({"success": False, "error": LOCK_TOKEN_MISSING_MESSAGE})
+    try:
+        lock = renew_case_lock(case, token)
+    except CaseLockConflictError:
+        logger.warning("scheduler_lock_renew_lost case=%s", case.case_id)
+        return JsonResponse({"success": False, "error": LOCK_LOST_MESSAGE})
+    return JsonResponse({"success": True, "locked_until": lock.locked_until.isoformat()})
+
+
+@role_required("scheduler", "admin")
+@require_POST
+def lock_release(request: HttpRequest, case_id: uuid.UUID) -> JsonResponse:
+    """POST: libera a reserva do caso (release best-effort do JS, R7/D4).
+
+    Idempotente por contrato: sem posse vigente (reserva já liberada pela
+    ação/saída, expirada ou token de outra aba) responde ``success=false`` —
+    nada a liberar, nunca erro.
+    """
+    case = _lock_endpoint_case(request, case_id)
+    token = _lock_token_from_request(request)
+    if token is None:
+        return JsonResponse({"success": False, "error": LOCK_TOKEN_MISSING_MESSAGE})
+    try:
+        release_case_lock(case, token)
+    except CaseLockConflictError:
+        return JsonResponse({"success": False})
+    return JsonResponse({"success": True})
+
+
+@role_required("scheduler", "admin")
+@require_POST
+def case_leave(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    """POST: «Sair sem decidir» — libera a reserva e volta à fila (R8/D4).
+
+    A liberação é server-side (não depende do JavaScript do heartbeat): com
+    posse válida o ``release_case_lock`` devolve o caso à fila imediatamente e
+    a página da fila mostra o flash informativo. Sem token ou sem posse (caso
+    já decidido, reserva expirada, token de outra aba) → apenas o redirect,
+    idempotente e sem erro.
+    """
+    case = _lock_endpoint_case(request, case_id)
+    token = _lock_token_from_request(request)
+    if token is not None:
+        try:
+            release_case_lock(case, token)
+        except CaseLockConflictError:
+            pass
+        else:
+            messages.info(request, CASE_LEAVE_MESSAGE)
+    return redirect(reverse("scheduler:queue"))
 
 
 # ── R7: PDF do caso processado pelo próprio agendador ─────────────────────

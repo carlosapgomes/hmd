@@ -49,8 +49,21 @@
         </div>
         {% endif %}
         <div class="mt-2">
+          {% comment %} Reserva do próprio agendador (case-work-lock D4):
+          reabre o detalhe e renova a reserva no GET. {% endcomment %}
+          {% if tab == 'aguardando' and item.lock.is_locked_by_current_user %}
+          <a href="{% url 'scheduler:case_detail' item.case_id %}"
+             class="btn btn-sm btn-success">▶ Continuar</a>
+          {% comment %} Reservado por outro agendador (outra unidade): sem ação
+          de abrir, para não gerar leitura duplicada. {% endcomment %}
+          {% elif tab == 'aguardando' and item.lock.is_locked %}
+          <button type="button" class="btn btn-sm btn-secondary" disabled
+                  title="Reservado por {{ item.lock.locked_by_display }}">🔒 Reservado</button>
+          <div class="small text-muted mt-1">por {{ item.lock.locked_by_display }}</div>
+          {% else %}
           <a href="{% url 'scheduler:case_detail' item.case_id %}"
              class="btn btn-sm btn-outline-primary">Abrir caso</a>
+          {% endif %}
         </div>
       </div>
       {% endfor %}

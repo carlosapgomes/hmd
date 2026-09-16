@@ -40,7 +40,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -49,6 +49,8 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.cases.events import CaseEventType
+from apps.cases.locks import claim_case_lock
 from apps.cases.models import Case, CaseDocument, CaseProcedure, CaseStatus, MessageType
 from apps.cases.procedures import record_doctor_procedure_decisions
 from apps.scheduler.services import (
@@ -65,6 +67,11 @@ ADMIN_ROLE = "admin"
 NIR_ROLE = "nir"
 DOCTOR_ROLE = "doctor"
 SYSTEM_ROLE = "system"
+
+# Reserva do caso na página de trabalho do agendador (case-work-lock, slice
+# 004, D4): contexto/papel do lock e a mensagem de perda da reserva.
+LOCK_CONTEXT = "scheduler_confirm"
+LOCK_LOST_TEXT = "Sua reserva para este caso expirou ou não é válida"
 
 # Tipos declarados representativos (catálogo).
 ANGIO_TYPE = "art_perif"
@@ -943,10 +950,11 @@ def test_confirm_unit_1_flow(
     scheduled_at = timezone.make_aware(datetime(2030, 2, 10, 9, 30))
     location = "Bloco B — Sala 2"
     detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    token = _claim_for_post(case, scheduler)
 
     response = client.post(
         reverse("scheduler:case_confirm", args=[case.case_id]),
-        _confirm_payload(unit=1, scheduled_at=scheduled_at, location=location),
+        _with_token(_confirm_payload(unit=1, scheduled_at=scheduled_at, location=location), token),
     )
 
     assert response.status_code == 302
@@ -985,10 +993,14 @@ def test_confirm_unit_2_exact_reply(
     login_user(scheduler, SCHEDULER_ROLE)
     scheduled_at = timezone.make_aware(datetime(2030, 2, 11, 14, 0))
     detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    token = _claim_for_post(case, scheduler)
 
     response = client.post(
         reverse("scheduler:case_confirm", args=[case.case_id]),
-        _confirm_payload(unit=2, scheduled_at=scheduled_at, location="Unidade 2 (internet)"),
+        _with_token(
+            _confirm_payload(unit=2, scheduled_at=scheduled_at, location="Unidade 2 (internet)"),
+            token,
+        ),
     )
 
     assert response.status_code == 302
@@ -1022,10 +1034,11 @@ def test_confirm_past_datetime_redirects_no_500(
     login_user(scheduler, SCHEDULER_ROLE)
     past_at = timezone.make_aware(datetime(2020, 1, 1, 9, 30))
     detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    token = _claim_for_post(case, scheduler)
 
     response = client.post(
         reverse("scheduler:case_confirm", args=[case.case_id]),
-        _confirm_payload(unit=1, scheduled_at=past_at, location="Sala 1"),
+        _with_token(_confirm_payload(unit=1, scheduled_at=past_at, location="Sala 1"), token),
     )
 
     assert response.status_code == 302
@@ -1058,10 +1071,11 @@ def test_deny_flow(
     login_user(scheduler, SCHEDULER_ROLE)
     reason = "vaga não disponível na data solicitada"
     detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    token = _claim_for_post(case, scheduler)
 
     response = client.post(
         reverse("scheduler:case_deny", args=[case.case_id]),
-        {"reason": reason},
+        _with_token({"reason": reason}, token),
     )
 
     assert response.status_code == 302
@@ -1086,14 +1100,16 @@ def test_deny_without_reason_rejected(
     """R4/R5: negar sem motivo → mensagem + redirect, sem qualquer escrita."""
     doctor = user_factory("medico-deny-vazio", (DOCTOR_ROLE,))
     case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
-    events_before = case.events.count()
     scheduler = user_factory("agendador-deny-vazio", (SCHEDULER_ROLE,))
     login_user(scheduler, SCHEDULER_ROLE)
     detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    token = _claim_for_post(case, scheduler)
+    # Depois do claim: o POST recusado não pode gravar NENHUM evento novo.
+    events_before = case.events.count()
 
     response = client.post(
         reverse("scheduler:case_deny", args=[case.case_id]),
-        {"reason": "   "},
+        _with_token({"reason": "   "}, token),
     )
 
     assert response.status_code == 302
@@ -1231,16 +1247,21 @@ def test_wrong_state_post_no_500(
     doctor = user_factory("medico-wrong-state", (DOCTOR_ROLE,))
     first = user_factory("agendador-wrong-state-1", (SCHEDULER_ROLE,))
     case = _confirmed_case(1, created_by=nir_user, decided_by=doctor, scheduled_by=first)
-    events_before = case.events.count()
     detail_url = reverse("scheduler:case_detail", args=[case.case_id])
 
     second = user_factory("agendador-wrong-state-2", (SCHEDULER_ROLE,))
     login_user(second, SCHEDULER_ROLE)
+    token = _claim_for_post(case, second)
+    # Depois do claim: o POST sobre estado inválido não grava evento novo.
+    events_before = case.events.count()
 
     response = client.post(
         reverse("scheduler:case_confirm", args=[case.case_id]),
-        _confirm_payload(
-            unit=1, scheduled_at=_future_local_datetime(), location="Bloco B — Sala 2"
+        _with_token(
+            _confirm_payload(
+                unit=1, scheduled_at=_future_local_datetime(), location="Bloco B — Sala 2"
+            ),
+            token,
         ),
     )
 
@@ -1487,3 +1508,642 @@ def test_queue_card_without_occurrence_has_no_uid(
     assert "Paciente Sem Ocorrencia" in card
     assert f"Caso {case.case_id}" not in card
     assert str(case.case_id) not in _card_visible_text(card)
+
+
+# ── case-work-lock slice 004: reserva do caso no agendamento (R1–R8) ──────
+
+# Aberturas possíveis do item de lista (card do HMD é sempre ``div``; o bloco
+# aceita as duas formas para evoluir sem quebrar o fatiamento por card).
+_LOCK_CARD_OPENINGS = ('<a class="list-group-item', '<div class="list-group-item')
+
+
+def _extract_lock_token(body: str) -> str:
+    """Token da reserva embutido no detalhe agendável (R1).
+
+    O detalhe agendável reserva o caso e exporta o token nos dois forms de
+    ação (confirmar/negar) — o POST precisa dele (R5).
+    """
+    match = re.search(r'name="lock_token" value="([0-9a-f-]{36})"', body)
+    assert match is not None, "token da reserva ausente no detalhe agendável"
+    return match.group(1)
+
+
+def _with_token(payload: dict[str, str], token: str) -> dict[str, str]:
+    """Payload do POST acrescido do token da reserva vigente (R5)."""
+    return {**payload, "lock_token": token}
+
+
+def _claim_for_post(case: Case, scheduler: User) -> str:
+    """Reserva o caso para o agendador e devolve o token (setup dos POSTs).
+
+    Equivale ao que a abertura do detalhe faz (R1): os testes existentes de
+    confirmação/negação passam pelo mesmo gate de posse do fluxo real.
+    """
+    lock = claim_case_lock(case, user=scheduler, context=LOCK_CONTEXT, role=SCHEDULER_ROLE)
+    return str(lock.token)
+
+
+def _lock_card_block(body: str, marker: object) -> str:
+    """Fatia o item de lista localizado pelo ``marker`` (uid ou nome único).
+
+    Mesmo padrão do teste da fila médica: o uid só existe no corpo do card
+    quando ele tem ação (``href``); o card reservado por outro agendador é um
+    bloco sem link e é localizado pelo nome do paciente.
+    """
+    anchor = body.index(str(marker))
+    starts = [
+        index
+        for index in (body.rfind(mark, 0, anchor) for mark in _LOCK_CARD_OPENINGS)
+        if index != -1
+    ]
+    ends = [
+        index for index in (body.find(mark, anchor) for mark in _LOCK_CARD_OPENINGS) if index != -1
+    ]
+    start = max(starts)
+    end = min([index for index in ends if index > start], default=-1)
+    return body[start:] if end == -1 else body[start:end]
+
+
+@pytest.mark.django_db
+def test_open_schedulable_detail_claims_case(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R1/D4: GET do detalhe agendável reserva o caso e embute o token.
+
+    Claim com contexto ``scheduler_confirm``, papel ``scheduler`` e a lease
+    default (300s — tarefa curta, sem override de contexto), com evento na
+    trilha; o token chega nos DOIS forms de ação (confirmar e negar).
+    """
+    doctor = user_factory("medico-claim-detalhe", (DOCTOR_ROLE,))
+    case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    scheduler = user_factory("agendador-claim-detalhe", (SCHEDULER_ROLE,))
+    login_user(scheduler, SCHEDULER_ROLE)
+
+    response = client.get(reverse("scheduler:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    case.refresh_from_db()
+    assert case.locked_by == scheduler
+    assert case.lock_context == LOCK_CONTEXT
+    assert case.lock_role == SCHEDULER_ROLE
+    assert case.lock_token is not None
+    assert case.locked_at is not None
+    assert case.locked_until is not None and case.locked_until > timezone.now()
+    # Lease default do agendador (D4): 300s, sem override por contexto.
+    assert (case.locked_until - case.locked_at).total_seconds() == 300
+    body = response.content.decode()
+    # Token embutido nos TRÊS forms do detalhe: confirmar, negar (R1) e
+    # «Sair sem decidir» (R8).
+    assert body.count(f'name="lock_token" value="{case.lock_token}"') == 3
+    assert CaseEventType.CASE_LOCK_CLAIMED in [
+        event.event_type for event in case.events.order_by("id")
+    ]
+
+
+@pytest.mark.django_db
+def test_other_scheduler_blocked(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R2/D4: reserva ativa de outro agendador barra a abertura (aviso + fila).
+
+    A reserva do portador fica INTACTA (token/portador/trilha) e a fila mostra
+    o card como reservado — as duas unidades nunca se atropelam no mesmo caso.
+    """
+    doctor = user_factory("medico-reserva-agendador", (DOCTOR_ROLE,))
+    case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    holder = user_factory("agendador-reserva-a", (SCHEDULER_ROLE,))
+    blocked = user_factory("agendador-reserva-b", (SCHEDULER_ROLE,))
+    lock = claim_case_lock(case, user=holder, context=LOCK_CONTEXT, role=SCHEDULER_ROLE)
+    events_before = case.events.count()
+    login_user(blocked, SCHEDULER_ROLE)
+
+    response = client.get(reverse("scheduler:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == reverse("scheduler:queue")
+    case.refresh_from_db()
+    assert case.lock_token == lock.token
+    assert case.locked_by == holder
+    assert case.events.count() == events_before
+    # Aviso de reserva com o portador, renderizado na fila após o redirect.
+    body = client.get(reverse("scheduler:queue")).content.decode()
+    assert "está reservado por" in body
+    assert holder.display_name in body
+
+
+@pytest.mark.django_db
+def test_reopen_renews_own_lock(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R2/D4: o mesmo agendador reabrindo o detalhe renova a reserva (token novo)."""
+    doctor = user_factory("medico-renova-agendador", (DOCTOR_ROLE,))
+    case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    scheduler = user_factory("agendador-renova-propria", (SCHEDULER_ROLE,))
+    first = claim_case_lock(case, user=scheduler, context=LOCK_CONTEXT, role=SCHEDULER_ROLE)
+    login_user(scheduler, SCHEDULER_ROLE)
+
+    response = client.get(reverse("scheduler:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    case.refresh_from_db()
+    assert case.locked_by == scheduler
+    assert case.lock_token is not None and case.lock_token != first.token
+    assert f'name="lock_token" value="{case.lock_token}"' in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_processed_detail_no_claim(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R3/D4: caso processado abre read-only — sem claim, sem token, sem heartbeat."""
+    doctor = user_factory("medico-detalhe-processado", (DOCTOR_ROLE,))
+    owner = user_factory("agendador-processado-dono", (SCHEDULER_ROLE,))
+    case = _confirmed_case(1, created_by=nir_user, decided_by=doctor, scheduled_by=owner)
+    viewer = user_factory("agendador-processado-visita", (SCHEDULER_ROLE,))
+    login_user(viewer, SCHEDULER_ROLE)
+
+    response = client.get(reverse("scheduler:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    case.refresh_from_db()
+    assert case.locked_by is None
+    assert case.lock_token is None
+    assert case.locked_until is None
+    body = response.content.decode()
+    assert 'name="lock_token"' not in body
+    assert 'id="work-lock-config"' not in body
+    assert not case.events.filter(event_type=CaseEventType.CASE_LOCK_CLAIMED).exists()
+
+
+@pytest.mark.django_db
+def test_confirm_without_valid_token_persists_nothing(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R4/D4: confirmação sem posse → mensagem de reserva + redirect, sem escrita."""
+    doctor = user_factory("medico-confirm-sem-token", (DOCTOR_ROLE,))
+    case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    scheduler = user_factory("agendador-confirm-sem-token", (SCHEDULER_ROLE,))
+    login_user(scheduler, SCHEDULER_ROLE)
+    detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    events_before = case.events.count()
+
+    response = client.post(
+        reverse("scheduler:case_confirm", args=[case.case_id]),
+        _confirm_payload(
+            unit=1,
+            scheduled_at=timezone.make_aware(datetime(2030, 3, 10, 9, 30)),
+            location="Bloco B — Sala 2",
+        ),
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == detail_url
+    case.refresh_from_db()
+    assert case.status == CaseStatus.SCHEDULER_REQUESTED
+    assert case.scheduled_unit is None
+    assert case.scheduled_by is None
+    assert case.events.count() == events_before
+    assert _user_messages(case) == []
+    assert LOCK_LOST_TEXT in client.get(detail_url).content.decode()
+
+
+@pytest.mark.django_db
+def test_deny_without_valid_token_persists_nothing(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R4/D4: negação sem posse → mensagem de reserva + redirect, sem escrita."""
+    doctor = user_factory("medico-deny-sem-token", (DOCTOR_ROLE,))
+    case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    scheduler = user_factory("agendador-deny-sem-token", (SCHEDULER_ROLE,))
+    login_user(scheduler, SCHEDULER_ROLE)
+    detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    events_before = case.events.count()
+
+    response = client.post(
+        reverse("scheduler:case_deny", args=[case.case_id]),
+        {"reason": "vaga indisponível"},
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == detail_url
+    case.refresh_from_db()
+    assert case.status == CaseStatus.SCHEDULER_REQUESTED
+    assert case.scheduling_denial_reason == ""
+    assert case.events.count() == events_before
+    assert _user_messages(case) == []
+    assert LOCK_LOST_TEXT in client.get(detail_url).content.decode()
+
+
+@pytest.mark.django_db
+def test_confirm_releases_lock(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R5/D4: confirmação com posse válida libera a reserva na MESMA transação."""
+    doctor = user_factory("medico-confirm-libera", (DOCTOR_ROLE,))
+    case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    scheduler = user_factory("agendador-confirm-libera", (SCHEDULER_ROLE,))
+    login_user(scheduler, SCHEDULER_ROLE)
+    detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    token = _extract_lock_token(client.get(detail_url).content.decode())
+
+    response = client.post(
+        reverse("scheduler:case_confirm", args=[case.case_id]),
+        _with_token(
+            _confirm_payload(
+                unit=1,
+                scheduled_at=timezone.make_aware(datetime(2030, 3, 12, 9, 30)),
+                location="Bloco B — Sala 2",
+            ),
+            token,
+        ),
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == detail_url
+    case.refresh_from_db()
+    assert case.status == CaseStatus.FINAL_REPLY_POSTED
+    assert case.scheduled_unit == 1
+    assert case.locked_by is None
+    assert case.locked_at is None
+    assert case.locked_until is None
+    assert case.lock_token is None
+    assert case.lock_context == ""
+    assert case.lock_role == ""
+    release_events = case.events.filter(event_type=CaseEventType.CASE_LOCK_RELEASED)
+    assert release_events.count() == 1
+    assert release_events.get().payload["context"] == LOCK_CONTEXT
+
+
+@pytest.mark.django_db
+def test_confirm_window_expired_token_persists_nothing(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R5/D4 (janela): lease vencida ENTRE a abertura e o POST → nada persiste.
+
+    A posse é validada sob row lock na MESMA transação da escrita: expirar a
+    lease depois do render (aba aberta sem heartbeat) não deixa a confirmação
+    passar.
+    """
+    doctor = user_factory("medico-janela-confirm", (DOCTOR_ROLE,))
+    case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    scheduler = user_factory("agendador-janela-confirm", (SCHEDULER_ROLE,))
+    login_user(scheduler, SCHEDULER_ROLE)
+    detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    token = _extract_lock_token(client.get(detail_url).content.decode())
+    Case.objects.filter(pk=case.pk).update(locked_until=timezone.now() - timedelta(seconds=1))
+    events_before = case.events.count()
+
+    response = client.post(
+        reverse("scheduler:case_confirm", args=[case.case_id]),
+        _with_token(
+            _confirm_payload(
+                unit=1,
+                scheduled_at=timezone.make_aware(datetime(2030, 3, 13, 9, 30)),
+                location="Bloco B — Sala 2",
+            ),
+            token,
+        ),
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == detail_url
+    case.refresh_from_db()
+    assert case.status == CaseStatus.SCHEDULER_REQUESTED
+    assert case.scheduled_unit is None
+    assert case.scheduled_by is None
+    assert case.events.count() == events_before
+    assert _user_messages(case) == []
+
+
+@pytest.mark.django_db
+def test_deny_window_expired_token_persists_nothing(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R5/D4 (janela): lease vencida ENTRE a abertura e o POST → negação não passa."""
+    doctor = user_factory("medico-janela-deny", (DOCTOR_ROLE,))
+    case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    scheduler = user_factory("agendador-janela-deny", (SCHEDULER_ROLE,))
+    login_user(scheduler, SCHEDULER_ROLE)
+    detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    token = _extract_lock_token(client.get(detail_url).content.decode())
+    Case.objects.filter(pk=case.pk).update(locked_until=timezone.now() - timedelta(seconds=1))
+    events_before = case.events.count()
+
+    response = client.post(
+        reverse("scheduler:case_deny", args=[case.case_id]),
+        _with_token({"reason": "vaga indisponível"}, token),
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == detail_url
+    case.refresh_from_db()
+    assert case.status == CaseStatus.SCHEDULER_REQUESTED
+    assert case.scheduling_denial_reason == ""
+    assert case.events.count() == events_before
+    assert _user_messages(case) == []
+
+
+@pytest.mark.django_db
+def test_queue_cards_reflect_lock_state(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R6/D4: card da aba aguardando reflete a reserva (livre/meu/de outro).
+
+    Livre → ação para o detalhe; do próprio agendador → «Continuar»; de outro →
+    botão desabilitado «Reservado» com o portador e SEM ação de abrir (evita
+    leitura duplicada entre as unidades).
+    """
+    doctor = user_factory("medico-fila-reserva-agendador", (DOCTOR_ROLE,))
+    free = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(free, patient_name="Paciente Livre")
+    mine = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(mine, patient_name="Paciente Meu")
+    other = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(other, patient_name="Paciente Outro")
+    scheduler = user_factory("agendador-fila-reserva", (SCHEDULER_ROLE,))
+    other_scheduler = user_factory("agendador-fila-reserva-outro", (SCHEDULER_ROLE,))
+    claim_case_lock(mine, user=scheduler, context=LOCK_CONTEXT, role=SCHEDULER_ROLE)
+    claim_case_lock(other, user=other_scheduler, context=LOCK_CONTEXT, role=SCHEDULER_ROLE)
+    login_user(scheduler, SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    free_card = _lock_card_block(body, free.case_id)
+    assert "Abrir caso" in free_card
+    assert f'href="{reverse("scheduler:case_detail", args=[free.case_id])}"' in free_card
+
+    mine_card = _lock_card_block(body, mine.case_id)
+    assert "Continuar" in mine_card
+    assert f'href="{reverse("scheduler:case_detail", args=[mine.case_id])}"' in mine_card
+
+    # O card reservado não carrega o uid (sem href): localizar pelo paciente.
+    other_card = _lock_card_block(body, "Paciente Outro")
+    assert "Reservado" in other_card
+    assert other_scheduler.display_name in other_card
+    assert "disabled" in other_card
+    assert f'href="{reverse("scheduler:case_detail", args=[other.case_id])}"' not in other_card
+
+
+@pytest.mark.django_db
+def test_queue_expires_stale_lock_before_rendering(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R6/D4: reserva vencida é expirada de forma lazy antes de montar a fila."""
+    doctor = user_factory("medico-fila-reserva-expirada", (DOCTOR_ROLE,))
+    case = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(case, patient_name="Paciente Expirado")
+    holder = user_factory("agendador-reserva-expirada", (SCHEDULER_ROLE,))
+    claim_case_lock(case, user=holder, context=LOCK_CONTEXT, role=SCHEDULER_ROLE)
+    Case.objects.filter(pk=case.pk).update(locked_until=timezone.now() - timedelta(seconds=1))
+    login_user(holder, SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    card = _lock_card_block(body, case.case_id)
+    assert "Abrir caso" in card
+    assert "Reservado" not in card
+    case.refresh_from_db()
+    assert case.lock_token is None
+    assert case.locked_by is None
+
+
+@pytest.mark.django_db
+def test_lock_renew_endpoint_extends_lease(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R7/D4: o heartbeat renova a lease do agendador e devolve ``locked_until``.
+
+    A lease é encurtada antes da chamada para provar a renovação real (não o
+    eco do valor do claim): JSON de sucesso com o novo vencimento e evento
+    ``CASE_LOCK_RENEWED`` na trilha.
+    """
+    doctor = user_factory("medico-heartbeat-agendador", (DOCTOR_ROLE,))
+    case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    scheduler = user_factory("agendador-heartbeat", (SCHEDULER_ROLE,))
+    login_user(scheduler, SCHEDULER_ROLE)
+    detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    token = _extract_lock_token(client.get(detail_url).content.decode())
+    shortened = timezone.now() + timedelta(minutes=1)
+    Case.objects.filter(pk=case.pk).update(locked_until=shortened)
+
+    response = client.post(
+        reverse("scheduler:lock_renew", args=[case.case_id]),
+        {"lock_token": token},
+    )
+
+    assert response.status_code == 200
+    payload = cast(dict[str, Any], response.json())
+    assert payload["success"] is True
+    renewed_until = datetime.fromisoformat(cast(str, payload["locked_until"]))
+    assert renewed_until > shortened + timedelta(minutes=3)
+    case.refresh_from_db()
+    assert case.locked_until is not None and case.locked_until > shortened
+    assert (case.locked_until - timezone.now()).total_seconds() > 250
+    assert case.events.filter(event_type=CaseEventType.CASE_LOCK_RENEWED).exists()
+
+
+@pytest.mark.django_db
+def test_lock_renew_endpoint_without_token_fails(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R7/D4: renovação sem ``lock_token`` (ou token errado) → falha, lease intacta.
+
+    Nunca 500: o endpoint responde JSON de falha tanto para o token ausente
+    quanto para o malformado (não-UUID).
+    """
+    doctor = user_factory("medico-heartbeat-sem-token-ag", (DOCTOR_ROLE,))
+    case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    scheduler = user_factory("agendador-heartbeat-sem-token", (SCHEDULER_ROLE,))
+    login_user(scheduler, SCHEDULER_ROLE)
+    claim = claim_case_lock(case, user=scheduler, context=LOCK_CONTEXT, role=SCHEDULER_ROLE)
+
+    missing = client.post(reverse("scheduler:lock_renew", args=[case.case_id]), {})
+    assert missing.status_code == 200
+    assert cast(dict[str, Any], missing.json())["success"] is False
+    malformed = client.post(
+        reverse("scheduler:lock_renew", args=[case.case_id]),
+        {"lock_token": "nao-e-uuid"},
+    )
+    assert malformed.status_code == 200
+    assert cast(dict[str, Any], malformed.json())["success"] is False
+    case.refresh_from_db()
+    assert case.lock_token == claim.token
+    assert not case.events.filter(event_type=CaseEventType.CASE_LOCK_RENEWED).exists()
+
+
+@pytest.mark.django_db
+def test_lock_release_endpoint_clears_lock_and_is_idempotent(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R7/D4: release explícito limpa a reserva; repetir devolve falha sem erro.
+
+    O segundo POST (token já consumido) é o release best-effort disparado em
+    navegação depois do POST da ação: nunca 500.
+    """
+    doctor = user_factory("medico-release-agendador", (DOCTOR_ROLE,))
+    case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    scheduler = user_factory("agendador-release-endpoint", (SCHEDULER_ROLE,))
+    login_user(scheduler, SCHEDULER_ROLE)
+    detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    token = _extract_lock_token(client.get(detail_url).content.decode())
+
+    first = client.post(
+        reverse("scheduler:lock_release", args=[case.case_id]), {"lock_token": token}
+    )
+    assert first.status_code == 200
+    assert cast(dict[str, Any], first.json())["success"] is True
+    case.refresh_from_db()
+    assert case.locked_by is None
+    assert case.lock_token is None
+    assert case.locked_until is None
+    release_events = case.events.filter(event_type=CaseEventType.CASE_LOCK_RELEASED)
+    assert release_events.count() == 1
+    assert release_events.get().payload["context"] == LOCK_CONTEXT
+
+    second = client.post(
+        reverse("scheduler:lock_release", args=[case.case_id]), {"lock_token": token}
+    )
+    assert second.status_code == 200
+    assert cast(dict[str, Any], second.json())["success"] is False
+    assert case.events.filter(event_type=CaseEventType.CASE_LOCK_RELEASED).count() == 1
+
+
+@pytest.mark.django_db
+def test_work_lock_config_rendered(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R7/D4: o detalhe agendável exporta a config do heartbeat, o aviso e o script."""
+    doctor = user_factory("medico-config-lock-agendador", (DOCTOR_ROLE,))
+    case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    scheduler = user_factory("agendador-config-lock", (SCHEDULER_ROLE,))
+    login_user(scheduler, SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:case_detail", args=[case.case_id])).content.decode()
+    token = _extract_lock_token(body)
+
+    for marker in (
+        'id="work-lock-config"',
+        "data-work-lock-config",
+        f'data-renew-url="{reverse("scheduler:lock_renew", args=[case.case_id])}"',
+        f'data-release-url="{reverse("scheduler:lock_release", args=[case.case_id])}"',
+        f'data-lock-token="{token}"',
+        'data-heartbeat-ms="60000"',
+        'data-grace-ms="240000"',
+    ):
+        assert 0 < body.find(marker), f"config do work lock ausente: {marker}"
+    warning = body.find('id="work-lock-warning"')
+    assert 0 < warning
+    assert 'style="display:none;"' in body[warning : warning + 200]
+    # O script do heartbeat é carregado pela tag (sem vazar comentário de template).
+    assert 0 < body.find('<script src="/static/js/work_lock.js"')
+    assert "{#" not in body
+
+
+@pytest.mark.django_db
+def test_case_leave_releases_and_redirects(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R8/D4: «Sair sem decidir» libera a reserva na hora e volta à fila.
+
+    A liberação é server-side (não depende do JavaScript) e a fila mostra o
+    flash informativo.
+    """
+    doctor = user_factory("medico-sai-sem-decidir-ag", (DOCTOR_ROLE,))
+    case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    scheduler = user_factory("agendador-sai-sem-decidir", (SCHEDULER_ROLE,))
+    login_user(scheduler, SCHEDULER_ROLE)
+    detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    # Um único GET: cada abertura renova a reserva com token novo (R2).
+    body = client.get(detail_url).content.decode()
+    token = _extract_lock_token(body)
+    # O botão é um mini-form POST no detalhe agendável (R8).
+    action = reverse("scheduler:case_leave", args=[case.case_id])
+    form = body.find(f'<form method="post" action="{action}"')
+    label = body.find(">Sair sem decidir</button>")
+    assert 0 < form < label
+    assert f'name="lock_token" value="{token}"' in body[form:label]
+
+    response = client.post(action, {"lock_token": token})
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == reverse("scheduler:queue")
+    case.refresh_from_db()
+    assert case.locked_by is None
+    assert case.lock_token is None
+    assert case.locked_until is None
+    release_events = case.events.filter(event_type=CaseEventType.CASE_LOCK_RELEASED)
+    assert release_events.count() == 1
+    assert release_events.get().payload["context"] == LOCK_CONTEXT
+    assert "Reserva liberada" in client.get(reverse("scheduler:queue")).content.decode()
+
+
+@pytest.mark.django_db
+def test_case_leave_without_token_only_redirects(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R8/D4: sair sem token é idempotente — redirect à fila, reserva intacta."""
+    doctor = user_factory("medico-sai-sem-token-ag", (DOCTOR_ROLE,))
+    case = _scheduler_requested_case(nir_user, doctor, (ANGIO_TYPE,))
+    scheduler = user_factory("agendador-sai-sem-token", (SCHEDULER_ROLE,))
+    claim = claim_case_lock(case, user=scheduler, context=LOCK_CONTEXT, role=SCHEDULER_ROLE)
+    login_user(scheduler, SCHEDULER_ROLE)
+
+    response = client.post(reverse("scheduler:case_leave", args=[case.case_id]), {})
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == reverse("scheduler:queue")
+    case.refresh_from_db()
+    assert case.lock_token == claim.token
+    assert case.locked_by == scheduler
+    assert not case.events.filter(event_type=CaseEventType.CASE_LOCK_RELEASED).exists()

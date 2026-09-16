@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load role_labels %}
+{% load static %}
 
 {% block title %}{{ app_display_name }} — Caso {{ case_id }}{% endblock %}
 
@@ -116,6 +117,20 @@
     {% endif %}
 
     {% if can_decide_scheduling %}
+    {% comment %} Reserva do caso (case-work-lock, slice 004, D4): o detalhe
+    agendável é a página de trabalho — o token vem do claim da abertura e volta
+    nos POSTs (confirmar/negar/sair sem decidir), que o validam sob row lock
+    antes de escrever. {% endcomment %}
+    <div id="work-lock-config"
+         data-work-lock-config
+         data-renew-url="{% url 'scheduler:lock_renew' case_id %}"
+         data-release-url="{% url 'scheduler:lock_release' case_id %}"
+         data-lock-token="{{ lock_token }}"
+         data-heartbeat-ms="60000"
+         data-grace-ms="240000"
+         style="display:none;"></div>
+    <div id="work-lock-warning" class="alert alert-warning mb-3" style="display:none;"></div>
+
     <!-- Ações do agendador (estado aguardando) -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-white">
@@ -124,6 +139,7 @@
       <div class="card-body">
         <form method="post" action="{% url 'scheduler:case_confirm' case_id %}">
           {% csrf_token %}
+          <input type="hidden" name="lock_token" value="{{ lock_token }}">
           <div class="row g-3">
             <div class="col-md-3">
               <label for="{{ confirm_form.unit.id_for_label }}" class="form-label">Unidade de destino</label>
@@ -154,6 +170,7 @@
       <div class="card-body">
         <form method="post" action="{% url 'scheduler:case_deny' case_id %}">
           {% csrf_token %}
+          <input type="hidden" name="lock_token" value="{{ lock_token }}">
           <div class="mb-3">
             <label for="{{ deny_form.reason.id_for_label }}" class="form-label">Motivo da negação</label>
             {{ deny_form.reason }}
@@ -161,6 +178,17 @@
           <button type="submit" class="btn btn-danger">Negar</button>
         </form>
       </div>
+    </div>
+
+    {% comment %} «Sair sem decidir» (R8/D4): mini-form POST server-side —
+    libera a reserva na hora e volta à fila, sem depender do JavaScript do
+    heartbeat. {% endcomment %}
+    <div class="d-flex justify-content-end mb-4">
+      <form method="post" action="{% url 'scheduler:case_leave' case_id %}" class="m-0">
+        {% csrf_token %}
+        <input type="hidden" name="lock_token" value="{{ lock_token }}">
+        <button type="submit" class="btn btn-outline-secondary">Sair sem decidir</button>
+      </form>
     </div>
     {% endif %}
 
@@ -261,4 +289,10 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+{% if lock_token %}
+<script src="{% static 'js/work_lock.js' %}" defer></script>
+{% endif %}
 {% endblock %}

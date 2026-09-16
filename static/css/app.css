@@ -14,6 +14,7 @@
   --hmd-bg: #f4f6f8;
   --hmd-surface: #ffffff;
   --hmd-border: #c9d6e0;
+  --hmd-control-border: #78909c;
   --hmd-text: #1c2733;
   --hmd-muted: #52697a;
 }
@@ -156,6 +157,23 @@ body.hospital-shell {
 }
 
 .hospital-shell .form-control:focus {
+  border-color: var(--hmd-accent);
+  box-shadow: 0 0 0 0.2rem rgba(47, 143, 157, 0.25);
+}
+
+/* Radios precisam de contorno de repouso mais forte que a borda genérica dos
+   campos: este cinza-azulado atinge 3:1 de contraste não-texto sobre a
+   superfície branca (WCAG 1.4.11). Espelho do fix validado no ATS v0.8.2. */
+.hospital-shell .form-check-input[type="radio"] {
+  border: 2px solid var(--hmd-control-border);
+}
+
+.hospital-shell .form-check-input:checked {
+  background-color: var(--hmd-primary);
+  border-color: var(--hmd-primary);
+}
+
+.hospital-shell .form-check-input:focus {
   border-color: var(--hmd-accent);
   box-shadow: 0 0 0 0.2rem rgba(47, 143, 157, 0.25);
 }

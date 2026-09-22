@@ -34,10 +34,12 @@ Propriedades puras em `Case` (`apps/cases/models.py`), sem migration:
 def short_id(self) -> str:
     return str(self.case_id)[:8]
 
+
 @property
 def display_reference(self) -> str:
     """Nº de ocorrência; fallback `uid <8 chars>` (padrão do painel)."""
     return self.agency_record_number.strip() or f"uid {self.short_id}"
+
 
 @property
 def disambiguated_reference(self) -> str:

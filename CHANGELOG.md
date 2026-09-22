@@ -4,6 +4,29 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.15] — 2026-09-22
+
+**Referência humana (nº de ocorrência) em toda a UI** — 1 change
+(`case-detail-human-reference`), 5 slices TDD com revisão independente por
+slice. Suíte 1516 → **1553** (+37 testes). Sem migrations (deploy direto).
+
+- O uid interno deixa de ser texto visível: `<title>`, breadcrumbs, hero,
+  mensagens flash, alerta de lote, página «Reenviar corrigido» e badge de
+  prior-case passam a citar o **nº de ocorrência** com fallback `uid <8
+  chars>` (padrão do painel). URLs/rotas seguem com o uid como chave técnica.
+- Detalhe do caso do NIR ganha card «Identificação do paciente» (nome +
+  idade, badge de status no header — padrão scheduler/doctor) no lugar do
+  hero «Caso <uuid>».
+- Desambiguação onde há reenvio corrigido (mesmo nº): referência
+  `nº · <8 chars>` no link de correção, página de reenvio, flash do novo
+  caso e cards de «meus casos» com nº duplicado na aba corrente.
+- `Case` expõe `short_id`/`display_reference`/`disambiguated_reference`
+  (properties puras — fonte única do fallback, pinadas sem query);
+  `agency_record_number` entra nos `.only()` das views com flash (sem query
+  deferred).
+- Specs `intake-nir`/`doctor-decision`/`scheduling` MODIFIED pinnam a
+  ausência de uid completo em texto visível (evita reintrodução).
+
 ## [0.1.14] — 2026-09-16
 
 **Contraste dos radio buttons** (quick fix, espelho do ATS v0.8.2).

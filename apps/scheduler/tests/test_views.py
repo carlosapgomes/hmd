@@ -2147,3 +2147,63 @@ def test_case_leave_without_token_only_redirects(
     assert case.lock_token == claim.token
     assert case.locked_by == scheduler
     assert not case.events.filter(event_type=CaseEventType.CASE_LOCK_RELEASED).exists()
+
+
+# ── case-detail-human-reference (slice 005): referência humana no detalhe
+#    do agendador (R2) ──────────────────────────────────────────────────────
+
+
+def _visible_text(body: str) -> str:
+    """HTML sem os atributos de rota (``href``/``action``/``data-*-url``).
+
+    O uid permanece como chave técnica das URLs (D5 do design); remover os
+    atributos permite pinar que ele NÃO aparece em texto visível.
+    """
+    return re.sub(r'(?:href|action|data-[a-z-]*url)="[^"]*"', "", body)
+
+
+@pytest.mark.django_db
+def test_detail_uses_human_reference_without_full_uid(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2: title e breadcrumb exibem «Caso <nº>»; uid completo só nos hrefs."""
+    doctor = user_factory("medico-referencia-detalhe", (DOCTOR_ROLE,))
+    case = _detail_case(nir_user, doctor)
+    viewer = user_factory("geral-referencia-detalhe", (SCHEDULER_ROLE,))
+    _login(client, viewer, SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:case_detail", args=[case.case_id])).content.decode()
+
+    assert "— Caso 33345" in body
+    assert 'aria-current="page">Caso 33345</li>' in body
+    assert f"Caso {case.case_id}" not in body
+    assert str(case.case_id) not in _visible_text(body)
+    assert str(case.case_id) in body  # chave técnica das URLs (D5)
+
+
+@pytest.mark.django_db
+def test_detail_without_record_number_uses_short_uid_label(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2: sem nº de ocorrência → «Caso uid <8 chars>» no title/breadcrumb."""
+    doctor = user_factory("medico-referencia-fallback", (DOCTOR_ROLE,))
+    case = _detail_case(nir_user, doctor)
+    _apply_metadata(
+        case,
+        patient_name="MARIA DA SILVA",
+        patient_birth_date=date(1972, 3, 5),
+        agency_record_number="",
+    )
+    short_id = str(case.case_id)[:8]
+    viewer = user_factory("geral-referencia-fallback", (SCHEDULER_ROLE,))
+    _login(client, viewer, SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:case_detail", args=[case.case_id])).content.decode()
+
+    assert f"— Caso uid {short_id}" in body
+    assert f'aria-current="page">Caso uid {short_id}</li>' in body
+    assert str(case.case_id) not in _visible_text(body)

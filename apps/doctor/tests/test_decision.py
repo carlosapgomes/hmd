@@ -1532,3 +1532,38 @@ def test_work_lock_script_implements_heartbeat_marks() -> None:
     # Sem dependências externas (script vanilla, como o do ATS Web).
     assert "import " not in source
     assert "require(" not in source
+
+
+# ── case-detail-human-reference (slice 005): referência humana no
+#    title/breadcrumb da página de trabalho (R1) ────────────────────────────
+
+
+def _visible_text(body: str) -> str:
+    """HTML sem os atributos de rota (``href``/``action``/``data-*-url``).
+
+    O uid permanece como chave técnica das URLs (D5 do design); remover os
+    atributos permite pinar que ele NÃO aparece em texto visível.
+    """
+    return re.sub(r'(?:href|action|data-[a-z-]*url)="[^"]*"', "", body)
+
+
+@pytest.mark.django_db
+def test_decide_title_and_breadcrumb_use_human_reference(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R1: title, breadcrumb e link do breadcrumb usam «Caso <nº>»."""
+    case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
+    case.agency_record_number = "5040778"
+    case.save(update_fields=["agency_record_number"])
+    doctor = user_factory("medico-referencia-decide", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:case_decide", args=[case.case_id])).content.decode()
+
+    assert "— Caso 5040778: decisão médica" in body
+    assert f'href="{reverse("doctor:case_detail", args=[case.case_id])}">Caso 5040778</a>' in body
+    assert f"Caso {case.case_id}" not in body
+    assert str(case.case_id) not in _visible_text(body)
+    assert str(case.case_id) in body  # chave técnica das URLs (D5)

@@ -448,6 +448,21 @@ def _prior_real_reason(prior_case_id: str, procedure_type: str) -> str:
     return row.doctor_reason.strip()
 
 
+def _prior_case_reference(prior_case_id: str) -> str:
+    """Referência desambiguada do caso PRÉVIO exibida no badge (D4).
+
+    Lookup read-only do ``Case`` prévio com ``.only()`` (pk + nº de ocorrência)
+    — a chave vem do resumo do pipeline, então a query só roda quando há
+    prior-case. Sem nº de ocorrência o helper do ``Case`` devolve ``uid <8>``.
+    """
+    prior = (
+        Case.objects.only("case_id", "agency_record_number").filter(case_id=prior_case_id).first()
+    )
+    if prior is None:
+        return f"uid {prior_case_id[:8]}"
+    return prior.disambiguated_reference
+
+
 def _build_prior_cases(
     case: Case,
     declared_types: tuple[str, ...],
@@ -463,6 +478,7 @@ def _build_prior_cases(
                 "procedure_type": procedure_type,
                 "label": _procedure_label(procedure_type),
                 "prior_case_id": summary.prior_case_id,
+                "prior_case_reference": _prior_case_reference(summary.prior_case_id),
                 "decided_at": _format_iso_datetime(summary.decided_at),
                 "decision_label": _PRIOR_DECISION_LABELS.get(summary.decision, summary.decision),
                 "reason": _prior_real_reason(summary.prior_case_id, procedure_type),
@@ -714,6 +730,9 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
 
     context: dict[str, object] = {
         "case_id": str(case.case_id),
+        # Referência humana (change case-detail-human-reference, D4): título,
+        # breadcrumb e links; o uid segue como chave técnica das URLs.
+        "case_reference": case.display_reference,
         "status_label": case.get_status_display(),
         "can_decide": case.status == CaseStatus.AWAITING_DOCTOR,
         "identification": identification,

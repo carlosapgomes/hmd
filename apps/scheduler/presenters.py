@@ -113,6 +113,9 @@ def build_scheduler_case_detail_context(case: Case) -> dict[str, object]:
 
     return {
         "case_id": str(case.case_id),
+        # Referência humana (change case-detail-human-reference, D4): título e
+        # breadcrumb; o uid segue como chave técnica das URLs.
+        "case_reference": case.display_reference,
         "status": str(case.status),
         "status_label": case.get_status_display(),
         "identification": {

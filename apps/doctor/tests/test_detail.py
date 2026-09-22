@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Sequence
-from datetime import timedelta
+from datetime import date, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -139,6 +139,15 @@ def _dd_value(card: str, label: str) -> str:
     )
     assert match is not None, f"linha «{label}» ausente no card de identificação"
     return re.sub(r"\s+", " ", match.group(1)).strip()
+
+
+def _visible_text(body: str) -> str:
+    """HTML sem os atributos de rota (``href``/``action``/``data-*-url``).
+
+    O uid permanece como chave técnica das URLs (D5 do design); remover os
+    atributos permite pinar que ele NÃO aparece em texto visível.
+    """
+    return re.sub(r'(?:href|action|data-[a-z-]*url)="[^"]*"', "", body)
 
 
 def _card_title_index(body: str, title: str) -> int:
@@ -272,6 +281,40 @@ def _make_awaiting_case_with_artifacts(created_by: User) -> Case:
     case.save()
     case.refresh_from_db()
     return case
+
+
+def _fake_anonymize(
+    text: str, seed_map: dict[str, dict[str, str]] | None = None
+) -> SimpleNamespace:
+    """Anonimizador fake do núcleo (o resumo é descartado pelo card médico)."""
+    del text, seed_map
+    return SimpleNamespace(anonymized_text="<ANONIMIZADO>")
+
+
+def _make_awaiting_case_with_prior(
+    created_by: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Case, Case]:
+    """Par (caso prévio negado, caso corrente) com match por nº de ocorrência.
+
+    O prévio é decidido 5 minutos antes do caso corrente — dentro da janela do
+    lookup (prior-case R4). ``anonymize_text`` é substituído pelo fake do
+    núcleo: o card do médico usa o motivo REAL da row, não o resumo.
+    """
+    monkeypatch.setattr("apps.pipeline.prior_case.anonymize_text", _fake_anonymize)
+
+    decided_at = timezone.now() - timedelta(minutes=5)
+    prior = _create_case_with_declared(created_by, (ANGIO_TYPE,))
+    _apply_metadata(prior, patient_name="MARIA DA SILVA", agency_record_number="33345")
+    Case.objects.filter(pk=prior.pk).update(created_at=decided_at - timedelta(minutes=5))
+    CaseProcedure.objects.filter(case=prior, procedure_type=ANGIO_TYPE).update(
+        doctor_disposition=DoctorDisposition.DENIED,
+        doctor_reason="Paciente com INR elevado e plaquetas baixas — não liberar.",
+        doctor_decided_at=decided_at,
+    )
+
+    current = _make_awaiting_case_with_artifacts(created_by)
+    return prior, current
 
 
 # ── Anexos (slice 004, attachment-processing-ocr): fixtures de cards ───────
@@ -528,38 +571,15 @@ class TestBuildCaseDetailContext:
         médico re-busca o motivo cru na ``CaseProcedure`` do caso prévio via
         ``prior_case_id`` — D3.
         """
-
-        def _fake_anonymize(
-            text: str, seed_map: dict[str, dict[str, str]] | None = None
-        ) -> SimpleNamespace:
-            del text, seed_map
-            return SimpleNamespace(anonymized_text="<ANONIMIZADO>")
-
-        monkeypatch.setattr("apps.pipeline.prior_case.anonymize_text", _fake_anonymize)
-
         owner = user_factory("dono-prior-card", ("nir",))
-        now = timezone.now()
-        decided_at = now - timedelta(minutes=5)
-
-        # Caso prévio do mesmo paciente (nº de ocorrência igual), negado.
-        prior = _create_case_with_declared(owner, (ANGIO_TYPE,))
-        _apply_metadata(prior, patient_name="MARIA DA SILVA", agency_record_number="33345")
-        Case.objects.filter(pk=prior.pk).update(created_at=decided_at - timedelta(minutes=5))
-        CaseProcedure.objects.filter(case=prior, procedure_type=ANGIO_TYPE).update(
-            doctor_disposition=DoctorDisposition.DENIED,
-            doctor_reason="Paciente com INR elevado e plaquetas baixas — não liberar.",
-            doctor_decided_at=decided_at,
-        )
-
-        current = _make_awaiting_case_with_artifacts(owner)
-        Case.objects.filter(pk=current.pk).update(agency_record_number="33345")
-        current.refresh_from_db()
+        prior, current = _make_awaiting_case_with_prior(owner, monkeypatch)
 
         context = cast(dict[str, Any], build_case_detail_context(current))
 
         assert len(context["prior_cases"]) == 1
         prior_card = context["prior_cases"][0]
         assert prior_card["prior_case_id"] == str(prior.case_id)
+        assert prior_card["prior_case_reference"] == f"33345 · {str(prior.case_id)[:8]}"
         assert prior_card["procedure_type"] == ANGIO_TYPE
         assert prior_card["decision_label"] == "Negado"
         # O motivo real (cru) aparece; o anonimizado do resumo não é exibido.
@@ -567,6 +587,63 @@ class TestBuildCaseDetailContext:
             "Paciente com INR elevado e plaquetas baixas — não liberar."
         )
         assert "<ANONIMIZADO>" not in json.dumps(context, ensure_ascii=False)
+
+    def test_case_reference_uses_record_number(
+        self,
+        user_factory: Callable[..., User],
+    ) -> None:
+        """R1: contexto raiz expõe a referência humana além do ``case_id``."""
+        owner = user_factory("dono-referencia", ("nir",))
+        case = _make_awaiting_case_with_artifacts(owner)
+
+        context = cast(dict[str, Any], build_case_detail_context(case))
+
+        assert context["case_id"] == str(case.case_id)
+        assert context["case_reference"] == "33345"
+
+    def test_case_reference_falls_back_to_short_uid(
+        self,
+        user_factory: Callable[..., User],
+    ) -> None:
+        """R1: sem nº de ocorrência → ``uid <8 chars>`` (fallback do D1)."""
+        owner = user_factory("dono-referencia-fallback", ("nir",))
+        case = _make_awaiting_case_with_artifacts(owner)
+        _apply_metadata(case, patient_name="", agency_record_number="")
+
+        context = cast(dict[str, Any], build_case_detail_context(case))
+
+        assert context["case_reference"] == f"uid {str(case.case_id)[:8]}"
+
+    def test_prior_case_reference_falls_back_to_short_uid(
+        self,
+        user_factory: Callable[..., User],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """R3: prévio SEM nº de ocorrência (match por nome+nascimento) →
+        ``uid <8 chars>`` do prévio no badge."""
+        monkeypatch.setattr("apps.pipeline.prior_case.anonymize_text", _fake_anonymize)
+
+        owner = user_factory("dono-prior-sem-numero", ("nir",))
+        decided_at = timezone.now() - timedelta(minutes=5)
+        prior = _create_case_with_declared(owner, (ANGIO_TYPE,))
+        _apply_metadata(prior, patient_name="MARIA DA SILVA", agency_record_number="")
+        Case.objects.filter(pk=prior.pk).update(patient_birth_date=date(1972, 3, 5))
+        CaseProcedure.objects.filter(case=prior, procedure_type=ANGIO_TYPE).update(
+            doctor_disposition=DoctorDisposition.DENIED,
+            doctor_reason="Negado por INR elevado.",
+            doctor_decided_at=decided_at,
+        )
+
+        current = _make_awaiting_case_with_artifacts(owner)
+        Case.objects.filter(pk=current.pk).update(patient_birth_date=date(1972, 3, 5))
+        current.refresh_from_db()
+
+        context = cast(dict[str, Any], build_case_detail_context(current))
+
+        assert len(context["prior_cases"]) == 1
+        prior_card = context["prior_cases"][0]
+        assert prior_card["prior_case_id"] == str(prior.case_id)
+        assert prior_card["prior_case_reference"] == f"uid {str(prior.case_id)[:8]}"
 
 
 # ── R3: view doctor:case_detail ───────────────────────────────────────────
@@ -1363,3 +1440,65 @@ def test_detail_procedure_row_pending_has_no_detection_badge(
     assert "Declarado" in card
     assert "Detectado" not in card
     assert "Não detectado" not in card
+
+
+# ── case-detail-human-reference (slice 005): referência humana em
+#    title/breadcrumb (R1) e no badge do prior-case (R3) ────────────────────
+
+
+@pytest.mark.django_db
+def test_detail_title_and_breadcrumb_use_human_reference(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R1: title/breadcrumb exibem «Caso <nº>»; uid completo só nos hrefs."""
+    case = _make_awaiting_case_with_artifacts(nir_user)
+    doctor = user_factory("geral-referencia", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:case_detail", args=[case.case_id])).content.decode()
+
+    assert "— Caso 33345" in body
+    assert 'aria-current="page">Caso 33345</li>' in body
+    assert f"Caso {case.case_id}" not in body
+    assert str(case.case_id) not in _visible_text(body)
+    assert str(case.case_id) in body  # chave técnica das URLs (D5)
+
+
+@pytest.mark.django_db
+def test_detail_without_record_number_uses_short_uid_label(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R1: sem nº de ocorrência → «Caso uid <8 chars>» no title/breadcrumb."""
+    case = _make_awaiting_case_with_artifacts(nir_user)
+    _apply_metadata(case, patient_name="", agency_record_number="")
+    short_id = str(case.case_id)[:8]
+    doctor = user_factory("geral-referencia-fallback", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:case_detail", args=[case.case_id])).content.decode()
+
+    assert f"— Caso uid {short_id}" in body
+    assert f'aria-current="page">Caso uid {short_id}</li>' in body
+    assert str(case.case_id) not in _visible_text(body)
+
+
+@pytest.mark.django_db
+def test_prior_case_badge_uses_disambiguated_reference(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3: badge do prior-case exibe `N · <8 chars>`; uid do prévio ausente."""
+    prior, current = _make_awaiting_case_with_prior(nir_user, monkeypatch)
+    doctor = user_factory("geral-badge-referencia", (DOCTOR_ROLE,))
+    _login(client, doctor, DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:case_detail", args=[current.case_id])).content.decode()
+
+    assert f"Caso 33345 · {str(prior.case_id)[:8]}" in body
+    assert str(prior.case_id) not in body

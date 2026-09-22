@@ -158,7 +158,7 @@ detalhe read-only (`case_detail.html`).
         <div class="mb-3{% if not forloop.last %} border-bottom pb-3{% endif %}">
           <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
             <span class="fw-semibold">{{ prior.label }}</span>
-            <span class="badge rounded-pill text-bg-light border text-muted font-monospace small">Caso {{ prior.prior_case_id }}</span>
+            <span class="badge rounded-pill text-bg-light border text-muted font-monospace small">Caso {{ prior.prior_case_reference }}</span>
             {% if prior.decision_label == 'Negado' %}
             <span class="badge rounded-pill text-bg-danger ms-auto">{{ prior.decision_label }}</span>
             {% else %}

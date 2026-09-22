@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load role_labels %}
 
-{% block title %}{{ app_display_name }} — Caso {{ case_id }}{% endblock %}
+{% block title %}{{ app_display_name }} — Caso {{ case_reference }}{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center mt-4">
@@ -9,7 +9,7 @@
     <nav aria-label="breadcrumb" class="mb-3">
       <ol class="breadcrumb mb-0">
         <li class="breadcrumb-item"><a href="{% url 'doctor:queue' %}">Fila médica</a></li>
-        <li class="breadcrumb-item active" aria-current="page">Caso {{ case_id }}</li>
+        <li class="breadcrumb-item active" aria-current="page">Caso {{ case_reference }}</li>
       </ol>
     </nav>
 

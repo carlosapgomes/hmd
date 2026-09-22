@@ -62,7 +62,10 @@
              cabeçalho SESAB (— / idade omitida quando ausentes; «0 a» exibe). -->
         <div class="fw-semibold">{{ item.patient_name|default:"—" }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}</div>
         <div class="small text-muted">
-          Nº de ocorrência: <strong>{{ item.agency_record_number }}</strong>
+          <!-- Sufixo curto de desambiguação (case-detail-human-reference,
+               slice 004, R1/D3): a view marca `reference_suffix` apenas
+               quando o nº se repete na página; o template só renderiza. -->
+          Nº de ocorrência: <strong>{{ item.agency_record_number }}{{ item.reference_suffix }}</strong>
           <span class="mx-2">·</span>
           {% if item.procedure_labels %}
           Procedimentos: {{ item.procedure_labels|join:" · " }}

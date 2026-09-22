@@ -39,6 +39,7 @@ destaque na thread); ``case_ack`` (POST novo) confirma o recebimento no estado
 
 import logging
 import uuid
+from collections import Counter
 from typing import cast
 
 from django.conf import settings
@@ -249,6 +250,14 @@ def _scheduling_context(case: Case) -> dict[str, object]:
     }
 
 
+def _stripped_record(case: Case) -> str:
+    """Nº de ocorrência sem espaços nas bordas — chave da duplicidade (R1/D3).
+
+    Mesma normalização de ``Case.display_reference``; vazio = sem nº.
+    """
+    return case.agency_record_number.strip()
+
+
 @role_required("nir")
 def intake_home(request: HttpRequest) -> HttpResponse:
     """Home do intake NIR: envio em lote, tipo único e resultado do envio.
@@ -326,6 +335,11 @@ def my_cases(request: HttpRequest) -> HttpResponse:
     ``events`` (além de ``procedures``) e o caso ``CLEANED`` com evento
     administrativo recebe o resultado "Encerrado administrativamente — {motivo}"
     na aba de encerrados — só para o CRIADOR (o escopo por criador já o garante).
+
+    Slice 004 do case-detail-human-reference (R1–R3/D3): a linha «Nº de
+    ocorrência» dos cards do nº REPETIDO na página recebe o sufixo curto de
+    desambiguação (``N · <8 chars>``, o reenvio corrigido cria um caso novo com
+    o nº do original); nº único ou ausente mantém o texto de antes.
     """
     user = _require_user(request)
     requested_tab = request.GET.get("tab", _DEFAULT_MY_CASES_TAB)
@@ -336,8 +350,16 @@ def my_cases(request: HttpRequest) -> HttpResponse:
     closed_cases = own_cases.filter(status=CaseStatus.CLEANED)
     selected_cases = closed_cases if current_tab == "closed" else active_cases
 
+    page_cases = list(
+        selected_cases.prefetch_related("procedures", "events").order_by("-created_at")
+    )
+    # Nºs repetidos NA PÁGINA (R1/D3, slice 004): contagem sobre a lista já
+    # carregada (sem query extra); nºs em branco nunca são chave (a linha fica
+    # ``—`` e o fallback ``uid <8 chars>`` não se aplica a esta linha rotulada).
+    repeated_records = Counter(record for record in map(_stripped_record, page_cases) if record)
+
     items = []
-    for case in selected_cases.prefetch_related("procedures", "events").order_by("-created_at"):
+    for case in page_cases:
         closure_result = (
             _administrative_closure_result(case) if case.status == CaseStatus.CLEANED else None
         )
@@ -349,6 +371,11 @@ def my_cases(request: HttpRequest) -> HttpResponse:
                 "patient_age": case.patient_age,
                 "procedure_labels": _procedure_labels(_declared_types_from_rows(case)),
                 "agency_record_number": case.agency_record_number or "—",
+                # Sufixo só para nº duplicado E preenchido; senão "" (card
+                # idêntico ao de antes — o template apenas renderiza).
+                "reference_suffix": (
+                    f" · {case.short_id}" if repeated_records[_stripped_record(case)] > 1 else ""
+                ),
                 "admin_closure_result": closure_result[0] if closure_result else "",
                 "admin_closure_reason": closure_result[1] if closure_result else "",
             }

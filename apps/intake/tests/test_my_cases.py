@@ -612,3 +612,90 @@ def test_card_without_occurrence_shows_dash_without_uid(
     assert "Paciente Sem Ocorrencia" in card
     assert f"Caso {case.case_id}" not in card
     assert str(case.case_id) not in _card_visible_text(card)
+
+
+# ── R1–R3: sufixo de desambiguação do nº duplicado ────────────────────────
+# (case-detail-human-reference, slice 004 — D3)
+
+
+def _set_occurrence_number(case: Case, number: str) -> Case:
+    """Grava o nº de ocorrência exibido na linha rotulada do card."""
+    case.agency_record_number = number
+    case.save(update_fields=["agency_record_number"])
+    return case
+
+
+@pytest.mark.django_db
+def test_duplicate_occurrence_number_gets_short_suffix_on_both_cards(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R1/D3: nº duplicado na página → os DOIS cards exibem ``N · <8 chars>``.
+
+    O cenário real é o reenvio corrigido: o caso novo coexiste com o original
+    compartilhando o nº — o sufixo curto identifica cada card sem expor o uid
+    completo.
+    """
+    original = _set_occurrence_number(_create_case(nir_user, pdf_factory), "5040778")
+    corrected = _set_occurrence_number(_create_case(nir_user, pdf_factory), "5040778")
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases")).content.decode()
+
+    assert f"Nº de ocorrência: <strong>5040778 · {original.short_id}</strong>" in _card_slice(
+        body, original.case_id
+    )
+    assert f"Nº de ocorrência: <strong>5040778 · {corrected.short_id}</strong>" in _card_slice(
+        body, corrected.case_id
+    )
+
+
+@pytest.mark.django_db
+def test_unique_occurrence_number_keeps_card_output_unchanged(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R2/D3: nº SEM duplicado na página → card exibe apenas ``N``.
+
+    Página com um par duplicado + um nº único: o card do nº único mantém o
+    texto atual (sem sufixo e sem espaço extra) e nenhum fragmento de uid.
+    """
+    duplicated = _set_occurrence_number(_create_case(nir_user, pdf_factory), "5040778")
+    _set_occurrence_number(_create_case(nir_user, pdf_factory), "5040778")
+    unique = _set_occurrence_number(_create_case(nir_user, pdf_factory), "5040779")
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases")).content.decode()
+
+    unique_card = _card_slice(body, unique.case_id)
+    assert "Nº de ocorrência: <strong>5040779</strong>" in unique_card
+    assert unique.short_id not in _card_visible_text(unique_card)
+    # O par duplicado continua desambiguado na mesma página.
+    assert duplicated.short_id in _card_slice(body, duplicated.case_id)
+
+
+@pytest.mark.django_db
+def test_cards_without_occurrence_number_keep_dash_without_suffix(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R3/D3: caso sem nº → linha permanece ``—``, sem sufixo.
+
+    Dois casos sem nº na mesma página: a chave vazia NÃO é tratada como nº
+    duplicado (nenhum ``— · <8 chars>``), e o fallback ``uid <8 chars>`` não se
+    aplica à linha rotulada (decisão vigente de ``queues-remove-uid``).
+    """
+    first = _set_occurrence_number(_create_case(nir_user, pdf_factory), "")
+    second = _create_case(nir_user, pdf_factory)
+    assert second.agency_record_number == ""
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases")).content.decode()
+
+    for case in (first, second):
+        card = _card_slice(body, case.case_id)
+        assert "Nº de ocorrência: <strong>—</strong>" in card
+        assert case.short_id not in _card_visible_text(card)

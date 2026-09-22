@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load role_labels %}
 
-{% block title %}{{ app_display_name }} — Caso {{ case.case_id }}{% endblock %}
+{% block title %}{{ app_display_name }} — Caso {{ case.display_reference }}{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center mt-4">
@@ -9,32 +9,51 @@
     <nav aria-label="breadcrumb" class="mb-3">
       <ol class="breadcrumb mb-0">
         <li class="breadcrumb-item"><a href="{% url 'intake:my_cases' %}">Meus casos</a></li>
-        <li class="breadcrumb-item active" aria-current="page">Caso {{ case.case_id }}</li>
+        <li class="breadcrumb-item active" aria-current="page">Caso {{ case.display_reference }}</li>
       </ol>
     </nav>
 
+    <!-- Identificação do paciente (case-detail-human-reference, slice 002,
+         R2/D2): padrão dos detalhes de médico/agendador; conteúdo mínimo
+         decidido pelo dono — nome + idade (o NIR manuseia o relatório físico).
+         Idade omitida quando ausente («0 a» exibe); o nº usa a referência
+         humana do model (fallback `uid <8 chars>`, D1) e o uid completo fica
+         apenas nas URLs. -->
     <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
+        <h1 class="h5 mb-0">Identificação do paciente</h1>
+        {% if case.status == 'FAILED' %}
+        <!-- Badge de erro (slice 003, R3/D4): o motivo técnico vive na
+             trilha do painel; aqui fica só o sinal de falha. -->
+        <span class="badge rounded-pill text-bg-danger ms-auto">Falha no processamento</span>
+        {% elif case.status == 'LLM_EXTRACTING' and case.manual_review_required %}
+        <span class="badge rounded-pill text-bg-info ms-auto">{{ status_label }}</span>
+        {% elif case.manual_review_required %}
+        <span class="badge rounded-pill text-bg-warning ms-auto">{{ status_label }}</span>
+        {% else %}
+        <span class="badge rounded-pill text-bg-secondary ms-auto">{{ status_label }}</span>
+        {% endif %}
+      </div>
       <div class="card-body">
-        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-          <h1 class="h3 mb-0 font-monospace">Caso {{ case.case_id }}</h1>
-          {% if case.status == 'FAILED' %}
-          <!-- Badge de erro (slice 003, R3/D4): o motivo técnico vive na
-               trilha do painel; aqui fica só o sinal de falha. -->
-          <span class="badge rounded-pill text-bg-danger">Falha no processamento</span>
-          {% elif case.status == 'LLM_EXTRACTING' and case.manual_review_required %}
-          <span class="badge rounded-pill text-bg-info">{{ status_label }}</span>
-          {% elif case.manual_review_required %}
-          <span class="badge rounded-pill text-bg-warning">{{ status_label }}</span>
-          {% else %}
-          <span class="badge rounded-pill text-bg-secondary">{{ status_label }}</span>
+        <dl class="row mb-2">
+          <dt class="col-sm-3">Paciente</dt>
+          <dd class="col-sm-9">{{ case.patient_name|default:"—" }}</dd>
+          {% if case.patient_age is not None %}
+          <dt class="col-sm-3">Idade</dt>
+          <dd class="col-sm-9">{{ case.patient_age }} a</dd>
           {% endif %}
-        </div>
-        <p class="text-muted mb-2">
+          <dt class="col-sm-3">Nº de ocorrência</dt>
+          <dd class="col-sm-9">{{ case.display_reference }}</dd>
+        </dl>
+        <p class="text-muted small mb-0">
           Criado em {{ case.created_at|date:"d/m/Y H:i" }}
           {% if case.updated_at %}· atualizado em {{ case.updated_at|date:"d/m/Y H:i" }}{% endif %}
-          · Nº de ocorrência: <strong>{{ case.agency_record_number|default:"—" }}</strong>
         </p>
+      </div>
+    </div>
 
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
         {% if case.manual_review_required %}
           {% if case.status == 'LLM_EXTRACTING' and case.manual_review_reason == 'procedure_divergence' %}
           <div class="alert alert-info mb-3" role="alert">
@@ -103,7 +122,7 @@
             <div>
               <a href="{% url 'intake:case_detail' correction.case_id %}"
                  class="font-monospace small fw-semibold text-decoration-none">
-                Caso {{ correction.case_id }}
+                Caso {{ correction.disambiguated_reference }}
               </a>
               <p class="small text-muted mb-0 mt-1">{{ correction.correction_reason }}</p>
             </div>

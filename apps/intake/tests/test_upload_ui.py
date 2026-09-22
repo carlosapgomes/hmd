@@ -258,7 +258,7 @@ def test_upload_batch_result_shows_created_and_errors(
     assert "2 casos criados" in body
     assert "foto.jpg" in body
     assert reverse("intake:my_cases") in body
-    assert [case.documents.get().original_filename for case in Case.objects.all()] == [
+    assert sorted(case.documents.get().original_filename for case in Case.objects.all()) == [
         "paciente-a.pdf",
         "paciente-b.pdf",
     ]

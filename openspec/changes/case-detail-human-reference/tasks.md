@@ -6,7 +6,7 @@
 
 ## Implementação
 
-- [ ] Slice 001 — Helper de referência humana no model `Case` (`short_id`, `display_reference`, `disambiguated_reference`) — `slices/slice-001-case-reference-helper.md`
+- [x] Slice 001 — Helper de referência humana no model `Case` (`short_id`, `display_reference`, `disambiguated_reference`) — `slices/slice-001-case-reference-helper.md`
 - [ ] Slice 002 — Detalhe do NIR: card «Identificação do paciente» + referência humana no title/breadcrumb/link de correção — `slices/slice-002-nir-detail-patient-card.md`
 - [ ] Slice 003 — Textos do fluxo NIR: 6 flash messages + alerta de lote + página «Reenviar corrigido» com referência (desambiguada no reenvio) — `slices/slice-003-nir-flow-texts.md`
 - [ ] Slice 004 — Meus casos: sufixo curto de desambiguação nos cards com nº duplicado — `slices/slice-004-my-cases-duplicate-suffix.md`

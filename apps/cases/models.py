@@ -245,6 +245,27 @@ class Case(FSMModelMixin, models.Model):
     def __str__(self) -> str:
         return f"Case {self.case_id} [{self.status}]"
 
+    # ── Referência humana ──────────────────────────────────────────────────
+    # Fonte única da regra de fallback das superfícies visíveis (change
+    # case-detail-human-reference, D1): nº de ocorrência quando há, senão
+    # ``uid <8 chars>`` — o padrão já vigente no painel. Properties puras
+    # (sem query/mutação), visíveis nos templates sem mudança de view.
+
+    @property
+    def short_id(self) -> str:
+        return str(self.case_id)[:8]
+
+    @property
+    def display_reference(self) -> str:
+        """Nº de ocorrência; fallback ``uid <8 chars>`` (padrão do painel)."""
+        return self.agency_record_number.strip() or f"uid {self.short_id}"
+
+    @property
+    def disambiguated_reference(self) -> str:
+        """``nº · <8 chars>`` quando há nº (distingue reenvio corrigido do original)."""
+        record = self.agency_record_number.strip()
+        return f"{record} · {self.short_id}" if record else f"uid {self.short_id}"
+
     # ── Hooks FSM privados ─────────────────────────────────────────────────
     # Cada operação pública (tabela D4) tem um hook decorado com
     # ``@transition``: a lib valida o source e troca o estado. A operação

@@ -204,6 +204,31 @@ def test_release_retained_advances(
 
 
 @pytest.mark.django_db
+def test_release_flash_uses_display_reference(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R2 (slice 003 do case-detail-human-reference): o flash de liberação cita
+    a referência humana (nº de ocorrência) — o uid completo não aparece como
+    texto da mensagem."""
+    case = _create_retained_case(nir_user, pdf_factory, "relatorio-retido.pdf")
+    case.agency_record_number = "2024-9001"
+    case.save(update_fields=["agency_record_number"])
+    client.force_login(nir_user)
+
+    response = client.post(reverse("intake:gate_release", args=[case.case_id]), follow=True)
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert (
+        "Caso 2024-9001 liberado — o gate foi dispensado e o caso avançou para anonimização."
+        in body
+    )
+    assert f"Caso {case.case_id} liberado" not in body
+
+
+@pytest.mark.django_db
 def test_release_not_retained_no_effect(
     client: Client,
     nir_user: User,
@@ -277,6 +302,36 @@ def test_resubmit_replaces_and_reprocesses(
     assert event_types.count(CaseEventType.CASE_STATUS_PDF_EXTRACTING.value) == starts_before
     assert event_types.count(CaseEventType.CASE_STATUS_ANONYMIZING.value) == 1
     assert CaseEventType.CASE_EXTRACTION_COMPLETED.value in event_types
+
+
+@pytest.mark.django_db
+def test_resubmit_flash_uses_display_reference(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R2/R7: o flash do reenvio cita a referência humana carregada com o caso
+    (nº de ocorrência — ``agency_record_number`` no ``.only()`` da view).
+
+    Sem o campo no ``.only()``, a leitura de ``display_reference`` no flash
+    cairia no valor já ZERADO pelo reenvio (leitura deferred) e o texto
+    mostraria o fallback ``uid <8>``.
+    """
+    case = _create_retained_case(nir_user, pdf_factory, "relatorio-retido.pdf")
+    case.agency_record_number = "2024-9002"
+    case.save(update_fields=["agency_record_number"])
+    client.force_login(nir_user)
+
+    response = client.post(
+        reverse("intake:gate_resubmit", args=[case.case_id]),
+        {"documents": [_valid_pdf("novo.pdf")]},
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "Caso 2024-9002 reenviado — documentos substituídos e reprocessamento iniciado." in body
+    assert f"Caso {case.case_id} reenviado" not in body
 
 
 @pytest.mark.django_db

@@ -648,6 +648,9 @@ def test_resubmit_view_flow(
     assert followed.status_code == 200
     assert RESUBMIT_FLASH_PREFIX in followed.content.decode()
     assert str(new_case.case_id) in followed.content.decode()
+    # R3 (slice 003 do case-detail-human-reference): o flash cita a referência
+    # humana do novo caso — o uid completo não é texto da mensagem.
+    assert f"novo caso {new_case.case_id}." not in followed.content.decode()
 
     new_case.refresh_from_db()
     assert new_case.status == CaseStatus.NEW
@@ -844,3 +847,77 @@ def test_resubmit_input_is_single_pdf(
     assert input_tag is not None
     assert "multiple" not in input_tag.group(0)
     assert CORRECTED_DOCUMENTS_LABEL in body
+
+
+# ── R3/R5 (slice 003 do case-detail-human-reference): referência humana ───
+
+
+@pytest.mark.django_db
+def test_resubmit_flash_uses_disambiguated_reference(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    pdf_factory: Callable[..., SimpleUploadedFile],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3: o flash do reenvio corrigido cita a referência DESAMBIGUADA do novo
+    caso (``nº · <8 chars>``) — o nº é o mesmo do original, então o sufixo é o
+    que distingue os dois casos (D3); o uid completo não é texto da mensagem."""
+    doctor = user_factory("doctor-resub-flash", DOCTOR_ROLE)
+    original = _cleaned_case(created_by=nir_user, doctor=doctor)
+    new_case = Case.objects.create(
+        created_by=nir_user,
+        corrects_case=original,
+        correction_reason=REASON,
+        correction_created_by=nir_user,
+        agency_record_number="5040778",
+    )
+
+    def _resubmit(**kwargs: object) -> Case:
+        del kwargs
+        return new_case
+
+    monkeypatch.setattr("apps.intake.views.create_corrected_resubmission", _resubmit)
+    _login(client, nir_user)
+
+    response = client.post(
+        reverse("intake:case_resubmit", args=[original.case_id]),
+        {
+            "documents": [_resubmit_file(pdf_factory)],
+            "procedure_type": ANGIO_TYPE,
+            "correction_reason": REASON,
+        },
+    )
+
+    assert response.status_code == 302
+    assert response["Location"] == reverse("intake:case_detail", args=[new_case.case_id])
+
+    followed = client.get(response["Location"])
+    assert followed.status_code == 200
+    body = followed.content.decode()
+    short_id = str(new_case.case_id)[:8]
+    assert f"novo caso 5040778 · {short_id}." in body
+    assert f"novo caso {new_case.case_id}." not in body
+
+
+@pytest.mark.django_db
+def test_resubmit_page_uses_disambiguated_reference(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+) -> None:
+    """R5: o breadcrumb e o parágrafo da página do reenvio citam a referência
+    desambiguada do original (``nº · <8 chars>``); o uid completo segue apenas
+    nos href/action (R6/D5)."""
+    doctor = user_factory("doctor-resub-ref", DOCTOR_ROLE)
+    original = _cleaned_case(created_by=nir_user, doctor=doctor)
+    original.agency_record_number = "5040778"
+    original.save(update_fields=["agency_record_number"])
+    reference = original.disambiguated_reference
+    _login(client, nir_user)
+
+    body = client.get(reverse("intake:case_resubmit", args=[original.case_id])).content.decode()
+
+    assert f"Caso {reference}</a>" in body
+    assert f'<strong class="font-monospace small">{reference}</strong>' in body
+    assert f">{original.case_id}<" not in body

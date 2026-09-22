@@ -25,7 +25,7 @@
             {% for created in result.cases %}
             <li>
               <a href="{% url 'intake:case_detail' created.case_id %}" class="alert-link">
-                Caso {{ created.case_id }}
+                Caso {{ created.display_reference }}
               </a>
             </li>
             {% endfor %}

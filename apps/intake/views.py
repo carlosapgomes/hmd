@@ -292,7 +292,9 @@ def intake_home(request: HttpRequest) -> HttpResponse:
                 form.add_error(None, str(exc))
             else:
                 if not errors and len(cases) == 1:
-                    messages.success(request, f"Caso {cases[0].case_id} criado com sucesso.")
+                    messages.success(
+                        request, f"Caso {cases[0].display_reference} criado com sucesso."
+                    )
                     return redirect(reverse("intake:case_detail", args=[cases[0].case_id]))
                 return render(
                     request,
@@ -443,7 +445,7 @@ def case_ack(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     user = _require_user(request)
     active_role = request.session.get("active_role", "")
     case = get_object_or_404(
-        Case.objects.only("pk", "case_id", "created_by_id"),
+        Case.objects.only("pk", "case_id", "created_by_id", "agency_record_number"),
         case_id=case_id,
         created_by=user,
     )
@@ -457,7 +459,7 @@ def case_ack(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     logger.info("case_ack_ok user=%s case=%s", user.pk, case.case_id)
     messages.success(
         request,
-        f"Recebimento confirmado — o caso {case.case_id} foi encerrado e os "
+        f"Recebimento confirmado — o caso {case.display_reference} foi encerrado e os "
         "dados sensíveis foram removidos.",
     )
     return redirect(detail_url)
@@ -537,7 +539,7 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
                 else:
                     messages.success(
                         request,
-                        f"Reenvio corrigido criado — acompanhe o novo caso {new_case.case_id}.",
+                        f"Reenvio corrigido criado — acompanhe o novo caso {new_case.disambiguated_reference}.",
                     )
                     return redirect(reverse("intake:case_detail", args=[new_case.case_id]))
 
@@ -620,7 +622,7 @@ def gate_release(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     user = _require_user(request)
     active_role = request.session.get("active_role", "")
     case = get_object_or_404(
-        Case.objects.only("pk", "case_id", "created_by_id"),
+        Case.objects.only("pk", "case_id", "created_by_id", "agency_record_number"),
         case_id=case_id,
         created_by=user,
     )
@@ -635,13 +637,13 @@ def gate_release(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     if target == CaseStatus.LLM_SUMMARIZING:
         messages.success(
             request,
-            f"Caso {case.case_id} liberado — a divergência foi dispensada e o caso "
+            f"Caso {case.display_reference} liberado — a divergência foi dispensada e o caso "
             "avançou para a sumarização.",
         )
     else:
         messages.success(
             request,
-            f"Caso {case.case_id} liberado — o gate foi dispensado e o caso avançou para anonimização.",
+            f"Caso {case.display_reference} liberado — o gate foi dispensado e o caso avançou para anonimização.",
         )
     return redirect(reverse("intake:case_detail", args=[case.case_id]))
 
@@ -661,7 +663,7 @@ def gate_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     user = _require_user(request)
     active_role = request.session.get("active_role", "")
     case = get_object_or_404(
-        Case.objects.only("pk", "case_id", "created_by_id"),
+        Case.objects.only("pk", "case_id", "created_by_id", "agency_record_number"),
         case_id=case_id,
         created_by=user,
     )
@@ -689,6 +691,6 @@ def gate_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         return _gate_action_error(str(exc), case_id, status=409)
     messages.success(
         request,
-        f"Caso {case.case_id} reenviado — documentos substituídos e reprocessamento iniciado.",
+        f"Caso {case.display_reference} reenviado — documentos substituídos e reprocessamento iniciado.",
     )
     return redirect(reverse("intake:case_detail", args=[case.case_id]))

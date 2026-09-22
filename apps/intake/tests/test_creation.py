@@ -510,6 +510,92 @@ def test_upload_flow_via_view(
 
 
 @pytest.mark.django_db
+def test_upload_flow_flash_uses_display_reference(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R1 (slice 003 do case-detail-human-reference): o flash de criação cita a
+    referência humana do caso — sem o uid completo no texto (caso recém-criado
+    ainda sem nº extraído → fallback ``uid <8>`` do design D1)."""
+    client.force_login(nir_user)
+
+    response = client.post(
+        reverse("intake:home"),
+        {"documents": [pdf_factory()], "procedure_type": ANGIO_TYPE},
+        follow=True,
+    )
+
+    case = Case.objects.get()
+    body = response.content.decode()
+    assert f"Caso {case.display_reference} criado com sucesso." in body
+    assert f">{case.case_id}<" not in body
+
+
+@pytest.mark.django_db
+def test_upload_flow_flash_prefers_agency_record_number(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R1: com nº de ocorrência no caso devolvido pelo serviço, o flash de
+    criação cita o nº (``display_reference``), nunca o uid."""
+    case = Case.objects.create(created_by=nir_user, agency_record_number="2024-1234")
+
+    def _submit(**kwargs: object) -> tuple[list[Case], list[str]]:
+        del kwargs
+        return [case], []
+
+    monkeypatch.setattr("apps.intake.views.submit_report_batch", _submit)
+    client.force_login(nir_user)
+
+    response = client.post(
+        reverse("intake:home"),
+        {"documents": [pdf_factory()], "procedure_type": ANGIO_TYPE},
+        follow=True,
+    )
+
+    body = response.content.decode()
+    assert "Caso 2024-1234 criado com sucesso." in body
+    assert f"Caso {case.case_id} criado com sucesso." not in body
+
+
+@pytest.mark.django_db
+def test_batch_result_alert_uses_display_reference(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4: o alerta do lote na home exibe ``Caso <display_reference>`` por caso
+    criado, com o href inalterado (uid segue na URL — R6/D5)."""
+    first = Case.objects.create(created_by=nir_user, agency_record_number="2024-1234")
+    second = Case.objects.create(created_by=nir_user, agency_record_number="2024-5678")
+
+    def _submit(**kwargs: object) -> tuple[list[Case], list[str]]:
+        del kwargs
+        return [first, second], []
+
+    monkeypatch.setattr("apps.intake.views.submit_report_batch", _submit)
+    client.force_login(nir_user)
+
+    response = client.post(
+        reverse("intake:home"),
+        {"documents": [pdf_factory(), pdf_factory()], "procedure_type": ANGIO_TYPE},
+    )
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "Caso 2024-1234" in body
+    assert "Caso 2024-5678" in body
+    assert reverse("intake:case_detail", args=[first.case_id]) in body
+    assert reverse("intake:case_detail", args=[second.case_id]) in body
+    assert f">{first.case_id}<" not in body
+    assert f">{second.case_id}<" not in body
+
+
+@pytest.mark.django_db
 def test_upload_invalid_file_shows_result_with_error(
     client: Client,
     nir_user: User,

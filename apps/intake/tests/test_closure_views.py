@@ -347,6 +347,35 @@ def test_ack_post_closes_case(
 
 
 @pytest.mark.django_db
+def test_ack_flash_uses_display_reference(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+) -> None:
+    """R2 (slice 003 do case-detail-human-reference): o flash do recebimento
+    confirmado cita a referência humana do caso (nº de ocorrência preservado
+    pelo encerramento — paridade do CLEANED); o uid completo não é texto."""
+    doctor = user_factory("doctor-intake-ackref", DOCTOR_ROLE)
+    case = _denial_final_case(created_by=nir_user, decided_by=doctor)
+    case.agency_record_number = "2024-0777"
+    case.save(update_fields=["agency_record_number"])
+    _login(client, nir_user)
+
+    response = client.post(reverse("intake:case_ack", args=[case.case_id]))
+
+    assert response.status_code == 302
+    case.refresh_from_db()
+    assert case.status == CaseStatus.CLEANED
+    assert case.agency_record_number == "2024-0777"
+
+    followed = client.get(response["Location"])
+    assert followed.status_code == 200
+    body = followed.content.decode()
+    assert f"Recebimento confirmado — o caso {case.display_reference} foi encerrado" in body
+    assert f"o caso {case.case_id} foi encerrado" not in body
+
+
+@pytest.mark.django_db
 def test_ack_wrong_state_no_500(
     client: Client,
     nir_user: User,

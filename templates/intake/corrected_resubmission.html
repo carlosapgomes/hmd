@@ -9,7 +9,7 @@
       <ol class="breadcrumb mb-0">
         <li class="breadcrumb-item"><a href="{% url 'intake:my_cases' %}">Meus casos</a></li>
         <li class="breadcrumb-item">
-          <a href="{% url 'intake:case_detail' case.case_id %}">Caso {{ case.case_id }}</a>
+          <a href="{% url 'intake:case_detail' case.case_id %}">Caso {{ case.disambiguated_reference }}</a>
         </li>
         <li class="breadcrumb-item active" aria-current="page">Reenviar corrigido</li>
       </ol>
@@ -19,7 +19,7 @@
       <div class="card-body p-4">
         <h1 class="h3 mb-2">Reenviar corrigido</h1>
         <p class="text-muted mb-4">
-          O caso <strong class="font-monospace small">{{ case.case_id }}</strong> está
+          O caso <strong class="font-monospace small">{{ case.disambiguated_reference }}</strong> está
           encerrado. O reenvio corrigido cria um <strong>novo caso</strong> vinculado a
           este — o original permanece encerrado e íntegro, e os procedimentos do novo
           caso são uma escolha explícita sua (nunca herdados do envio anterior).

@@ -14,8 +14,8 @@
 
 ## Gate final
 
-- [ ] `uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest` — tudo verde, sem regressão vs. baseline
-- [ ] `openspec validate case-detail-human-reference --strict`
+- [x] `uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest` — tudo verde, sem regressão vs. baseline
+- [x] `openspec validate case-detail-human-reference --strict`
 
 ## Pós-gate (parent)
 

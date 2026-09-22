@@ -109,7 +109,9 @@ nunca apenas no template.
 - **THEN** a submissão é rejeitada com HTTP 403 e nenhuma decisão é persistida
 
 ### Requirement: Presenter re-identificado sob papel autorizado
-O detalhe do caso SHALL apresentar, apenas para `doctor`/`admin`, os dados reais do paciente (identificação, número de ocorrência) e a demografia do caso — idade, sexo e raça/cor extraídas do cabeçalho padrão SESAB — e os artefatos do pipeline re-identificados: histórico e sumário, estrutura extraída, alertas da policy com a recomendação por procedimento e o resultado agregado, requisitos gerais acionáveis e o PDF original. A re-identificação SHALL ocorrer apenas na renderização para papel autorizado; nenhum artefato re-identificado é persistido nem enviado a qualquer LLM. A ordem dos cards SHALL seguir a leitura clínica: identificação, «Procedimentos do caso», sumário clínico e estrutura extraída (o quadro clínico) ANTES dos alertas consultivos e demais cards da automação. O detalhe NÃO exibe a trilha de eventos (vive no painel). O card «Procedimentos do caso» exibe TODAS as rows — inclusive a detectada não-declarada que sobrevive ao bypass da divergência — com badges de origem (Declarado/Detectado na extração) e de detecção após a reconciliação.
+
+O detalhe do caso SHALL apresentar, apenas para `doctor`/`admin`, os dados reais do paciente (identificação, número de ocorrência) e a demografia do caso — idade, sexo e raça/cor extraídas do cabeçalho padrão SESAB — e os artefatos do pipeline re-identificados: histórico e sumário, estrutura extraída, alertas da policy com a recomendação por procedimento e o resultado agregado, requisitos gerais acionáveis e o PDF original. A re-identificação SHALL ocorrer apenas na renderização para papel autorizado; nenhum artefato re-identificado é persistido nem enviado a qualquer LLM. A ordem dos cards SHALL seguir a leitura clínica: identificação, «Procedimentos do caso», sumário clínico e estrutura extraída (o quadro clínico) ANTES dos alertas consultivos e demais cards da automação. O detalhe NÃO exibe a trilha de eventos (vive no painel). O card «Procedimentos do caso» exibe TODAS as rows — inclusive a detectada não-declarada que sobrevive ao bypass da divergência — com badges de origem (Declarado/Detectado na extração) e de detecção após a reconciliação. O `<title>`, o breadcrumb e os links de navegação entre detalhe e decisão SHALL usar a **referência humana** do caso — nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel) — e o uid completo NÃO aparece em texto visível nessas superfícies (permanece apenas como chave das URLs).
+
 #### Scenario: Médico vê o sumário re-identificado
 
 - **GIVEN** um caso em `AWAITING_DOCTOR` cujo `summary_text` contém o token `<PESSOA_1>`
@@ -158,13 +160,21 @@ O detalhe do caso SHALL apresentar, apenas para `doctor`/`admin`, os dados reais
 - **WHEN** o médico com especialidade compatível abre o detalhe
 - **THEN** o card «Procedimentos do caso» exibe ambas as rows com rótulos legíveis e os badges «Não detectado» e «Detectado na extração»
 
+#### Scenario: Detalhe e decisão usam a referência humana
+
+- **GIVEN** um caso em `AWAITING_DOCTOR` com nº de ocorrência
+- **WHEN** o médico abre o detalhe e a página de decisão
+- **THEN** `<title>`, breadcrumbs e o link do breadcrumb «Caso …» exibem o nº de ocorrência (`uid <8 chars>` quando o nº está ausente) e o uid completo não aparece em texto visível — apenas nos hrefs
+
 ### Requirement: Card de prior-case com motivo real
 
 O detalhe do caso SHALL exibir, por procedimento declarado com caso prévio
 encontrado (número de ocorrência ou fallback nome+nascimento), um card com
-data, desfecho e motivo real da decisão prévia. O lookup do presenter é
-somente-leitura (eventos de lookup permanecem os do pipeline) e respeita as
-mesmas janelas configuráveis do pipeline.
+data, desfecho e motivo real da decisão prévia. O badge do caso prévio SHALL
+exibir a **referência desambiguada** do prévio — `nº · <8 primeiros chars do
+uid>` (ou `uid <8 chars>` quando sem nº) — e não o uid completo. O lookup do
+presenter é somente-leitura (eventos de lookup permanecem os do pipeline) e
+respeita as mesmas janelas configuráveis do pipeline.
 
 #### Scenario: Card de negativa prévia por número de ocorrência
 
@@ -183,6 +193,12 @@ mesmas janelas configuráveis do pipeline.
 - **GIVEN** um caso cujo procedimento tem caso prévio negado há 10 dias, número de ocorrência diferente, mesmo nome normalizado e nascimento
 - **WHEN** o médico abre o detalhe
 - **THEN** o card exibe o prévio com desfecho e motivo real, marcando a origem do match
+
+#### Scenario: Badge do prior-case usa referência desambiguada
+
+- **GIVEN** um caso cujo procedimento tem caso prévio com nº de ocorrência N (mesmo nº do caso corrente, originado de reenvio corrigido)
+- **WHEN** o médico abre o detalhe
+- **THEN** o badge do prior-case exibe `N · <8 primeiros chars do uid do prévio>` — o uid completo do prévio não aparece em texto visível
 
 ### Requirement: Decisão por procedimento com motivo obrigatório em negativas
 

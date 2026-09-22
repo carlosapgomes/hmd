@@ -2,7 +2,7 @@
 
 ## Preflight
 
-- [ ] Confirmar árvore limpa na branch de trabalho, registrar `BASE_REF` e rodar a suíte completa uma vez (`uv run pytest -q`) para baseline
+- [x] Confirmar árvore limpa na branch de trabalho, registrar `BASE_REF` e rodar a suíte completa uma vez (`uv run pytest -q`) para baseline
 
 ## Implementação
 
@@ -19,4 +19,4 @@
 
 ## Pós-gate (parent)
 
-- [ ] Atualizar `PROJECT_CONTEXT.md` com o estado do change
+- [x] Atualizar `PROJECT_CONTEXT.md` com o estado do change

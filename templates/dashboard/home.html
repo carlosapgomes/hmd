@@ -14,7 +14,7 @@
      todos os estados, e o botão [Detalhes] (o encerramento administrativo vive
      no detalhe). -->
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-  <h1 class="h4 mb-0">Painel gerencial</h1>
+  <h1 class="page-title">Painel gerencial</h1>
   <nav class="btn-group" aria-label="Período das métricas">
     {% for option in period_options %}
     <a href="?period={{ option.value }}{% if list_qs %}&{{ list_qs }}{% endif %}"

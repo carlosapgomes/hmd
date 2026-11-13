@@ -1,0 +1,12 @@
+{
+  "name": "hmd-browser-verification",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "drive": "node drive.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.64.0"
+  }
+}

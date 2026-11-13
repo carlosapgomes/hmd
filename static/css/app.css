@@ -1,42 +1,62 @@
 /*
- * HMD — Hemodinâmica — tema hospitalar (slice 004, R3/D9).
- * Paleta HMD adaptada do tema hospitalar do ats-web (fonte de padrões
- * somente-leitura) com identidade própria; Bootstrap 5.3 via CDN, sem
- * assets adicionais.
+ * SAR – HMD — tema hospitalar (ui-parity-foundation, slice 003).
+ * Adaptado do molde hospitalar do ats-web (somente-leitura) para as rotas
+ * e o vocabulário do HMD (D3: adaptação, não cópia byte a byte), com a
+ * primária reservada do HMD preservada (D1: #0d4a8a) e a secundária atual
+ * mantida para churn zero no header. Tokens com os nomes --hospital-* (D2).
+ * Bootstrap 5.3 via CDN, sem assets adicionais.
  */
 
 :root {
-  --hmd-primary: #0d4a8a;
-  --hmd-primary-dark: #0a3a6d;
-  --hmd-secondary: #16647a;
-  --hmd-accent: #2f8f9d;
-  --hmd-accent-light: #d7eef4;
-  --hmd-bg: #f4f6f8;
-  --hmd-surface: #ffffff;
-  --hmd-border: #c9d6e0;
-  --hmd-control-border: #78909c;
-  --hmd-text: #1c2733;
-  --hmd-muted: #52697a;
+  --hospital-primary: #0d4a8a;
+  --hospital-primary-dark: #0a3a6d;
+  --hospital-secondary: #16647a;
+  --hospital-accent: #2f8f9d;
+  --hospital-accent-light: #d4eef3;
+  --hospital-bg: #f3f8fb;
+  --hospital-surface: #ffffff;
+  --hospital-border: #c7d8e2;
+  --hospital-control-border: #78909c;
+  --hospital-text: #1f2f3a;
+  --hospital-muted: #4c6677;
+  --hospital-success: #1b7a4a;
+  --hospital-warning: #b05b0c;
+  --hospital-danger: #b53535;
+  --hospital-info: #2f8f9d;
 }
 
 /* ---------- Base ---------- */
 
+body {
+  font-family: "Source Sans 3", system-ui, "Segoe UI", sans-serif;
+}
+
 body.hospital-shell {
   margin: 0;
   min-height: 100vh;
-  color: var(--hmd-text);
-  font-family: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--hospital-text);
+  font-family: "Source Sans 3", system-ui, "Segoe UI", sans-serif;
   background:
-    radial-gradient(circle at top right, rgba(47, 143, 157, 0.10), transparent 46%),
+    radial-gradient(circle at top right, rgba(47, 143, 157, 0.1), transparent 46%),
     radial-gradient(circle at top left, rgba(13, 74, 138, 0.08), transparent 40%),
-    var(--hmd-bg);
+    var(--hospital-bg);
+}
+
+body.hospital-shell h1,
+body.hospital-shell h2,
+body.hospital-shell h3,
+body.hospital-shell h4,
+body.hospital-shell h5,
+body.hospital-shell h6 {
+  font-family: "Merriweather Sans", "Source Sans 3", sans-serif;
+  letter-spacing: 0.01em;
 }
 
 /* ---------- Header ---------- */
 
 .app-header {
   border-bottom: 1px solid rgba(201, 214, 224, 0.7);
-  background: linear-gradient(125deg, var(--hmd-primary), var(--hmd-secondary));
+  background: linear-gradient(125deg, var(--hospital-primary), var(--hospital-secondary));
 }
 
 .app-header.navbar {
@@ -72,7 +92,7 @@ body.hospital-shell {
   min-width: 2.2rem;
   border-radius: 50%;
   background: #ffffff;
-  color: var(--hmd-primary);
+  color: var(--hospital-primary);
   font-size: 0.8rem;
   font-weight: 700;
   text-decoration: none;
@@ -82,20 +102,31 @@ body.hospital-shell {
 .avatar-circle:hover,
 .avatar-circle:focus {
   background: rgba(255, 255, 255, 0.92);
-  color: var(--hmd-primary);
+  color: var(--hospital-primary);
   text-decoration: none;
+}
+
+/* ---------- Título de página ---------- */
+
+.page-title {
+  margin: 0 0 1rem;
+  font-family: "Merriweather Sans", "Source Sans 3", sans-serif;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--hospital-primary);
+  line-height: 1.2;
 }
 
 /* ---------- Shell ---------- */
 
 .app-shell {
-  animation: shell-fade-in 180ms ease-out;
+  animation: shell-fade-in 220ms ease-out;
 }
 
 @keyframes shell-fade-in {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -106,101 +137,166 @@ body.hospital-shell {
 /* ---------- Cards ---------- */
 
 .hospital-shell .card {
-  border: 1px solid var(--hmd-border);
-  border-radius: 0.8rem;
-  background-color: var(--hmd-surface);
-  box-shadow: 0 8px 18px rgba(10, 31, 46, 0.08);
+  border: 1px solid var(--hospital-border);
+  border-radius: 0.9rem;
+  background-color: var(--hospital-surface);
+  box-shadow: 0 10px 22px rgba(10, 31, 46, 0.08);
+}
+
+.hospital-shell .card h2,
+.hospital-shell .card h3 {
+  color: var(--hospital-primary);
 }
 
 .app-card-header {
-  border-bottom: 1px solid var(--hmd-border);
-  background-color: var(--hmd-accent-light);
-  color: var(--hmd-primary-dark);
+  border-bottom: 1px solid var(--hospital-border);
+  background-color: var(--hospital-accent-light);
+  color: var(--hospital-primary-dark);
 }
 
-/* ---------- Botões ---------- */
+/* ---------- Botões e alvos de toque (>=44px) ---------- */
+
+.btn {
+  min-height: 44px;
+}
+
+.btn-sm {
+  min-height: 44px;
+}
+
+.btn-lg {
+  min-height: 48px;
+}
 
 .btn-hospital {
-  border-color: var(--hmd-primary);
-  background-color: var(--hmd-primary);
+  border-color: var(--hospital-primary);
+  background-color: var(--hospital-primary);
   color: #ffffff;
 }
 
 .btn-hospital:hover,
 .btn-hospital:focus {
-  border-color: var(--hmd-primary-dark);
-  background-color: var(--hmd-primary-dark);
+  border-color: var(--hospital-primary-dark);
+  background-color: var(--hospital-primary-dark);
   color: #ffffff;
 }
 
 .btn-hospital-outline {
-  border-color: var(--hmd-primary);
-  color: var(--hmd-primary);
+  border-color: var(--hospital-primary);
+  color: var(--hospital-primary);
 }
 
 .btn-hospital-outline:hover,
 .btn-hospital-outline:focus {
-  background-color: var(--hmd-primary);
+  background-color: var(--hospital-primary);
   color: #ffffff;
+}
+
+/* ---------- Badges e status ---------- */
+
+.badge-hospital-primary {
+  background-color: var(--hospital-primary);
+  color: #ffffff;
+}
+
+.badge-hospital-accent {
+  background-color: var(--hospital-accent);
+  color: #ffffff;
+}
+
+.badge-wrap {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+  line-height: 1.25;
+}
+
+.status-badge {
+  font-size: 0.82rem;
+  padding: 0.3em 0.65em;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.status-pending {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+.status-progress {
+  background-color: #cce5ff;
+  color: #004085;
+}
+
+.status-accepted {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.status-denied {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.status-done {
+  background-color: #d4edda;
+  color: #155724;
 }
 
 /* ---------- Formulários ---------- */
 
 .hospital-shell .form-label {
   margin-bottom: 0.3rem;
-  color: var(--hmd-muted);
+  color: var(--hospital-muted);
   font-weight: 600;
 }
 
-.hospital-shell .form-control {
-  border-color: var(--hmd-border);
+.hospital-shell .form-control,
+.hospital-shell .form-select {
+  border-color: var(--hospital-border);
 }
 
-.hospital-shell .form-control:focus {
-  border-color: var(--hmd-accent);
+.hospital-shell .form-control:focus,
+.hospital-shell .form-select:focus {
+  border-color: var(--hospital-accent);
   box-shadow: 0 0 0 0.2rem rgba(47, 143, 157, 0.25);
 }
 
-/* Radios precisam de contorno de repouso mais forte que a borda genérica dos
-   campos: este cinza-azulado atinge 3:1 de contraste não-texto sobre a
-   superfície branca (WCAG 1.4.11). Espelho do fix validado no ATS v0.8.2. */
+/* Radios: contorno de repouso com contraste não-texto >= 3:1 (WCAG 1.4.11). */
 .hospital-shell .form-check-input[type="radio"] {
-  border: 2px solid var(--hmd-control-border);
+  border: 2px solid var(--hospital-control-border);
 }
 
 .hospital-shell .form-check-input:checked {
-  background-color: var(--hmd-primary);
-  border-color: var(--hmd-primary);
+  background-color: var(--hospital-primary);
+  border-color: var(--hospital-primary);
 }
 
 .hospital-shell .form-check-input:focus {
-  border-color: var(--hmd-accent);
+  border-color: var(--hospital-accent);
   box-shadow: 0 0 0 0.2rem rgba(47, 143, 157, 0.25);
 }
 
-/* ---------- Login ---------- */
+/* ---------- Login / home / perfil ---------- */
 
 .login-title {
-  color: var(--hmd-primary);
+  color: var(--hospital-primary);
   font-size: 1.35rem;
   font-weight: 700;
   line-height: 1.3;
 }
 
-/* ---------- Home ---------- */
-
 .badge-role {
-  background-color: var(--hmd-primary);
+  background-color: var(--hospital-primary);
   color: #ffffff;
   font-size: 0.85rem;
   font-weight: 600;
   padding: 0.45em 0.85em;
 }
 
-/* ---------- Perfil ---------- */
-
 .profile-dl dt {
-  color: var(--hmd-muted);
+  color: var(--hospital-muted);
   font-weight: 600;
 }
 
@@ -208,20 +304,85 @@ body.hospital-shell {
   margin-bottom: 0.4rem;
 }
 
-/* ---------- Responsivo mínimo ---------- */
+/* ---------- Cards de caso / resumo / tempo de espera ---------- */
+/* Seletores presentes para o change 2 (filas); não aplicados nesta fundação. */
+
+.case-card {
+  transition: box-shadow 0.2s;
+}
+
+.case-card:hover {
+  box-shadow: 0 12px 24px rgba(10, 31, 46, 0.12);
+}
+
+.case-card .patient-name {
+  font-size: 1.1rem;
+  color: var(--hospital-primary);
+}
+
+.case-card .case-meta {
+  font-size: 0.82rem;
+  color: var(--hospital-muted);
+}
+
+.waiting-time {
+  font-size: 0.8rem;
+  color: var(--hospital-warning);
+  font-weight: 600;
+}
+
+.waiting-time.urgent {
+  color: var(--hospital-danger);
+}
+
+.summary-box {
+  background: rgba(47, 143, 157, 0.06);
+  border-left: 4px solid var(--hospital-accent);
+  border-radius: 0 0.5rem 0.5rem 0;
+  padding: 1rem;
+}
+
+.summary-box .summary-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--hospital-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.summary-box .summary-value {
+  font-size: 0.95rem;
+  color: var(--hospital-text);
+}
+
+/* Intake: grupo de anexos desabilitado pelo JS quando o envio tem >1 relatório. */
+.intake-attachments-disabled {
+  opacity: 0.55;
+}
+
+/* ---------- Responsivo ---------- */
+
+@media (max-width: 767.98px) {
+  .page-title {
+    font-size: 1.1rem;
+  }
+
+  .hospital-shell .card {
+    padding: 0.75rem !important;
+    border-radius: 0.6rem;
+  }
+
+  .table-responsive {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table.table-sm {
+    font-size: 0.82rem;
+  }
+}
 
 @media (max-width: 575.98px) {
   .app-header__title {
     font-size: 0.98rem;
   }
-
-  .app-session-meta {
-    display: none;
-  }
-}
-
-/* Intake (intake-batch-semantics, slice 002): grupo de anexos desabilitado
-   pelo JS quando o envio tem >1 relatório — anexos só com exatamente 1. */
-.intake-attachments-disabled {
-  opacity: 0.55;
 }

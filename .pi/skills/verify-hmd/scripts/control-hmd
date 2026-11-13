@@ -1,0 +1,356 @@
+#!/usr/bin/env bash
+# control-hmd — harness verify-hmd (ui-parity-foundation, slice 002/D7).
+# launch | doctor --run <dir> | cleanup --run <dir> | drive --run <dir>
+# Shell + Node apenas (zero Python fora do seed_verify). Nunca toca
+# banco de dev/prod: só cria/remove hmd_verify_* em loopback.
+set -u
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+cd "$ROOT"
+RUN_ROOT="$ROOT/tmp/verification"
+PG_HOST="${VERIFY_DB_HOST:-127.0.0.1}"
+PG_PORT="${VERIFY_DB_PORT:-${TEST_DB_PORT:-55435}}"
+PG_USER="${VERIFY_DB_USER:-hmd}"
+PG_PASSWORD="${VERIFY_DB_PASSWORD:-hmd_dev}"
+
+die() { echo "control-hmd: $*" >&2; exit "${2:-1}"; }
+
+# Validação de endpoint/banco ANTES de qualquer conexão psql/dropdb/createdb
+# (P1): host só loopback, porta numérica, nome hmd_verify_* sem "prod".
+validate_pg_endpoint() { # $1 host $2 port
+  case "$1" in 127.0.0.1|localhost|::1) ;; *) die "VERIFY_DB_HOST recusado (só loopback): $1" 2 ;; esac
+  case "$2" in ''|*[!0-9]*) die "porta de PostgreSQL inválida: $2" 2 ;; esac
+}
+validate_db_name() { # $1 name
+  [[ "$1" =~ ^hmd_verify_[a-z0-9_]+$ ]] \
+    || die "nome de banco recusado (padrão hmd_verify_*): $1" 2
+  case "$1" in *prod*) die "nome de banco com 'prod' recusado: $1" 2 ;; esac
+}
+
+# Identidade da árvore servida: HEAD + hash do estado dirty (status+diff
+# rastreados + CONTEÚDO sha256 das fontes untracked relevantes de
+# verificação/harness). A edição só-conteúdo de um arquivo untracked
+# (verify.py/backends_verify.py/seed_verify.py/harness) mantém o status
+# "??" mas muda o hash — o doctor recalcula e compara, então editar o
+# checkout após o launch recusa o drive, em vez de dirigir uma árvore
+# diferente da atestada. O drive.mjs repete exatamente este algoritmo.
+build_identity() {
+  local head dirty
+  head="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  dirty="$(
+    {
+      git status --porcelain
+      git diff
+      git diff --cached
+      git ls-files --others --exclude-standard -- \
+        '.pi/skills/verify-hmd' \
+        'config/settings/verify.py' \
+        'apps/accounts/backends_verify.py' \
+        'apps/accounts/management/commands/seed_verify.py' \
+        'apps/accounts/tests/test_verify_guards.py' \
+        | LC_ALL=C sort | while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            printf '%s %s\n' "$f" "$(sha256sum -- "$f" | cut -d' ' -f1)"
+          done
+    } | sha256sum | cut -c1-12
+  )"
+  echo "${head}-${dirty}"
+}
+
+listener_inode() { # $1 port -> inode do socket LISTEN
+  awk -v p="$(printf '%04X' "$1")" '$4=="0A" && $2 ~ (":" p "$") {print $10; exit}' /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+pid_owns_listener() { # $1 pid $2 port -> 0 se o PID detém o socket de escuta
+  local inode target
+  inode="$(listener_inode "$2")"
+  [ -n "$inode" ] || return 1
+  for target in /proc/$1/fd/*; do
+    [ "$(readlink "$target" 2>/dev/null)" = "socket:[$inode]" ] && return 0
+  done
+  return 1
+}
+
+manifest_get() { # manifest_get <file> <key> (parse JSON via node)
+  node -e 'const fs=require("fs");const v=JSON.parse(fs.readFileSync(process.argv[1],"utf8"))[process.argv[2]];if(v!==undefined)console.log(v);' "$1" "$2" 2>/dev/null
+}
+
+process_ticks() { # process_ticks <pid> -> starttime ou vazio
+  local stat rest
+  stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 0
+  rest="${stat##*) }"
+  # shellcheck disable=SC2086
+  set -- $rest
+  echo "${20:-}"
+}
+
+owned() { # owned <run> -> imprime manifest; valida posse
+  local run="$1"
+  [ -d "$run" ] || die "run não encontrado: $run" 2
+  local resolved
+  resolved="$(cd "$run" && pwd)"
+  case "$resolved" in "$RUN_ROOT"/*) ;; *) die "diretório fora de tmp/verification: $resolved" 2 ;; esac
+  basename "$resolved" | grep -Eq '^hmd-verify-[a-f0-9]{16}$' \
+    || die "nome de run inválido: $(basename "$resolved")" 2
+  [ -f "$resolved/manifest.json" ] || die "manifest ausente em $resolved" 2
+  local run_id db
+  run_id="$(manifest_get "$resolved/manifest.json" runId)"
+  db="$(manifest_get "$resolved/manifest.json" database)"
+  [ "$run_id" = "$(basename "$resolved")" ] || die "runId diverge do diretório" 2
+  case "$db" in hmd_verify_*) ;; *) die "banco fora do padrão hmd_verify_*: $db" 2 ;; esac
+  echo "$resolved"
+}
+
+require_run() { # parse --run
+  [ "${1:-}" = "--run" ] && [ -n "${2:-}" ] || die "uso: control-hmd $CMD --run <dir>" 2
+  owned "$2"
+}
+
+free_port() {
+  local p
+  for p in $(seq 18765 18850); do
+    if ! (echo > "/dev/tcp/127.0.0.1/$p") 2>/dev/null; then echo "$p"; return 0; fi
+  done
+  return 1
+}
+
+export_verify_env() { # $1 db_name $2 port
+  export DJANGO_SETTINGS_MODULE=config.settings.verify
+  export VERIFY_DB_HOST="$PG_HOST" VERIFY_DB_PORT="$PG_PORT"
+  export VERIFY_DB_NAME="$1" VERIFY_DB_USER="$PG_USER" VERIFY_DB_PASSWORD="$PG_PASSWORD"
+}
+
+launch() {
+  # Validação antes de qualquer conexão: nada de psql contra host não
+  # validado, e nenhum drop antes de criar — colisão de nome falha fechado
+  # em vez de apagar um banco que esta run não criou.
+  validate_pg_endpoint "$PG_HOST" "$PG_PORT"
+  local hex run_id run_dir db_name port py build_id marker static_root
+  hex="$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  run_id="hmd-verify-$hex"
+  run_dir="$RUN_ROOT/$run_id"
+  db_name="hmd_verify_${hex:0:12}"
+  validate_db_name "$db_name"
+  build_id="$(build_identity)"
+  marker="hmd-verify-$hex"
+  # STATIC_ROOT por-run (nunca o staticfiles/ compartilhado do checkout):
+  # cada instância coleta e serve do seu próprio diretório sob a run.
+  static_root="$run_dir/staticfiles"
+  mkdir -p "$RUN_ROOT"
+  mkdir -p "$run_dir/artifacts" "$static_root"
+  port="$(free_port)" || die "nenhuma porta livre em 18765-18850" 2
+
+  PGPASSWORD="$PG_PASSWORD" psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d postgres \
+    -X -Atc "SELECT 1" >/dev/null 2>&1 \
+    || die "PostgreSQL inalcançável em $PG_HOST:$PG_PORT (suba o compose de teste)" 2
+  PGPASSWORD="$PG_PASSWORD" createdb -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" "$db_name" \
+    || die "createdb falhou (colisão de nome ou PostgreSQL indisponível) — recuso dropar um banco que esta run não criou" 2
+
+  # Manifest esqueleto ANTES de migrate/seed: se o launch falhar no meio,
+  # o cleanup do próprio launch ainda dropa ESTE banco (nunca outro).
+  cat >"$run_dir/manifest.json" <<EOF
+{
+  "runId": "$run_id",
+  "pid": 0,
+  "startTicks": "",
+  "bootId": "$(cat /proc/sys/kernel/random/boot_id)",
+  "port": $port,
+  "url": "http://127.0.0.1:$port",
+  "database": "$db_name",
+  "dbHost": "$PG_HOST",
+  "dbPort": "$PG_PORT",
+  "build": "$build_id",
+  "marker": "$marker",
+  "staticRoot": "$static_root",
+  "settings": "config.settings.verify",
+  "seedPassword": "hmd-verificacao-ficticia-2026",
+  "users": ["verify-nir", "verify-doctor", "verify-scheduler", "verify-manager", "verify-admin"]
+}
+EOF
+
+  export_verify_env "$db_name" "$port"
+  export HMD_VERIFY_MARKER="$marker" HMD_VERIFY_BUILD="$build_id"
+  export HMD_VERIFY_STATIC_ROOT="$static_root"
+  py="$ROOT/.venv/bin/python"
+  [ -x "$py" ] || py="uv run python"
+  # Estáticos reais para o WhiteNoise servir com DEBUG=False (mesmos assets
+  # do app); sem collectstatic, /static/* daria 404 no drive.
+  # shellcheck disable=SC2086
+  $py manage.py collectstatic --noinput --settings=config.settings.verify >>"$run_dir/artifacts/collectstatic.log" 2>&1 \
+    || { echo "collectstatic falhou (ver artifacts/collectstatic.log)" >&2; cleanup_run "$run_dir" >/dev/null 2>&1; exit 1; }
+  # shellcheck disable=SC2086
+  $py manage.py migrate --noinput --settings=config.settings.verify >>"$run_dir/artifacts/migrate.log" 2>&1 \
+    || { echo "migrate falhou (ver artifacts/migrate.log)" >&2; cleanup_run "$run_dir" >/dev/null 2>&1; exit 1; }
+  # shellcheck disable=SC2086
+  $py manage.py seed_verify --settings=config.settings.verify >>"$run_dir/artifacts/seed.log" 2>&1 \
+    || { echo "seed_verify falhou (ver artifacts/seed.log)" >&2; cleanup_run "$run_dir" >/dev/null 2>&1; exit 1; }
+
+  # shellcheck disable=SC2086
+  $py manage.py runserver "127.0.0.1:$port" --noreload --settings=config.settings.verify >>"$run_dir/artifacts/server.log" 2>&1 &
+  local pid=$!
+  sleep 1
+  kill -0 "$pid" 2>/dev/null || { echo "servidor morreu no arranque (ver artifacts/server.log)" >&2; cleanup_run "$run_dir" >/dev/null 2>&1; exit 1; }
+
+  local boot_id ticks ready_attempt
+  boot_id="$(cat /proc/sys/kernel/random/boot_id)"
+  ticks="$(process_ticks "$pid")"
+  cat >"$run_dir/manifest.json" <<EOF
+{
+  "runId": "$run_id",
+  "pid": $pid,
+  "startTicks": "$ticks",
+  "bootId": "$boot_id",
+  "port": $port,
+  "url": "http://127.0.0.1:$port",
+  "database": "$db_name",
+  "dbHost": "$PG_HOST",
+  "dbPort": "$PG_PORT",
+  "build": "$build_id",
+  "marker": "$marker",
+  "staticRoot": "$static_root",
+  "settings": "config.settings.verify",
+  "seedPassword": "hmd-verificacao-ficticia-2026",
+  "users": ["verify-nir", "verify-doctor", "verify-scheduler", "verify-manager", "verify-admin"]
+}
+EOF
+  ready_attempt=0
+  until curl -sf "http://127.0.0.1:$port/healthz/" >/dev/null 2>&1; do
+    kill -0 "$pid" 2>/dev/null || { echo "servidor caiu antes de ficar pronto" >&2; cleanup_run "$run_dir" >/dev/null 2>&1; exit 1; }
+    ready_attempt=$((ready_attempt + 1))
+    [ "$ready_attempt" -gt 60 ] && { echo "timeout aguardando /healthz/" >&2; cleanup_run "$run_dir" >/dev/null 2>&1; exit 2; }
+    sleep 0.5
+  done
+  echo '{"ready": true}' >"$run_dir/ready.json"
+  echo "$run_dir"
+}
+
+doctor() {
+  local run="$1"
+  local pid ticks boot_id build port url marker static_root
+  pid="$(manifest_get "$run/manifest.json" pid)"
+  ticks="$(manifest_get "$run/manifest.json" startTicks)"
+  boot_id="$(manifest_get "$run/manifest.json" bootId)"
+  build="$(manifest_get "$run/manifest.json" build)"
+  port="$(manifest_get "$run/manifest.json" port)"
+  url="$(manifest_get "$run/manifest.json" url)"
+  marker="$(manifest_get "$run/manifest.json" marker)"
+  static_root="$(manifest_get "$run/manifest.json" staticRoot)"
+  # A origem verificada é EXATAMENTE a URL que o driver usa (manifest.url):
+  # qualquer divergência entre url e porta do manifest recusa o drive.
+  [ "$url" = "http://127.0.0.1:$port" ] \
+    || die "origem divergente: manifest.url=$url não é http://127.0.0.1:$port — recuso dirigir" 2
+  [[ "$marker" =~ ^hmd-verify-[a-f0-9]{16}$ ]] \
+    || die "marcador de run ausente/inválido no manifest — recuso dirigir" 2
+  [ "$(cat /proc/sys/kernel/random/boot_id)" = "$boot_id" ] \
+    || die "instância de outro boot — recuso dirigir" 2
+  kill -0 "$pid" 2>/dev/null || die "PID $pid não está vivo — recuso dirigir" 2
+  [ "$(process_ticks "$pid")" = "$ticks" ] \
+    || die "PID $pid foi reusado — recuso dirigir" 2
+  tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q "config.settings.verify" \
+    || die "processo $pid não é config.settings.verify — recuso dirigir" 2
+  tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q "127.0.0.1:$port" \
+    || die "processo $pid não escuta a porta do manifest — recuso dirigir" 2
+  # Identidade por-run amarrada ao PID: marcador e build no ambiente do
+  # processo registrado no launch. Um processo alheio (mesma cmdline
+  # forjada, PID reusado) não carrega esses valores.
+  tr '\0' '\n' <"/proc/$pid/environ" | grep -Fxq "HMD_VERIFY_MARKER=$marker" \
+    || die "processo $pid não carrega o marcador desta run — recuso dirigir" 2
+  tr '\0' '\n' <"/proc/$pid/environ" | grep -Fxq "HMD_VERIFY_BUILD=$build" \
+    || die "processo $pid não carrega o build registrado — recuso dirigir" 2
+  # STATIC_ROOT por-run: presente, sob o diretório da run (isolamento) e
+  # no ambiente do processo servidor (serve deste root, não do checkout).
+  [ -n "$static_root" ] \
+    || die "staticRoot ausente no manifest — recuso dirigir" 2
+  case "$static_root" in "$run"/*) ;; *) die "staticRoot fora do diretório da run: $static_root — recuso dirigir" 2 ;; esac
+  tr '\0' '\n' <"/proc/$pid/environ" | grep -Fxq "HMD_VERIFY_STATIC_ROOT=$static_root" \
+    || die "processo $pid não serve do static root desta run — recuso dirigir" 2
+  # Posse do socket: o inode do LISTEN na porta precisa pertencer ao PID
+  # (cmdline casando não prova posse do socket).
+  pid_owns_listener "$pid" "$port" \
+    || die "PID $pid não detém o socket de escuta em 127.0.0.1:$port (ouvinte alheio) — recuso dirigir" 2
+  [ "$(build_identity)" = "$build" ] \
+    || die "build (HEAD+dirty) divergiu do manifest — recuso dirigir" 2
+  curl -sf "$url/healthz/" | grep -q '"status": "ok"' \
+    || die "/healthz/ não atesta a instância" 2
+  curl -sf "$url/login/" | grep -q 'Entrar' \
+    || die "form de login não responde" 2
+  echo "doctor OK: $run (pid=$pid port=$port build=$build)"
+}
+
+write_cleanup_record() { # $1 run $2 db_name $3 dropped(true|false) $4 extra_json
+  cat >"$1/cleanup.json" <<EOF
+{
+  "runId": "$(manifest_get "$1/manifest.json" runId)",
+  "stopped": true,
+  "databaseDropped": $3,
+  "database": "$2",
+  "evidencePreserved": true$4
+}
+EOF
+}
+
+cleanup_run() {
+  local run="$1"
+  local pid ticks boot_id
+  pid="$(manifest_get "$run/manifest.json" pid)"
+  ticks="$(manifest_get "$run/manifest.json" startTicks)"
+  boot_id="$(manifest_get "$run/manifest.json" bootId)"
+  local db_name db_host db_port
+  db_name="$(manifest_get "$run/manifest.json" database)"
+  # Endpoint REGISTRADO da run (manifest), nunca o ambiente atual: uma env
+  # mudada não pode dropar/ignorar o banco errado.
+  db_host="$(manifest_get "$run/manifest.json" dbHost)"
+  db_port="$(manifest_get "$run/manifest.json" dbPort)"
+  validate_pg_endpoint "$db_host" "$db_port"
+  validate_db_name "$db_name"
+  if [ "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" = "$boot_id" ] \
+     && [ -n "$pid" ] && [ "$pid" != "0" ] && kill -0 "$pid" 2>/dev/null; then
+    [ "$(process_ticks "$pid")" = "$ticks" ] \
+      || die "PID $pid foi reusado — recuso terminar" 2
+    kill "$pid" 2>/dev/null
+    local i=0
+    while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 30 ]; do sleep 0.5; i=$((i + 1)); done
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  # Falha de drop propaga (sem || true): cleanup.json só atesta remoção
+  # depois de confirmado em pg_database. Falha deixa registro honesto
+  # (databaseDropped=false) e exit != 0, para retry com o mesmo manifest.
+  if ! PGPASSWORD="$PG_PASSWORD" dropdb -h "$db_host" -p "$db_port" -U "$PG_USER" --if-exists "$db_name"; then
+    write_cleanup_record "$run" "$db_name" false $',\n  "error": "dropdb falhou em '"$db_host:$db_port"'"'
+    die "dropdb falhou para $db_name em $db_host:$db_port — cleanup incompleto (databaseDropped=false); corrija e repita o cleanup" 1
+  fi
+  local remaining
+  if ! remaining="$(PGPASSWORD="$PG_PASSWORD" psql -h "$db_host" -p "$db_port" -U "$PG_USER" -d postgres -X -Atc "SELECT count(*) FROM pg_database WHERE datname='$db_name'" 2>/dev/null)"; then
+    write_cleanup_record "$run" "$db_name" false $',\n  "error": "não foi possível confirmar a remoção em '"$db_host:$db_port"'"'
+    die "não confirmei a remoção de $db_name em $db_host:$db_port — cleanup incompleto" 1
+  fi
+  if [ "$remaining" != "0" ]; then
+    write_cleanup_record "$run" "$db_name" false $',\n  "error": "'"$db_name"' ainda existe após dropdb"'
+    die "banco $db_name ainda existe após dropdb — cleanup incompleto (databaseDropped=false)" 1
+  fi
+  write_cleanup_record "$run" "$db_name" true ""
+  echo "cleanup OK: $run"
+}
+
+CMD="${1:-}"
+case "$CMD" in
+  launch) launch ;;
+  doctor) run="$(require_run "${2:-}" "${3:-}")" || exit 2; doctor "$run" ;;
+  cleanup) run="$(require_run "${2:-}" "${3:-}")" || exit 2; cleanup_run "$run" ;;
+  drive)
+    run="$(require_run "${2:-}" "${3:-}")" || exit 2
+    # Todo drive passa pelo doctor (sem bypass) e pelo Chromium pinado do
+    # Playwright — nunca Chrome do sistema, nunca motor substituto: se o
+    # download falhar, BLOCKED com a evidência em artifacts/, exit 2.
+    doctor "$run" >/dev/null || exit 2
+    PW_DIR="$ROOT/.pi/skills/verify-hmd/scripts/browser"
+    mkdir -p "$run/artifacts"
+    [ -x "$PW_DIR/node_modules/.bin/playwright" ] \
+      || { echo "BLOCKED: Playwright pinado não instalado em $PW_DIR/node_modules (rode o npm ci do SKILL.md)" >&2; exit 2; }
+    if ! "$PW_DIR/node_modules/.bin/playwright" install chromium >"$run/artifacts/playwright-install.log" 2>&1; then
+      echo "BLOCKED: download do Chromium pinado do Playwright falhou (ver artifacts/playwright-install.log) — nenhum motor substituto foi usado" >&2
+      exit 2
+    fi
+    node "$PW_DIR/drive.mjs" --run "$run"
+    ;;
+  *) echo "uso: control-hmd {launch|doctor --run <dir>|drive --run <dir>|cleanup --run <dir>}" >&2; exit 2 ;;
+esac

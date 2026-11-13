@@ -4,9 +4,9 @@ Radio buttons não selecionados herdam a borda clara do Bootstrap e quase
 desaparecem sobre superfícies brancas (caso típico: seleção de tipo de
 procedimento no upload do NIR). O tema dá a eles uma borda de repouso com
 contraste não-texto >= 3:1 (WCAG 1.4.11), e os estados :checked/:focus
-seguem os tokens HMD — mesmo desenho do fix validado no ATS Web
+seguem os tokens hospitalares — mesmo desenho do fix validado no ATS Web
 (``fix(ui): improve global radio button contrast``), adaptado aos nomes
-``--hmd-*``.
+``--hospital-*``.
 
 O CSS é validado no disco (mesmo padrão do ``test_pwa.py``): sem runner de
 browser, as guardas verificam os tokens e regras de forma estrutural e o
@@ -42,9 +42,9 @@ def _relative_luminance(color: str) -> float:
 
 
 def test_control_border_token_defined() -> None:
-    """Token --hmd-control-border existe no :root com cor hex."""
-    token = re.search(r"--hmd-control-border:\s*(#[0-9a-fA-F]{6})", _css())
-    assert token is not None, "app.css deve definir --hmd-control-border (hex)"
+    """Token --hospital-control-border existe no :root com cor hex."""
+    token = re.search(r"--hospital-control-border:\s*(#[0-9a-fA-F]{6})", _css())
+    assert token is not None, "app.css deve definir --hospital-control-border (hex)"
 
 
 def test_radio_resting_border_rule_exists() -> None:
@@ -54,15 +54,15 @@ def test_radio_resting_border_rule_exists() -> None:
         "app.css deve ter regra global de repouso para radio inputs "
         '(seletor .hospital-shell .form-check-input[type="radio"])'
     )
-    assert "border: 2px solid var(--hmd-control-border)" in body, (
-        "radios devem usar borda 2px com --hmd-control-border"
+    assert "border: 2px solid var(--hospital-control-border)" in body, (
+        "radios devem usar borda 2px com --hospital-control-border"
     )
 
 
 def test_radio_resting_border_has_non_text_contrast() -> None:
     """A borda de repouso atinge 3:1 de contraste não-texto sobre branco."""
-    token = re.search(r"--hmd-control-border:\s*(#[0-9a-fA-F]{6})", _css())
-    assert token is not None, "app.css deve definir --hmd-control-border"
+    token = re.search(r"--hospital-control-border:\s*(#[0-9a-fA-F]{6})", _css())
+    assert token is not None, "app.css deve definir --hospital-control-border"
     border_luminance = _relative_luminance(token.group(1))
     white_luminance = _relative_luminance("#ffffff")
     contrast = (white_luminance + 0.05) / (border_luminance + 0.05)
@@ -70,16 +70,16 @@ def test_radio_resting_border_has_non_text_contrast() -> None:
 
 
 def test_radio_checked_uses_hmd_primary() -> None:
-    """:checked usa os tokens HMD (não o azul default do Bootstrap)."""
+    """:checked usa os tokens hospitalares (não o azul default do Bootstrap)."""
     body = _rule_body(_css(), ".hospital-shell .form-check-input:checked")
     assert body is not None, "app.css deve estilizar :checked dos checks/radios"
-    assert "background-color: var(--hmd-primary)" in body
-    assert "border-color: var(--hmd-primary)" in body
+    assert "background-color: var(--hospital-primary)" in body
+    assert "border-color: var(--hospital-primary)" in body
 
 
 def test_radio_focus_uses_hmd_accent() -> None:
     """:focus acompanha o accent hospitalar (paridade com form-control)."""
     body = _rule_body(_css(), ".hospital-shell .form-check-input:focus")
     assert body is not None, "app.css deve estilizar :focus dos checks/radios"
-    assert "border-color: var(--hmd-accent)" in body
+    assert "border-color: var(--hospital-accent)" in body
     assert "box-shadow" in body

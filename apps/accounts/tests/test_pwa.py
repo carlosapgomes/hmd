@@ -62,7 +62,9 @@ def test_manifest_declares_hmd() -> None:
     """R3: manifest presente com nome/short_name/display/tema do HMD."""
     manifest = _manifest()
 
-    assert manifest["name"] == "Regulação - HMD"
+    # Slice 001 (ui-parity-foundation): nome SAR – HMD; short_name/tema
+    # reservados (D1) intactos.
+    assert manifest["name"] == "SAR – HMD"
     assert manifest["short_name"] == "HMD"
     assert manifest["start_url"] == "/"
     assert manifest["display"] == "standalone"
@@ -108,7 +110,7 @@ def test_manifest_icons_exist() -> None:
 # ── R2: ícones SVG ─────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("svg_name", ["hmd-base.svg", "hmd-maskable.svg"])
+@pytest.mark.parametrize("svg_name", ["hmd-base.svg", "hmd-maskable.svg", "hmd-contrast.svg"])
 def test_icons_svg_declare_hmd(svg_name: str) -> None:
     """R2: SVGs hand-written com as letras HMD e sem CHD."""
     content = _find_static_or_fail(f"icons/{svg_name}").read_text(encoding="utf-8")
@@ -141,7 +143,8 @@ def test_service_worker_has_no_ats_reference() -> None:
     """R4/R6: SW adaptado ao HMD — cache versionado, include textual do HMD."""
     content = _find_static_or_fail("js/sw.js").read_text(encoding="utf-8")
 
-    assert 'CACHE_NAME = "hmd-cache-v1"' in content
+    # Slice 001: cache invalidado pelo rename (v2).
+    assert 'CACHE_NAME = "hmd-cache-v2"' in content
     assert 'includes("/pdf/")' in content
     # P1 review: a rota de PDF do NIR (intake: serve_document, aberta em nova
     # aba) NÃO contém "/pdf/" — sem o bypass de "/documents/" o SW
@@ -153,6 +156,39 @@ def test_service_worker_has_no_ats_reference() -> None:
     assert "/static/manifest.json" in content
     assert "/static/css/app.css" in content
     assert "/static/js/sw.js" in content
+    # Slice 001: precache inclui os SVGs novos (base/maskable/contrast).
+    assert "/static/icons/hmd-base.svg" in content
+    assert "/static/icons/hmd-maskable.svg" in content
+    assert "/static/icons/hmd-contrast.svg" in content
+
+
+def test_service_worker_precache_matches_manifest_icons() -> None:
+    """R5 (slice 001): todo ícone do manifest está no precache do SW."""
+    sw_content = _find_static_or_fail("js/sw.js").read_text(encoding="utf-8")
+    manifest_srcs = [icon["src"] for icon in _manifest()["icons"]]
+    assert manifest_srcs, "manifest sem ícones declarados"
+    for src in manifest_srcs:
+        assert src in sw_content, src
+
+
+def test_contrast_svg_is_dark_surface_variant() -> None:
+    """R3/D6: variante -contrast com fundo claro e sigla na primária."""
+    content = _find_static_or_fail("icons/hmd-contrast.svg").read_text(encoding="utf-8")
+
+    assert "SAR – HMD" in content
+    assert "HMD" in content
+    assert THEME_COLOR.lower() in content.lower()
+    assert 'fill="#ffffff"' in content.lower()
+    assert "CHD" not in content
+
+
+def test_icon_render_is_deterministic() -> None:
+    """R3: rasterizar duas vezes produz bytes idênticos (PNGs reproduzíveis)."""
+    module = _load_icon_script()
+    assert module.render_icon_png(192, maskable=False) == module.render_icon_png(
+        192, maskable=False
+    )
+    assert module.render_icon_png(192, maskable=True) == module.render_icon_png(192, maskable=True)
 
 
 # ── R5: wiring do base.html ────────────────────────────────────────────────

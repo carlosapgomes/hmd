@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="SAR – HMD">
+  <title>SAR – HMD</title>
+  <!-- Variante de contraste para superfícies escuras (ui-parity-foundation D6):
+       fundo claro com a primária reservada na sigla e na faixa de família. -->
+  <rect width="512" height="512" rx="92" fill="#ffffff"/>
+  <rect x="72" y="64" width="368" height="56" rx="8" fill="#0d4a8a"/>
+  <text x="256" y="324" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-weight="bold" font-size="133" fill="#0d4a8a">HMD</text>
+</svg>

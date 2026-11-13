@@ -26,6 +26,7 @@ coverage/
 
 # Temporários
 temp/
+tmp/verification/
 
 # Sistema / editor
 .DS_Store

@@ -198,13 +198,29 @@ def test_nav_visible_for_doctor(
     user = user_factory(f"usuario-{role}", (role,))
     login_user(user, role)
 
-    # follow=True: a home despacha o papel ativo à sua fila (change
-    # painel-gerencial-e-home, slice 002); a navbar da página final segue
-    # decidindo o link pelo papel ativo.
+    # follow=True: a home despacha o papel ativo à sua área (change
+    # painel-gerencial-e-home, slice 002); a navegação da página final
+    # segue decidindo os links pelo papel ativo — doctor cai na fila,
+    # admin cai no painel com acesso cruzado às duas filas (slice 004,
+    # correção de regressão: rótulos no vocabulário aprovado).
     response = client.get(reverse("home"), follow=True)
+    body = response.content.decode()
 
     assert response.status_code == 200
-    assert f'href="{reverse("doctor:queue")}">Fila médica</a>' in response.content.decode()
+    # Ligado (fix-2, P2): destino E rótulo aprovado do papel na MESMA
+    # âncora — doctor usa a faixa da fila ("Pendentes"); admin usa o
+    # acesso cruzado do painel ("Pendentes (médica)"). A asserção fraca
+    # antiga (href num lugar + ">Pendentes" noutro) aceitava o rótulo
+    # da outra área nesta âncora.
+    if role == "doctor":
+        expected_anchor = f'href="{reverse("doctor:queue")}?tab=aguardando">Pendentes</a>'
+    else:
+        # Acesso cruzado do base.html: href seguido de aria-label.
+        expected_anchor = (
+            f'href="{reverse("doctor:queue")}?tab=aguardando" '
+            'aria-label="Pendentes — fila médica">Pendentes (médica)</a>'
+        )
+    assert expected_anchor in body
 
 
 @pytest.mark.django_db

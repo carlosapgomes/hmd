@@ -1,4 +1,4 @@
-# HMD — Hemodinâmica
+# SAR – HMD
 
 Sistema de apoio à regulação de pacientes do serviço de hemodinâmica do HGRS.
 Clone de padrões do `ats-web` (monolito Django SSR), com autenticação AD/Kerberos

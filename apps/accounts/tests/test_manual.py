@@ -191,7 +191,7 @@ class TestNavbarManualLink:
 
         assert reverse("manual") in body
         assert 'target="_blank"' in body
-        assert ">Manual</a>" in body
+        assert "Manual do usuário" in body
 
     def test_navbar_manual_link_hidden_when_anonymous(self, client: Client) -> None:
         body = client.get(reverse("login")).content.decode()

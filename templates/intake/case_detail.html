@@ -3,7 +3,10 @@
 
 {% block title %}{{ app_display_name }} — Caso {{ case.display_reference }}{% endblock %}
 
+{% block nav %}{% include "intake/_nav.html" %}{% endblock %}
+
 {% block content %}
+<h1 class="page-title">Caso {{ case.display_reference }}</h1>
 <div class="row justify-content-center mt-4">
   <div class="col-12 col-lg-10">
     <nav aria-label="breadcrumb" class="mb-3">

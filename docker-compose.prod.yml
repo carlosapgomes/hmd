@@ -121,7 +121,7 @@ services:
       LOGIN_ATTEMPTS_LIMIT: ${LOGIN_ATTEMPTS_LIMIT:-5}
       LOGIN_ATTEMPTS_WINDOW_SECONDS: ${LOGIN_ATTEMPTS_WINDOW_SECONDS:-900}
       LOGIN_LOCKOUT_SECONDS: ${LOGIN_LOCKOUT_SECONDS:-900}
-      APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-HMD — Hemodinâmica}
+      APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-SAR – HMD}
       # Nunca processar inline no processo web (fase 1: nada é enfileirado —
       # intake desligado e workers sob profile desligado).
       INTAKE_RUN_TASKS_INLINE: "false"

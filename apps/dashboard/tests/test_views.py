@@ -258,8 +258,9 @@ def test_navbar_panel_link_visible_for_management_roles(client: Client, role: st
     content = response.content.decode()
 
     assert response.status_code == 200
-    assert reverse("dashboard:home") in content
-    assert ">Painel</a>" in content
+    # Link da navbar (âncora), não apenas o heading da página: o href do
+    # painel com o rótulo aprovado, visível para manager/admin.
+    assert f'href="{reverse("dashboard:home")}">Painel gerencial</a>' in content
 
 
 @pytest.mark.django_db

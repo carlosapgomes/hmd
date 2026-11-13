@@ -1,0 +1,51 @@
+{% comment %}
+Partial de navegação do médico com as abas Pendentes / Decididos, no
+vocabulário do ats-web (ui-parity-foundation slice 004). Adaptado do
+molde `doctor/_nav.html` do ats-web (D3) para as rotas do HMD.
+
+D4: a aba chama-se `Decididos` — fiel ao filtro por estado atual
+(`?tab=decididos` = DOCTOR_DENIED|DOCTOR_ACCEPTED|SCHEDULER_REQUESTED) —
+e NÃO `Decididos Hoje` (que no ats-web implica recorte de data e aqui
+mentiria). O recorte de data fica como débito do change 2.
+
+Contexto:
+  active_tab: "aguardando" | "decididos" (opcional; nenhuma aba fica
+  ativa se ausente — página transversal fora da fila).
+  pending_count / decided_count: int (opcionais, para badges; os plugs
+  os alimentam com os totais do context processor `queue_counters`
+  (doctor_pending_count/doctor_decided_count), calculados sob os mesmos
+  guards da view — os `pending_counts` por subtipo seguem na página).
+
+Uso:
+  {% include "doctor/_nav.html" with active_tab=tab %}
+{% endcomment %}
+<nav class="app-nav mt-3" aria-label="Navegação">
+  <ul class="nav nav-pills gap-2">
+    <li class="nav-item">
+      {% if pending_count is not None %}
+      <a class="nav-link text-white {% if active_tab == 'aguardando' %}active{% endif %} {% if pending_count %}nav-count-badge nav-count-badge--danger{% endif %}"
+         data-count="{{ pending_count }}"
+         {% if pending_count %}style="position:relative;"{% endif %}
+         {% if active_tab == 'aguardando' %}aria-current="page"{% endif %}
+         href="{% url 'doctor:queue' %}?tab=aguardando{% if subtype %}&subtype={{ subtype }}{% endif %}">Pendentes{% if pending_count %} <span class="badge rounded-pill text-bg-light text-dark">{{ pending_count }}</span>{% endif %}</a>
+      {% else %}
+      <a class="nav-link text-white {% if active_tab == 'aguardando' %}active{% endif %}"
+         {% if active_tab == 'aguardando' %}aria-current="page"{% endif %}
+         href="{% url 'doctor:queue' %}?tab=aguardando{% if subtype %}&subtype={{ subtype }}{% endif %}">Pendentes</a>
+      {% endif %}
+    </li>
+    <li class="nav-item">
+      {% if decided_count is not None %}
+      <a class="nav-link text-white {% if active_tab == 'decididos' %}active{% endif %} {% if decided_count %}nav-count-badge nav-count-badge--neutral{% endif %}"
+         data-count="{{ decided_count }}"
+         {% if decided_count %}style="position:relative;"{% endif %}
+         {% if active_tab == 'decididos' %}aria-current="page"{% endif %}
+         href="{% url 'doctor:queue' %}?tab=decididos{% if subtype %}&subtype={{ subtype }}{% endif %}">Decididos{% if decided_count %} <span class="badge rounded-pill text-bg-light text-dark">{{ decided_count }}</span>{% endif %}</a>
+      {% else %}
+      <a class="nav-link text-white {% if active_tab == 'decididos' %}active{% endif %}"
+         {% if active_tab == 'decididos' %}aria-current="page"{% endif %}
+         href="{% url 'doctor:queue' %}?tab=decididos{% if subtype %}&subtype={{ subtype }}{% endif %}">Decididos</a>
+      {% endif %}
+    </li>
+  </ul>
+</nav>

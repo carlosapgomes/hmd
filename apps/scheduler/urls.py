@@ -21,6 +21,7 @@ app_name = "scheduler"
 
 urlpatterns: list[URLPattern] = [
     path("", views.queue, name="queue"),
+    path("partials/queue/", views.queue_partial, name="queue_partial"),
     path("case/<uuid:case_id>/", views.case_detail, name="case_detail"),
     path("case/<uuid:case_id>/pdf/<int:position>/", views.case_pdf, name="case_pdf"),
     path("case/<uuid:case_id>/confirm/", views.case_confirm, name="case_confirm"),

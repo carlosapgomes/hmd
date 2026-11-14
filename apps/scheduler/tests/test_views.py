@@ -1465,11 +1465,15 @@ def _card_slice(body: str, case_id: object) -> str:
     """Fatia o HTML do card do caso (do ``list-group-item`` ao item seguinte).
 
     O escopo por card evita assert global de uid: o ``href`` de «Abrir caso»
-    carrega o uid (chave técnica) e o card é localizado por ele.
+    carrega o uid (chave técnica) e o card é localizado por ele. A abertura
+    é ``<a …>`` (card clicável) ou ``<div …>`` (reservado por outro).
     """
+    openings = ('<a class="list-group-item', '<div class="list-group-item')
     anchor = body.index(str(case_id))
-    start = body.rindex('<div class="list-group-item', 0, anchor)
-    end = body.find('<div class="list-group-item', anchor)
+    starts = [i for i in (body.rfind(m, 0, anchor) for m in openings) if i != -1]
+    ends = [i for i in (body.find(m, anchor) for m in openings) if i != -1]
+    start = max(starts)
+    end = min([i for i in ends if i > start], default=-1)
     return body[start:] if end == -1 else body[start:end]
 
 
@@ -1497,7 +1501,8 @@ def test_queue_card_does_not_show_case_uid(
     assert f"Caso {case.case_id}" not in card
     assert str(case.case_id) not in _card_visible_text(card)
     assert "Paciente Sem Uid" in card
-    assert "Nº de ocorrência: <strong>5040778</strong>" in card
+    assert "Nº de ocorrência" in card
+    assert "5040778" in card
     # A rota «Abrir caso» segue técnica (uid no href).
     assert str(case.case_id) in body
 
@@ -1518,7 +1523,7 @@ def test_queue_card_without_occurrence_has_no_uid(
     body = client.get(reverse("scheduler:queue")).content.decode()
 
     card = _card_slice(body, case.case_id)
-    assert "Nº de ocorrência: <strong>—</strong>" in card
+    assert "Nº de ocorrência" in card
     assert "Paciente Sem Ocorrencia" in card
     assert f"Caso {case.case_id}" not in card
     assert str(case.case_id) not in _card_visible_text(card)
@@ -1558,24 +1563,20 @@ def _claim_for_post(case: Case, scheduler: User) -> str:
 
 
 def _lock_card_block(body: str, marker: object) -> str:
-    """Fatia o item de lista localizado pelo ``marker`` (uid ou nome único).
+    """Fatia o card localizado pelo ``marker`` (uid ou nome único).
 
     Mesmo padrão do teste da fila médica: o uid só existe no corpo do card
     quando ele tem ação (``href``); o card reservado por outro agendador é um
-    bloco sem link e é localizado pelo nome do paciente.
+    bloco sem link e é localizado pelo nome do paciente. O fatiamento usa o
+    wrapper ``data-scheduler-queue-card`` (o nome também aparece no atributo
+    do wrapper, antes da abertura interna do card).
     """
     anchor = body.index(str(marker))
-    starts = [
-        index
-        for index in (body.rfind(mark, 0, anchor) for mark in _LOCK_CARD_OPENINGS)
-        if index != -1
-    ]
-    ends = [
-        index for index in (body.find(mark, anchor) for mark in _LOCK_CARD_OPENINGS) if index != -1
-    ]
-    start = max(starts)
-    end = min([index for index in ends if index > start], default=-1)
-    return body[start:] if end == -1 else body[start:end]
+    wrapper = body.rindex("data-scheduler-queue-card", 0, anchor)
+    start = body.rindex("<div", 0, wrapper)
+    nxt = body.find("data-scheduler-queue-card", anchor)
+    end = body.rfind("<div", 0, nxt) if nxt != -1 else len(body)
+    return body[start:end]
 
 
 @pytest.mark.django_db

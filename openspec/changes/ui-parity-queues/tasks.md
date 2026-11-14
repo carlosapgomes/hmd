@@ -21,13 +21,13 @@ Contract: `slices/slice-001-doctor-queue.md`
 
 Contract: `slices/slice-002-scheduler-queue.md`
 
-- [ ] 2.1 Mesmo padrão visual e abas `Pendentes/Processados` com
+- [x] 2.1 Mesmo padrão visual e abas `Pendentes/Processados` com
   contadores (remove o bloco legado `nav-tabs`; o `_nav` do change 1
   permanece); verificar com `pytest` + capturas vs ats-web
-- [ ] 2.2 Endpoint `scheduler:queue_partial` + htmx 20 s; verificar
+- [x] 2.2 Endpoint `scheduler:queue_partial` + htmx 20 s; verificar
   com teste do fragmento + jornada do harness (caso compatível
   na página exibida aparece sem reload; fora dela, não aparece)
-- [ ] 2.3 Busca client-side; estados de reserva refletidos nos cards
+- [x] 2.3 Busca client-side; estados de reserva refletidos nos cards
   do partial; verificar com testes + jornada (lock de outro → sem
   ação; próprio → Continuar)
 

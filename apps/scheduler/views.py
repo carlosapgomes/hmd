@@ -236,13 +236,12 @@ def _queue_item(case: Case, *, user: User) -> dict[str, object]:
 # ── R1/R2: fila ───────────────────────────────────────────────────────────
 
 
-@role_required("scheduler", "admin")
-def queue(request: HttpRequest) -> HttpResponse:
-    """Fila do agendador por estado (abas), ordenada por tempo de tela (R2/D4).
+def _build_queue_context(request: HttpRequest) -> dict[str, object]:
+    """Contexto da fila do agendador (assembly único página + partial, D1/D9).
 
-    ``days_on_screen`` desc nulls-last com desempate FIFO por ``created_at`` e
-    ``case_id`` — mesma expressão da fila médica. Sem filtro por unidade (fila
-    completa, plano §4). Aba desconhecida cai no default ``aguardando``.
+    Mesmos guards, ordenação por tempo de tela e expiração lazy de leases
+    antes da montagem — o partial executa o MESMO caminho da página cheia
+    (D9: não é GET puro; o efeito colateral de expiração é preexistente).
     """
     user = _require_user(request)
     tab = request.GET.get("tab", "aguardando")
@@ -262,13 +261,35 @@ def queue(request: HttpRequest) -> HttpResponse:
     page = Paginator(cases, QUEUE_PAGE_SIZE).get_page(request.GET.get("page", "1"))
     items = [_queue_item(case, user=user) for case in page.object_list]
 
-    context: dict[str, object] = {
+    return {
         "tab": tab,
         "page_obj": page,
         "items": items,
         "filter_qs": urlencode({"tab": tab}),
     }
-    return render(request, "scheduler/queue.html", context)
+
+
+@role_required("scheduler", "admin")
+def queue(request: HttpRequest) -> HttpResponse:
+    """Fila do agendador por estado (abas), ordenada por tempo de tela (R2/D4).
+
+    ``days_on_screen`` desc nulls-last com desempate FIFO por ``created_at`` e
+    ``case_id`` — mesma expressão da fila médica. Sem filtro por unidade (fila
+    completa, plano §4). Aba desconhecida cai no default ``aguardando``.
+    """
+    return render(request, "scheduler/queue.html", _build_queue_context(request))
+
+
+@role_required("scheduler", "admin")
+def queue_partial(request: HttpRequest) -> HttpResponse:
+    """Fragmento da fila para o polling htmx de 20 s (ui-parity-queues D1/D9).
+
+    Reutiliza o assembly da página cheia (``_build_queue_context``) e
+    renderiza SÓ ``scheduler/_queue_content.html`` — o mesmo fragmento que a
+    página inclui no server-side. Mesmos guards (``role_required``) e o mesmo
+    efeito colateral de expiração lazy de leases (D9).
+    """
+    return render(request, "scheduler/_queue_content.html", _build_queue_context(request))
 
 
 # ── R3/R4: detalhe ────────────────────────────────────────────────────────

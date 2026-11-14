@@ -35,10 +35,10 @@ Contract: `slices/slice-002-scheduler-queue.md`
 
 Contract: `slices/slice-003-my-cases.md`
 
-- [ ] 3.1 Visual de cards + abas `Ativos/Encerrados` com contadores,
+- [x] 3.1 Visual de cards + abas `Ativos/Encerrados` com contadores,
   escopo por criador intacto; verificar com `pytest` + capturas
-- [ ] 3.2 Filtros server-side (`q` ≥3 chars, status, tipo) com AND
+- [x] 3.2 Filtros server-side (`q` ≥3 chars, status, tipo) com AND
   (sem paginação nesta view); verificar com testes de query
-- [ ] 3.3 Partial + auto-refresh 20 s; verificar com teste do
+- [x] 3.3 Partial + auto-refresh 20 s; verificar com teste do
   fragmento + jornada do harness (novo caso compatível aparece sem
   reload, aba e filtros preservados)

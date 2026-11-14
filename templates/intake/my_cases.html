@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}{{ app_display_name }} — Meus casos{% endblock %}
 
@@ -13,17 +14,22 @@
     </div>
 
     <!-- Abas ativos/encerrados (nir-result-closure, slice 003, R3): a aba
-         ativa (default, tudo exceto CLEANED) e a encerrados (apenas CLEANED). -->
-    <ul class="nav nav-pills mb-3" role="tablist" aria-label="Filtro pela situação do caso">
+         ativa (default, tudo exceto CLEANED) e a encerrados (apenas CLEANED).
+         As pills são a navegação das abas (ui-parity-queues slice 003, R1/D6:
+         reestilizadas, NÃO removidas — diferente das filas, aqui não há
+         duplicação com o `_nav`, que é a navegação da seção). Os links
+         preservam os filtros ativos; os contadores são os totais do criador
+         por aba (sem os filtros de busca). -->
+    <ul class="nav nav-pills gap-2 mb-3" role="tablist" aria-label="Filtro pela situação do caso">
       <li class="nav-item" role="presentation">
-        <a href="{% url 'intake:my_cases' %}?tab=active"
+        <a href="{% url 'intake:my_cases' %}?tab=active{% if filter_qs %}&{{ filter_qs }}{% endif %}"
            class="nav-link{% if current_tab == 'active' %} active{% endif %}"
            {% if current_tab == 'active' %}aria-current="page"{% endif %}>
           Ativos{% if active_count %} <span class="badge rounded-pill text-bg-secondary">{{ active_count }}</span>{% endif %}
         </a>
       </li>
       <li class="nav-item" role="presentation">
-        <a href="{% url 'intake:my_cases' %}?tab=closed"
+        <a href="{% url 'intake:my_cases' %}?tab=closed{% if filter_qs %}&{{ filter_qs }}{% endif %}"
            class="nav-link{% if current_tab == 'closed' %} active{% endif %}"
            {% if current_tab == 'closed' %}aria-current="page"{% endif %}>
           Encerrados{% if closed_count %} <span class="badge rounded-pill text-bg-secondary">{{ closed_count }}</span>{% endif %}
@@ -31,76 +37,56 @@
       </li>
     </ul>
 
-    {% if items %}
-    <div class="list-group shadow-sm">
-      {% for item in items %}
-      <a href="{% url 'intake:case_detail' item.case.case_id %}"
-         class="list-group-item list-group-item-action py-3">
-        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-          {% if item.case.status == 'FAILED' %}
-          <span class="badge rounded-pill text-bg-danger">{{ item.status_label }}</span>
-          {% elif item.case.status == 'LLM_EXTRACTING' and item.case.manual_review_required %}
-          <span class="badge rounded-pill text-bg-info">{{ item.status_label }}</span>
-          {% elif item.case.manual_review_required %}
-          <span class="badge rounded-pill text-bg-warning">{{ item.status_label }}</span>
-          {% else %}
-          <span class="badge rounded-pill text-bg-secondary">{{ item.status_label }}</span>
-          {% endif %}
-          {% if item.case.manual_review_required %}
-            {% if item.case.status == 'LLM_EXTRACTING' and item.case.manual_review_reason == 'procedure_divergence' %}
-            <span class="badge rounded-pill text-bg-info border"
-                  title="Divergência entre os procedimentos declarados e os detectados na extração">
-              Retido por divergência de procedimentos
-            </span>
-            {% else %}
-            <span class="badge rounded-pill text-bg-warning border" title="{{ item.case.manual_review_reason }}">
-              Retido para revisão
-            </span>
-            {% endif %}
-          {% endif %}
+    <!-- Filtros server-side (ui-parity-queues slice 003, R2/D4): `q` por nº de
+         ocorrência (≥3 chars; mais curtos são ignorados pela view), `status`
+         e `procedure_type` (catálogo de 13 tipos) compõem por AND e viajam na
+         URL do partial. Fora do fragmento trocado pelo htmx: o refresh de
+         20 s nunca reseta o formulário. -->
+    <div class="card p-4 mb-4">
+      <form method="get" class="row g-3 align-items-end">
+        <input type="hidden" name="tab" value="{{ current_tab }}">
+        <div class="col-md-4">
+          <label for="my-cases-search-input" class="form-label">Buscar por número de ocorrência</label>
+          <input type="text" name="q" id="my-cases-search-input" class="form-control" placeholder="Ex: 2026-0428" value="{{ search }}">
         </div>
-        <!-- Identificação do paciente (queue-cards-wait-time, R1/D3): o NIR é o
-             criador do caso e manuseia o relatório físico; nome/idade vêm do
-             cabeçalho SESAB (— / idade omitida quando ausentes; «0 a» exibe). -->
-        <div class="fw-semibold">{{ item.patient_name|default:"—" }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}</div>
-        <div class="small text-muted">
-          <!-- Sufixo curto de desambiguação (case-detail-human-reference,
-               slice 004, R1/D3): a view marca `reference_suffix` apenas
-               quando o nº se repete na página; o template só renderiza. -->
-          Nº de ocorrência: <strong>{{ item.agency_record_number }}{{ item.reference_suffix }}</strong>
-          <span class="mx-2">·</span>
-          {% if item.procedure_labels %}
-          Procedimentos: {{ item.procedure_labels|join:" · " }}
-          {% else %}
-          Procedimentos: —
-          {% endif %}
+        <div class="col-md-3">
+          <label for="my-cases-status-select" class="form-label">Filtrar por status</label>
+          <select name="status" id="my-cases-status-select" class="form-select">
+            <option value="">Todos os status</option>
+            {% for key, label in status_options %}
+            <option value="{{ key }}" {% if status_filter == key %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
         </div>
-        {% if item.admin_closure_result %}
-        <!-- Resultado do encerramento administrativo (painel-lista-encerramento,
-             slice 003, R3/D4): só o CRIADOR vê o caso (escopo por criador); o
-             texto do motivo foi escrito pelo supervisor e não traz PHI. -->
-        <div class="small mt-1">
-          <span class="badge rounded-pill text-bg-secondary">{{ item.admin_closure_result }}</span>
-          {% if item.admin_closure_reason %}
-          <span class="text-muted ms-1">{{ item.admin_closure_reason }}</span>
-          {% endif %}
+        <div class="col-md-3">
+          <label for="my-cases-procedure-type-select" class="form-label">Filtrar por tipo de procedimento</label>
+          <select name="procedure_type" id="my-cases-procedure-type-select" class="form-select">
+            <option value="">Todos os tipos</option>
+            {% for key, label in procedure_type_options %}
+            <option value="{{ key }}" {% if procedure_type_filter == key %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
         </div>
-        {% endif %}
-      </a>
-      {% endfor %}
+        <div class="col-md-2 d-flex gap-2">
+          <button type="submit" class="btn btn-primary">Filtrar</button>
+          <a href="{% url 'intake:my_cases' %}?tab={{ current_tab }}" class="btn btn-outline-secondary">Limpar</a>
+        </div>
+      </form>
+      <div data-my-cases-status class="mt-2 text-muted small" aria-live="polite"></div>
     </div>
-    {% else %}
-    <div class="card shadow-sm">
-      <div class="card-body text-muted">
-        {% if current_tab == 'closed' %}
-        Nenhum caso encerrado até agora.
-        {% else %}
-        Nenhum caso ativo no momento.
-        {% endif %}
-        <a href="{% url 'intake:home' %}">Envie o primeiro relatório</a>.
-      </div>
+
+    <div
+      id="my-cases-content"
+      hx-get="{{ partial_url }}"
+      hx-trigger="every 20s"
+      hx-swap="innerHTML"
+    >
+      {% include "intake/_my_cases_content.html" %}
     </div>
-    {% endif %}
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/nir_queue_filter.js' %}"></script>
 {% endblock %}

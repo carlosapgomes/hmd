@@ -21,6 +21,9 @@ urlpatterns: list[URLPattern] = [
     path("", views.intake_home, name="home"),
     # Meus casos e detalhe do NIR (slice 004, D6/D9): acesso só do criador.
     path("cases/", views.my_cases, name="my_cases"),
+    # Fragmento de "meus casos" para o auto-refresh htmx de 20 s
+    # (ui-parity-queues slice 003, R3/D1): mesmo assembly da página cheia.
+    path("cases/partials/list/", views.my_cases_partial, name="my_cases_partial"),
     path("cases/<uuid:case_id>/", views.case_detail, name="case_detail"),
     path(
         "cases/<uuid:case_id>/documents/<int:document_id>/",

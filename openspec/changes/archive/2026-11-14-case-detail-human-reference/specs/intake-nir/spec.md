@@ -48,6 +48,30 @@ O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com s
 - **WHEN** o NIR abre o detalhe
 - **THEN** a seção de procedimentos exibe ambas as rows com os rótulos legíveis e os badges de origem e detecção («Não detectado», «Detectado na extração»), e o card de revisão resume declarados × detectados junto ao botão de liberação
 
+#### Scenario: Filtros server-side compõem por AND
+
+- **GIVEN** casos do NIR com nºs, status e tipos distintos
+- **WHEN** filtra por nº (≥3 caracteres) + status + tipo de procedimento
+- **THEN** apenas os casos que atendem a todos os critérios são listados, com os filtros preservados entre página cheia e partial
+
+#### Scenario: Abas Ativos e Encerrados com contadores
+
+- **GIVEN** 2 casos ativos e 1 encerrado (CLEANED) do NIR
+- **WHEN** abre meus casos
+- **THEN** as abas exibem as contagens 2 e 1, e cada aba lista só os casos da situação correspondente
+
+#### Scenario: Partial atualiza meus casos sem reload
+
+- **GIVEN** meus casos abertos e um novo caso criado pelo NIR, compatível com os filtros ativos
+- **WHEN** decorre o intervalo de atualização
+- **THEN** o novo card aparece sem recarregar a página, preservando aba e filtros
+
+#### Scenario: Caso fora do filtro não aparece no refresh
+
+- **GIVEN** meus casos filtrados por um status e um novo caso criado em outro status
+- **WHEN** decorre o intervalo de atualização
+- **THEN** nenhum card novo aparece e os filtros seguem aplicados
+
 #### Scenario: Detalhe do NIR identifica o paciente sem uid completo
 
 - **GIVEN** um caso do próprio NIR com nome, idade e nº de ocorrência extraídos

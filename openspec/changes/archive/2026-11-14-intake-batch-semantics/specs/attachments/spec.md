@@ -24,8 +24,8 @@ O sistema SHALL permitir ao NIR anexar arquivos (JPEG, PNG ou PDF) no momento da
 - **WHEN** ele abre o detalhe do caso
 - **THEN** ambos os anexos são listados com nome e status legível de processamento
 
-#### Scenario: Anexos com múltiplos PDFs não são vinculados
+#### Scenario: Anexos com múltiplos relatórios são recusados sem bloquear
 
-- **GIVEN** um envio com 2 PDFs de relatório e anexos
-- **WHEN** o envio é submetido
-- **THEN** os casos dos relatórios são criados sem anexos e o resultado informa que anexos só são permitidos com exatamente 1 relatório
+- **GIVEN** um upload com 2 PDFs de relatório e dois anexos (uma foto JPEG e um PDF)
+- **WHEN** a criação é submetida
+- **THEN** os dois casos são criados sem anexos e o erro nomeado informa que anexos exigem exatamente 1 relatório

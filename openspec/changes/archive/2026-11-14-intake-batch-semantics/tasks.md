@@ -12,9 +12,9 @@
 
 ## Gate final
 
-- [ ] `uv run ruff check . && uv run ruff format --check . && uv run mypy . && TEST_DB_PORT=55435 uv run pytest` — tudo verde, sem regressão vs. baseline
-- [ ] `openspec validate intake-batch-semantics --strict`
+- [x] `uv run ruff check . && uv run ruff format --check . && uv run mypy . && TEST_DB_PORT=55435 uv run pytest` — tudo verde, sem regressão vs. baseline
+- [x] `openspec validate intake-batch-semantics --strict` (verde nesta sessão)
 
 ## Pós-gate (parent)
 
-- [ ] Atualizar `PROJECT_CONTEXT.md` com o estado do change
+- [x] Atualizar `PROJECT_CONTEXT.md` com o estado do change

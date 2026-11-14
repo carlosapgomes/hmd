@@ -112,7 +112,7 @@ linkage, captura mesma-linha); tokenização de todas as ocorrências
 (`<PESSOA_1>`; vazamento real fechado — E2E no PDF do dono: 84/F/PARDA/6
 dias, 0 ocorrências restantes). Suíte 1330; benchmark NER on 63/63.
 
-## Fecho do change ui-parity-foundation (slice 005, 2026-11-13)
+## Fecho do change ui-parity-foundation (slice 005, 2026-11-13; ARQUIVADO em 2026-11-13)
 
 Páginas de sessão no padrão, fechando o change (slices 001–004 já verdes): **login** com toggle de senha funcional (`static/js/password_toggle.js`, adaptado do molde ats-web; `input-group` + `toggle-password`), aviso de acesso transitório mantido e **sem** reset/esqueci-senha ou e-mail (ADR-0003/D9, permanente); **notificações** com referência do caso (`Case.display_reference`), leitura individual por item (novo POST mínimo `notifications/<id>/read/` → `notification_read`, marca só ela e volta à lista; `notifications_open` segue marcando+redirecionando ao caso), marcar-todas, voltar e polling do sino (`bell_poll.js` sobre `unread-count`); guard de destinatário nas duas rotas (alheia = 404 sem marcar); **perfil** com `h1.page-title` no topo + cards + voltar; **manual** com seções por papel em cards, imprimível, texto instrucional preservado (diff de texto extraído idêntico — só marca/markup). Mapa `verify-hmd` executado nas telas do change (login toggle, perfil/manual, jornada 3→2→0 + 404 alheio — features `sessoes.md`/`notificacoes.md` + `drive-session-pages.mjs`, fora do gate). Gate verde: ruff + format + mypy + pytest (1628 testes). Próximo: changes 2–3 sobre esta fundação (débito D4: semântica da aba `Decididos`).
 

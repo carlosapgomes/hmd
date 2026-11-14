@@ -3,7 +3,6 @@
   <!-- Maskable: fundo full-bleed + marca em ~80% central (safe zone) -->
   <rect width="512" height="512" fill="#0d4a8a"/>
   <g transform="translate(256 256) scale(0.8)">
-    <rect x="-184" y="-192" width="368" height="56" fill="#16647a"/>
-    <text x="0" y="68" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-weight="bold" font-size="133" fill="#ffffff">HMD</text>
+    <text x="6.96" y="65.54" text-anchor="middle" font-family="'Merriweather Sans', Arial, sans-serif" font-weight="700" font-size="212.5" letter-spacing="12.5" fill="#ffffff">HMD</text>
   </g>
 </svg>

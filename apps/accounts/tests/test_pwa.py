@@ -31,6 +31,9 @@ from apps.accounts.models import Role, User
 # Cor do app (``--hmd-primary`` de static/css/app.css, base do gradiente do
 # ``.app-header``) — a MESMA no theme_color do manifest e no fundo do ícone.
 THEME_COLOR = "#0d4a8a"
+# Secundária do tema: era a cor da faixa de família SAR removida pelo change
+# pwa-icon-simplify (D1 — nenhum marcador substitui a faixa).
+BAND_COLOR = "#16647a"
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ICON_SCRIPT = REPO_ROOT / "scripts" / "generate_pwa_icons.py"
@@ -118,6 +121,53 @@ def test_icons_svg_declare_hmd(svg_name: str) -> None:
     assert "HMD" in content
     assert "CHD" not in content
     assert THEME_COLOR.lower() in content.lower()
+
+
+@pytest.mark.parametrize("svg_name", ["hmd-base.svg", "hmd-maskable.svg", "hmd-contrast.svg"])
+def test_icons_svg_have_no_family_band(svg_name: str) -> None:
+    """R1 (pwa-icon-simplify): ícones planos, sem faixa/marcador de família.
+
+    D1: fundo plano + sigla centralizada, como o molde do CHD — nenhum ``rect``
+    de faixa, nem a cor secundária do tema nem a geometria (x=72/y=64, 368×56
+    no base/contraste; -184/-192 no grupo escalado do maskable).
+    """
+    content = _find_static_or_fail(f"icons/{svg_name}").read_text(encoding="utf-8")
+
+    assert BAND_COLOR not in content.lower()
+    assert 'height="56"' not in content
+    assert 'width="368"' not in content
+
+
+@pytest.mark.parametrize("svg_name", ["hmd-base.svg", "hmd-contrast.svg"])
+def test_icon_text_matches_reference_geometry(svg_name: str) -> None:
+    """R1 (pwa-icon-simplify, fix de revisão): texto com a geometria do molde.
+
+    O dono apontou texto pequeno e descentralizado (133px, baseline 324):
+    a geometria passa a espelhar o ícone do ats-web (170px, tracking 10,
+    baseline 308.44, x compensado 261.57) — mesma família visual, na
+    primária HMD.
+    """
+    content = _find_static_or_fail(f"icons/{svg_name}").read_text(encoding="utf-8")
+
+    assert 'font-size="170"' in content
+    assert 'letter-spacing="10"' in content
+    assert 'x="261.57"' in content
+    assert 'y="308.44"' in content
+
+
+def test_maskable_text_matches_reference_geometry_scaled() -> None:
+    """R1: maskable aplica a mesma geometria sob o grupo scale(0.8).
+
+    Renderizado: 170px, tracking 10, baseline 308.44 e centro 261.57 —
+    idênticos ao base; os valores locais são divididos pelo conteúdo
+    (212.5/12.5, x=6.96/y=65.54).
+    """
+    content = _find_static_or_fail("icons/hmd-maskable.svg").read_text(encoding="utf-8")
+
+    assert 'font-size="212.5"' in content
+    assert 'letter-spacing="12.5"' in content
+    assert 'x="6.96"' in content
+    assert 'y="65.54"' in content
 
 
 def test_maskable_svg_has_safe_zone() -> None:

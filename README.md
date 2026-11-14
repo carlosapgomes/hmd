@@ -199,6 +199,12 @@ com corpus real e revisão dos prompts são aceite pré-produção (`CHANGELOG.m
 
 ## Piloto (fase 1)
 
+> **Runbook operacional completo:** `docs/runbook-deploy-producao.md` —
+> topologia real do servidor de produção, procedimento de upgrade,
+> rollback, diagnósticos e divergências conhecidas. Esta seção mantém o
+> contexto original do piloto (fase 1); a produção já opera em **fase 2**
+> (workers + intake ativos).
+
 O piloto roda por `docker-compose.prod.yml` (arquivo autônomo, change
 `pilot-deployment-v0-1-1`): **web** (gunicorn, CMD do Dockerfile) + passo
 one-shot **migrate**; nenhum worker ligado.
@@ -281,8 +287,10 @@ chown 10001:10001 secrets/*.txt
 ```
 
 **Configuração (`.env` no host, fora do Git).** Nomes novos documentados em
-`.env.example`: `HMD_IMAGE_TAG` (**obrigatório pinado tag+digest**:
-`v0.1.9@sha256:73b11509e15ac64047c8af82384f0760c31ee17780b993c432d394e4ade76231`), as envs de arquivo de segredo acima, os nomes de
+`.env.example`: `HMD_IMAGE_TAG` (**obrigatório pinado tag+digest**; confira
+o digest da release no passo `digest` do workflow ou com `docker buildx
+imagetools inspect ghcr.io/carlosapgomes/hmd:<tag>`; ex.:
+`v0.1.16@sha256:658a07148a208748d51cc44e7ba783b29c9ece5ad57d6b2c5d041680ae41fd15`), as envs de arquivo de segredo acima, os nomes de
 banco `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER` (+ `MIGRATOR_DB_USER`, role DDL
 usada só pelo passo migrate) — o compose não usa mais URL de banco —,
 `CSRF_TRUSTED_ORIGINS`, `PROXY_SSL_HEADER` e `DJANGO_SUPERUSER_USERNAME` (env

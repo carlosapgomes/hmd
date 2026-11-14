@@ -8,13 +8,20 @@ Aplicação instalável como PWA com identidade HMD (ícone com as letras HMD) e
 
 ### Requirement: PWA instalável com identidade HMD
 
-O sistema SHALL servir um manifest web app com nome e short_name "HMD", ícones base e maskable (SVG e PNGs) exibindo as letras HMD, e um service worker registrado no layout base que faz cache de estáticos com estratégia network-first e nunca intercepta requisições de não-GET nem rotas de PDF do caso.
+O sistema SHALL servir um manifest web app com nome `SAR – HMD` e
+short_name `HMD`, ícones base e maskable (SVG e PNGs) exibindo a sigla
+HMD com marcador geométrico de família e variante de contraste, e um
+service worker registrado no layout base que faz cache de estáticos
+com estratégia network-first e nunca intercepta requisições de não-GET
+nem rotas de PDF do caso.
 
 #### Scenario: Manifest e ícones HMD servidos
 
 - **GIVEN** o app publicado
 - **WHEN** o manifest e os ícones são requisitados
-- **THEN** o manifest declara nome/short_name HMD e aponta para ícones existentes com as letras HMD
+- **THEN** o manifest declara nome `SAR – HMD`/short_name `HMD` e
+  aponta para ícones existentes com a sigla HMD, incluindo a variante
+  de contraste
 
 #### Scenario: Service worker registrado e conservador
 

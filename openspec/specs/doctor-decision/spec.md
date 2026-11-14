@@ -26,7 +26,7 @@ dessa aba SHALL refletir o estado de reserva do caso: sem reserva → ação
 «Avaliar» que abre a página de trabalho de decisão; reservado pelo próprio
 médico → ação «Continuar avaliação»; reservado por outro portador → botão
 desabilitado «Reservado» com o nome do portador. Outros papéis ativos
-recebem 403. Os cards NÃO exibem o identificador interno do caso (uid).
+recebem 403. Os cards NÃO exibem o identificador interno do caso (uid). A apresentação segue o padrão ats-web: abas `Pendentes/Decididos` (rótulo `Decididos` fiel à query por estado, sem recorte de data), visual `case-card` com alerta de espera, badges de contagem nas abas, busca client-side por nome/ocorrência e atualização automática via partial a cada 20 s; o filtro server-side por subtipo permanece a base (o filtro client apenas refina o renderizado, nunca amplia o escopo).
 
 #### Scenario: Médico de subtipo filtra a fila
 
@@ -87,6 +87,36 @@ recebem 403. Os cards NÃO exibem o identificador interno do caso (uid).
 - **GIVEN** um caso em `AWAITING_DOCTOR` com reserva cuja lease venceu
 - **WHEN** o médico acessa a fila
 - **THEN** a reserva vencida é expirada antes da montagem e o card exibe a ação «Avaliar» normalmente
+
+#### Scenario: Abas usam Pendentes e Decididos
+
+- **GIVEN** casos aguardando e em estados pós-decisão (`DOCTOR_DENIED`, `DOCTOR_ACCEPTED`, `SCHEDULER_REQUESTED`)
+- **WHEN** o médico abre a fila
+- **THEN** as abas exibem `Pendentes` e `Decididos`, e a aba de decididos lista os casos nos estados da aba, independentemente da data da decisão (sem recorte de data)
+
+#### Scenario: Partial atualiza a fila sem reload
+
+- **GIVEN** a fila aberta e um novo caso chegando a `AWAITING_DOCTOR`, compatível com o subtipo ativo e posicionado na página exibida
+- **WHEN** decorre o intervalo de atualização
+- **THEN** o novo card aparece sem recarregar a página, preservando aba, filtro e paginação
+
+#### Scenario: Caso fora do filtro ou da página não aparece
+
+- **GIVEN** a fila filtrada por um subtipo e um novo caso de outro subtipo, ou um caso posicionado em outra página
+- **WHEN** decorre o intervalo de atualização
+- **THEN** nenhum card novo aparece na página exibida
+
+#### Scenario: Busca client-side filtra os cards
+
+- **GIVEN** a fila com vários casos renderizados
+- **WHEN** o médico digita o nome do paciente ou o nº de ocorrência na busca
+- **THEN** apenas os cards correspondentes permanecem visíveis, sem nova requisição
+
+#### Scenario: Badges de contagem nas abas
+
+- **GIVEN** 3 casos aguardando e 5 decididos acessíveis ao médico
+- **WHEN** a fila é renderizada
+- **THEN** as abas exibem as contagens 3 e 5
 
 ### Requirement: Access control por subtipo no conjunto declarado
 

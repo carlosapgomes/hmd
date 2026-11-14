@@ -41,6 +41,7 @@ import logging
 import uuid
 from collections import Counter
 from typing import cast
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib import messages
@@ -111,6 +112,22 @@ _SCHEDULED_AT_FORMAT = "%d/%m/%Y %H:%M"
 # casos ``CLEANED``. Valor desconhecido de ``?tab=`` cai na default (seguro).
 _MY_CASES_TABS = frozenset({"active", "closed"})
 _DEFAULT_MY_CASES_TAB = "active"
+
+# Filtros server-side de "meus casos" (ui-parity-queues slice 003, R2/D4):
+# ``q`` casa o nº de ocorrência com mínimo de 3 caracteres (espelho do
+# painel — ``MIN_SEARCH_LENGTH`` de ``apps.dashboard.views``); mais curtos
+# são ignorados (nunca zeram a lista por erro). ``status`` aceita apenas
+# valores do enum ``CaseStatus`` (desconhecido é ignorado, como ``?tab=``);
+# ``procedure_type`` aceita apenas tipos do catálogo de 13 perfis (os mesmos
+# valores do ``IntakeUploadForm.procedure_type``). Composição por AND, dentro
+# do escopo por criador, antes dos sufixos de desambiguação (D4).
+_MY_CASES_MIN_SEARCH_LENGTH = 3
+_MY_CASES_STATUS_VALUES = frozenset(status.value for status in CaseStatus)
+_MY_CASES_PROCEDURE_TYPE_VALUES = frozenset(_PROCEDURE_LABELS_BY_TYPE)
+# Opções do filtro de tipo: (valor, rótulo) na ordem canônica do catálogo.
+_MY_CASES_PROCEDURE_TYPE_OPTIONS: tuple[tuple[str, str], ...] = tuple(
+    _PROCEDURE_LABELS_BY_TYPE.items()
+)
 
 # Resultado do encerramento administrativo no card de "meus casos" (R3/D4):
 # prefixo fixo + rótulo legível do catálogo de motivos de ``apps/cases/closure.py``
@@ -321,37 +338,59 @@ def intake_home(request: HttpRequest) -> HttpResponse:
     return render(request, "intake/home.html", {"form": form})
 
 
-@role_required("nir")
-def my_cases(request: HttpRequest) -> HttpResponse:
-    """Lista "meus casos" com abas ativos/encerrados (R3, escopo por criador).
+def _build_my_cases_context(request: HttpRequest) -> dict[str, object]:
+    """Contexto de "meus casos" (assembly único página + partial, D1).
 
-    A aba **ativos** (default de ``?tab=``, com fallback seguro para valores
-    desconhecidos) lista os casos do criador em tudo exceto ``CLEANED``; a
-    aba **encerrados** lista apenas os ``CLEANED`` — mesmo formato de items,
-    badges e ordenação (``created_at desc``). ``?tab=`` desconhecido/ausente
-    nunca vaza nem quebra: cai em ativos.
-
-    Slice 003 do painel-lista-encerramento (R3/D4): o queryset pré-carrega
-    ``events`` (além de ``procedures``) e o caso ``CLEANED`` com evento
-    administrativo recebe o resultado "Encerrado administrativamente — {motivo}"
-    na aba de encerrados — só para o CRIADOR (o escopo por criador já o garante).
-
-    Slice 004 do case-detail-human-reference (R1–R3/D3): a linha «Nº de
-    ocorrência» dos cards do nº REPETIDO na página recebe o sufixo curto de
-    desambiguação (``N · <8 chars>``, o reenvio corrigido cria um caso novo com
-    o nº do original); nº único ou ausente mantém o texto de antes.
+    Escopo por criador em qualquer combinação (R2): os filtros server-side
+    ``q``/``status``/``procedure_type`` (AND) aplicam-se DENTRO do queryset do
+    criador e ANTES do cálculo dos sufixos de desambiguação (D4 — como as
+    abas). Sem paginação nesta view (D2: a lista segue materializada).
     """
     user = _require_user(request)
     requested_tab = request.GET.get("tab", _DEFAULT_MY_CASES_TAB)
     current_tab = requested_tab if requested_tab in _MY_CASES_TABS else _DEFAULT_MY_CASES_TAB
 
+    # Filtros preservados na URL do partial e nas pills (D4): só entram os
+    # vigentes (``q`` curto é ecoado no form, mas não filtra — a consulta
+    # é que o ignora).
+    search = request.GET.get("q", "").strip()
+    status_filter = request.GET.get("status", "")
+    if status_filter not in _MY_CASES_STATUS_VALUES:
+        status_filter = ""
+    procedure_type_filter = request.GET.get("procedure_type", "")
+    if procedure_type_filter not in _MY_CASES_PROCEDURE_TYPE_VALUES:
+        procedure_type_filter = ""
+    filter_params: list[tuple[str, str]] = []
+    if search:
+        filter_params.append(("q", search))
+    if status_filter:
+        filter_params.append(("status", status_filter))
+    if procedure_type_filter:
+        filter_params.append(("procedure_type", procedure_type_filter))
+    filter_qs = urlencode(filter_params)
+    partial_params = [("tab", current_tab), *filter_params]
+    partial_url = f"{reverse('intake:my_cases_partial')}?{urlencode(partial_params)}"
+
     own_cases = Case.objects.filter(created_by=user)
+    # Contadores das pills (D5/D6): totais do criador por aba, sem os filtros
+    # de busca (as pills navegam entre abas, não entre filtros).
     active_cases = own_cases.exclude(status=CaseStatus.CLEANED)
     closed_cases = own_cases.filter(status=CaseStatus.CLEANED)
     selected_cases = closed_cases if current_tab == "closed" else active_cases
 
+    filtered_cases = selected_cases
+    if len(search) >= _MY_CASES_MIN_SEARCH_LENGTH:
+        filtered_cases = filtered_cases.filter(agency_record_number__icontains=search)
+    if status_filter:
+        filtered_cases = filtered_cases.filter(status=status_filter)
+    if procedure_type_filter:
+        filtered_cases = filtered_cases.filter(
+            procedures__declared_by_nir=True,
+            procedures__procedure_type=procedure_type_filter,
+        ).distinct()
+
     page_cases = list(
-        selected_cases.prefetch_related("procedures", "events").order_by("-created_at")
+        filtered_cases.prefetch_related("procedures", "events").order_by("-created_at")
     )
     # Nºs repetidos NA PÁGINA (R1/D3, slice 004): contagem sobre a lista já
     # carregada (sem query extra); nºs em branco nunca são chave (a linha fica
@@ -380,16 +419,60 @@ def my_cases(request: HttpRequest) -> HttpResponse:
                 "admin_closure_reason": closure_result[1] if closure_result else "",
             }
         )
-    return render(
-        request,
-        "intake/my_cases.html",
-        {
-            "items": items,
-            "current_tab": current_tab,
-            "active_count": active_cases.count(),
-            "closed_count": closed_cases.count(),
-        },
-    )
+    return {
+        "items": items,
+        "current_tab": current_tab,
+        "active_count": active_cases.count(),
+        "closed_count": closed_cases.count(),
+        # Filtros vigentes (form ecoa ``q``/``status``/``procedure_type``).
+        "search": search,
+        "status_filter": status_filter,
+        "procedure_type_filter": procedure_type_filter,
+        "status_options": CaseStatus.choices,
+        "procedure_type_options": _MY_CASES_PROCEDURE_TYPE_OPTIONS,
+        "filter_qs": filter_qs,
+        "partial_url": partial_url,
+    }
+
+
+@role_required("nir")
+def my_cases(request: HttpRequest) -> HttpResponse:
+    """Lista "meus casos" com abas ativos/encerrados (R3, escopo por criador).
+
+    A aba **ativos** (default de ``?tab=``, com fallback seguro para valores
+    desconhecidos) lista os casos do criador em tudo exceto ``CLEANED``; a
+    aba **encerrados** lista apenas os ``CLEANED`` — mesmo formato de items,
+    badges e ordenação (``created_at desc``). ``?tab=`` desconhecido/ausente
+    nunca vaza nem quebra: cai em ativos.
+
+    Slice 003 do painel-lista-encerramento (R3/D4): o queryset pré-carrega
+    ``events`` (além de ``procedures``) e o caso ``CLEANED`` com evento
+    administrativo recebe o resultado "Encerrado administrativamente — {motivo}"
+    na aba de encerrados — só para o CRIADOR (o escopo por criador já o garante).
+
+    Slice 004 do case-detail-human-reference (R1–R3/D3): a linha «Nº de
+    ocorrência» dos cards do nº REPETIDO na página recebe o sufixo curto de
+    desambiguação (``N · <8 chars>``, o reenvio corrigido cria um caso novo com
+    o nº do original); nº único ou ausente mantém o texto de antes.
+
+    Slice 003 do ui-parity-queues (R1–R3/D1/D4): cards no padrão das filas,
+    filtros server-side (``q``/``status``/``procedure_type`` por AND) e o
+    fragmento compartilhado ``intake/_my_cases_content.html`` dentro do
+    container htmx com auto-refresh de 20 s (página == partial).
+    """
+    return render(request, "intake/my_cases.html", _build_my_cases_context(request))
+
+
+@role_required("nir")
+def my_cases_partial(request: HttpRequest) -> HttpResponse:
+    """Fragmento de "meus casos" para o auto-refresh htmx de 20 s (R3/D1).
+
+    Reutiliza o assembly da página cheia (``_build_my_cases_context``) e
+    renderiza SÓ ``intake/_my_cases_content.html`` — o mesmo fragmento que a
+    página inclui no server-side. Mesmos guards (``role_required``) e o mesmo
+    escopo por criador com os mesmos filtros/aba da URL.
+    """
+    return render(request, "intake/_my_cases_content.html", _build_my_cases_context(request))
 
 
 @role_required("nir")

@@ -1,6 +1,7 @@
 """Testes da tela de envio em lote (slice 002 do intake-batch-semantics).
 
-Cobre: R1 (tipo único em radio, ausente/inválido → erro de FORMULÁRIO sem
+Cobre: R1 (tipo único em select canônico — slice 002, era radio;
+    ausente/inválido → erro de FORMULÁRIO sem
 chamar o serviço), R2 (hints com os números REAIS dos settings — arquivos por
 lote, tamanho por arquivo e total, e a regra "anexos só com exatamente 1
 relatório"), R3 (a home registra ``static/js/intake-upload.js`` e expõe os
@@ -28,7 +29,7 @@ from django.test import Client, override_settings
 from django.urls import reverse
 
 from apps.accounts.models import User
-from apps.cases.models import Case
+from apps.cases.models import Case, CaseStatus
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.intake.forms import IntakeUploadForm
 
@@ -59,21 +60,24 @@ def _service_spy(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
 # ── R1: tipo único do lote ────────────────────────────────────────────────
 
 
-def test_form_single_procedure_type_radio() -> None:
-    """R1: o tipo é um ``ChoiceField`` único (radio) com as choices do
-    catálogo; o campo múltiplo antigo não existe mais."""
+def test_form_single_procedure_type_select() -> None:
+    """R1: o tipo é um ``ChoiceField`` único (select canônico — slice 002 do
+    ui-parity-intake-detail, era radio) com as choices do catálogo; o campo
+    múltiplo antigo não existe mais."""
     form = IntakeUploadForm()
 
     field = form.fields["procedure_type"]
     assert isinstance(field, forms.ChoiceField)
-    assert isinstance(field.widget, forms.RadioSelect)
+    assert isinstance(field.widget, forms.Select)
     assert field.required is True
     assert "um tipo por envio" in str(field.help_text).lower()
     assert "procedure_types" not in form.fields
 
     rendered = str(form["procedure_type"])
-    assert 'type="radio"' in rendered
-    assert rendered.count('name="procedure_type"') == len(PROCEDURE_PROFILES)
+    assert "<select" in rendered
+    assert 'type="radio"' not in rendered
+    assert rendered.count('name="procedure_type"') == 1
+    assert rendered.count("<option") == len(PROCEDURE_PROFILES) + 1
     for profile in PROCEDURE_PROFILES:
         assert f'value="{profile.procedure_type}"' in rendered
         assert profile.label in rendered
@@ -339,3 +343,415 @@ def test_upload_batch_success_without_errors_shows_result(client: Client, nir_us
     body = response.content.decode()
     assert "2 casos criados" in body
     assert "arquivos rejeitados" not in body
+
+
+# ── Slice 001 ui-parity-intake-detail: upload com drag-and-drop + preview ──
+#
+# R1 (zona + preview + autoridade do servidor), R2 (sem JS o input nativo
+# segue submetível), R3 (reenvio corrigido usa o mesmo widget) e R4 (nenhum
+# gate de confirmação de anexos — o gate do ats-web NÃO é portado).
+
+
+def _attachment_file(
+    name: str = "foto.jpg", content_type: str = "image/jpeg"
+) -> SimpleUploadedFile:
+    """Anexo fake (conteúdo não lido; validação é por metadados)."""
+    return SimpleUploadedFile(name, b"anexo fake", content_type=content_type)
+
+
+def _drive_to_cleaned(case: Case, *, nir: User, doctor: User) -> None:
+    """Dirige o caso pelas operações FSM até ``CLEANED`` (setup do reenvio)."""
+    case.start_pdf_extraction(user=None, role="system")
+    case.complete_pdf_extraction(user=None, role="system")
+    case.complete_anonymization(user=None, role="system")
+    case.complete_llm_extraction(user=None, role="system")
+    case.complete_llm_summarization(user=None, role="system")
+    case.record_doctor_decision(accepted=False, user=doctor, role="doctor")
+    case.post_final_reply(user=doctor, role="doctor")
+    case.nir_acknowledge(user=nir, role="nir")
+    case.start_cleaning(user=nir, role="nir")
+    case.complete_cleaning(user=nir, role="nir")
+    case.refresh_from_db()
+    assert case.status == CaseStatus.CLEANED
+
+
+@pytest.mark.django_db
+def test_home_upload_zone_and_preview_markers(
+    client: Client,
+    nir_user: User,
+) -> None:
+    """R1: a home expõe a zona (drag-and-drop + clique), o preview (lista,
+    contagem e tamanho total) e o alerta de lote; o input de documentos
+    vive dentro da zona e segue um input nativo visível (R2: sem JS ele
+    submete o form sozinho — nunca é escondido pelo HTML)."""
+    client.force_login(nir_user)
+
+    response = client.get(reverse("intake:home"))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    for token in (
+        'id="upload-zone"',
+        "upload-zone__icon",
+        "upload-zone__text",
+        "upload-zone__hint",
+        'id="upload-preview"',
+        'id="batch-count"',
+        'id="batch-total-size"',
+        'id="file-list"',
+        'id="upload-alert"',
+        'id="attachment-preview"',
+        'id="attachment-count"',
+        'id="attachment-total-size"',
+        'id="attachment-list"',
+    ):
+        assert token in body, f"marcador ausente na home: {token}"
+    # O input de documentos está dentro da zona (entre a abertura da zona
+    # e o preview) e é visível sem JS: sem ``d-none``/``novalidate``.
+    zone_open = body.index('id="upload-zone"')
+    documents_input = body.index('id="id_documents"')
+    preview_open = body.index('id="upload-preview"')
+    assert zone_open < documents_input < preview_open
+    input_tag = re.search(r'<input[^>]*id="id_documents"[^>]*>', body)
+    assert input_tag is not None
+    assert "d-none" not in input_tag.group(0)
+    assert "multiple" in input_tag.group(0)
+    assert "novalidate" not in body
+
+
+def test_upload_script_dragdrop_preview_structure() -> None:
+    """R1/R4: o script implementa drag-and-drop (dragover/dragleave/drop),
+    preview com lista/contagem/tamanho, remoção por arquivo e sincronização
+    dos arrastados via ``DataTransfer`` no submit — com os limites HMD
+    (30 arquivos, 20 MB/arquivo, 100 MB/lote; anexos 5 × 10 MB) e SEM o
+    gate de confirmação do ats-web (nenhum token de confirmação)."""
+    script_path = finders.find("js/intake-upload.js")
+    assert script_path is not None
+    script = Path(script_path).read_text(encoding="utf-8")
+
+    for token in (
+        "upload-zone",
+        "upload-preview",
+        "batch-count",
+        "batch-total-size",
+        "file-list",
+        "upload-alert",
+        "attachment-preview",
+        "attachment-list",
+        "attachment-count",
+        "attachment-total-size",
+        "dragover",
+        "dragleave",
+        "drop",
+        "drag-over",
+        "DataTransfer",
+        "dataTransfer",
+        "handleFiles",
+        "handleAttachmentFiles",
+        "formatSize",
+        "btn-remove-file",
+        "btn-remove-attachment",
+        "showAlert",
+        "upload-zone__text",
+        "upload-zone__hint",
+        'addEventListener("submit"',
+        # Limites HMD (config/settings/base.py), não os do molde (600 MB).
+        "30",
+        "20 * 1024 * 1024",
+        "100 * 1024 * 1024",
+        "10 * 1024 * 1024",
+    ):
+        assert token in script, f"token ausente no script: {token}"
+    for forbidden in (
+        "attachmentConfirm",
+        "attachment-confirm",
+        "attachment_confirmed",
+        "Confirme que revisou",
+    ):
+        assert forbidden not in script, f"gate do ats-web vazou: {forbidden}"
+
+
+@pytest.mark.django_db
+def test_upload_multi_pdf_with_attachment_is_non_blocking_via_view(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R1 (autoridade do servidor): 2 PDFs + anexo → os 2 casos são criados
+    sem anexos e o erro nomeado (não-bloqueante) informa que anexos exigem
+    exatamente 1 relatório."""
+    client.force_login(nir_user)
+
+    response = client.post(
+        reverse("intake:home"),
+        {
+            "documents": [pdf_factory(name="paciente-a.pdf"), pdf_factory(name="paciente-b.pdf")],
+            "procedure_type": ANGIO_TYPE,
+            "attachments": [_attachment_file()],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "2 casos criados" in body
+    assert "exatamente 1" in body
+    assert Case.objects.count() == 2
+    assert all(case.attachments.count() == 0 for case in Case.objects.all())
+
+
+@pytest.mark.django_db
+def test_upload_single_pdf_with_attachment_needs_no_confirmation(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R4: anexo com 1 relatório submete SEM confirmação extra — o POST não
+    envia nenhum campo de confirmação e o caso nasce com o anexo."""
+    client.force_login(nir_user)
+
+    response = client.post(
+        reverse("intake:home"),
+        {
+            "documents": [pdf_factory(name="paciente-a.pdf")],
+            "procedure_type": ANGIO_TYPE,
+            "attachments": [_attachment_file()],
+        },
+    )
+
+    # 1 caso e zero erros → redirect ao detalhe (contrato D4); nenhum
+    # gate de confirmação é exigido no caminho.
+    assert response.status_code == 302
+    case = Case.objects.get()
+    assert response["Location"] == reverse("intake:case_detail", args=[case.case_id])
+    assert case.attachments.count() == 1
+    assert case.attachments.get().original_filename == "foto.jpg"
+
+
+@pytest.mark.django_db
+def test_corrected_resubmission_uses_same_upload_widget(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+) -> None:
+    """R3: o reenvio corrigido (1 PDF) carrega o mesmo script e expõe a
+    mesma zona/preview, com o input de documentos SEM ``multiple`` (1 PDF)
+    e o de anexos múltiplo."""
+    doctor = user_factory("doctor-resub-widget", "doctor")
+    original = Case.objects.create(created_by=nir_user)
+    _drive_to_cleaned(original, nir=nir_user, doctor=doctor)
+    client.force_login(nir_user)
+
+    response = client.get(reverse("intake:case_resubmit", args=[original.case_id]))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert 'src="/static/js/intake-upload.js"' in body
+    assert "data-intake-upload" in body
+    assert 'data-documents-field="id_documents"' in body
+    assert 'data-attachments-field="id_attachments"' in body
+    for token in (
+        'id="upload-zone"',
+        "upload-zone__text",
+        "upload-zone__hint",
+        'id="upload-preview"',
+        'id="batch-count"',
+        'id="batch-total-size"',
+        'id="file-list"',
+        'id="upload-alert"',
+        'id="attachment-preview"',
+        'id="attachment-list"',
+        'id="intake-attachments-single-hint"',
+    ):
+        assert token in body, f"marcador ausente no reenvio: {token}"
+    documents_tag = re.search(r'<input[^>]*id="id_documents"[^>]*>', body)
+    assert documents_tag is not None and "multiple" not in documents_tag.group(0)
+    attachments_tag = re.search(r'<input[^>]*id="id_attachments"[^>]*>', body)
+    assert attachments_tag is not None and "multiple" in attachments_tag.group(0)
+
+
+def test_upload_script_preserves_all_selected_files_for_server() -> None:
+    """P1-A (fix-1): o widget NUNCA exclui arquivos — preview/avisa, mas
+    TODOS os selecionados (não-PDF por extensão, duplicados nome+tamanho,
+    acima dos limites) vão para os inputs via ``DataTransfer`` para o
+    servidor, autoridade, nomeá-los (R1). O comportamento é provado no
+    browser pela jornada ``drive-upload-dragdrop``; aqui ficam os tokens
+    estruturais (falham se o script voltar a filtrar)."""
+    script_path = finders.find("js/intake-upload.js")
+    assert script_path is not None
+    script = Path(script_path).read_text(encoding="utf-8")
+
+    # Estado preserva tudo; avisos são só informativos (nunca descartam).
+    for token in (
+        "selectedFiles",
+        "selectedAttachments",
+        "warnFileIssues",
+        "warnAttachmentIssues",
+    ):
+        assert token in script, f"token ausente no script: {token}"
+    # Nenhuma rejeição client-side: sem validação com poder de descarte,
+    # sem contadores de "arquivos novos" filtrados, sem descarte de
+    # duplicado nem retornos antecipados por contagem/tamanho.
+    for forbidden in (
+        "validation.valid",
+        "newFiles",
+        "newAttachments",
+        "já foi adicionado",
+        "Selecione no máximo",
+    ):
+        assert forbidden not in script, f"filtragem client-side voltou: {forbidden}"
+
+
+@pytest.mark.django_db
+def test_upload_invalid_attachment_with_single_pdf_aborts(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """P1-A parity (specs/attachments): 1 PDF válido + anexo inválido
+    (acima do limite) ABORTA — nenhum caso é criado e o erro nomeia o
+    anexo. É o outcome que o widget antigo impedia ao filtrar o anexo
+    oversized antes do submit."""
+    client.force_login(nir_user)
+    oversized = SimpleUploadedFile(
+        "anexo-grande.jpg", b"x" * (2 * 1024 * 1024), content_type="image/jpeg"
+    )
+
+    with override_settings(ATTACHMENTS_MAX_SIZE_MB=1):
+        response = client.post(
+            reverse("intake:home"),
+            {
+                "documents": [pdf_factory(name="paciente-a.pdf")],
+                "procedure_type": ANGIO_TYPE,
+                "attachments": [oversized],
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "anexo-grande.jpg" in body
+    assert Case.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_upload_duplicate_names_processed_per_file(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R1/P1-A parity: dois PDFs com o MESMO nome são submetidos e o
+    servidor processa arquivo a arquivo (um caso por arquivo válido) —
+    o cliente não pode colapsar duplicados (o widget antigo os
+    descartava pelo alerta)."""
+    client.force_login(nir_user)
+
+    response = client.post(
+        reverse("intake:home"),
+        {
+            "documents": [
+                pdf_factory(name="relatorio.pdf"),
+                pdf_factory(name="relatorio.pdf"),
+            ],
+            "procedure_type": ANGIO_TYPE,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "2 casos criados" in body
+    assert Case.objects.count() == 2
+
+
+@pytest.mark.django_db
+def test_corrected_resubmission_with_attachment_needs_no_confirmation(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R3+R4: o reenvio corrigido com 1 PDF + anexo válido cria o novo caso
+    com o anexo, sem campo de confirmação — mesmo comportamento do envio."""
+    doctor = user_factory("doctor-resub-att-widget", "doctor")
+    original = Case.objects.create(created_by=nir_user)
+    _drive_to_cleaned(original, nir=nir_user, doctor=doctor)
+    client.force_login(nir_user)
+    url = reverse("intake:case_resubmit", args=[original.case_id])
+
+    response = client.post(
+        url,
+        {
+            "documents": [pdf_factory(name="corrigido.pdf")],
+            "procedure_type": ANGIO_TYPE,
+            "correction_reason": "laudo ilegível, reenvio com foto do exame",
+            "attachments": [_attachment_file()],
+        },
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    new_case = Case.objects.exclude(pk=original.pk).get()
+    assert new_case.corrects_case_id == original.case_id
+    assert new_case.attachments.count() == 1
+    original.refresh_from_db()
+    assert original.attachments.count() == 0
+
+
+@pytest.mark.django_db
+def test_corrected_resubmission_with_invalid_attachment_aborts(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R3 parity (specs/attachments): reenvio corrigido com 1 PDF + anexo
+    inválido (acima do limite) ABORTA — nenhum caso novo é criado e o
+    erro nomeia o anexo, como no envio. Paridade do POST para o caminho
+    inválido; o caminho válido (widget + submit sem confirmação) é
+    provado de verdade no browser pela jornada ``resubmit-real``."""
+    doctor = user_factory("doctor-resub-att-invalid-widget", "doctor")
+    original = Case.objects.create(created_by=nir_user)
+    _drive_to_cleaned(original, nir=nir_user, doctor=doctor)
+    client.force_login(nir_user)
+    url = reverse("intake:case_resubmit", args=[original.case_id])
+    oversized = SimpleUploadedFile(
+        "anexo-grande.jpg", b"x" * (2 * 1024 * 1024), content_type="image/jpeg"
+    )
+
+    with override_settings(ATTACHMENTS_MAX_SIZE_MB=1):
+        response = client.post(
+            url,
+            {
+                "documents": [pdf_factory(name="corrigido.pdf")],
+                "procedure_type": ANGIO_TYPE,
+                "correction_reason": "laudo ilegível, reenvio com foto do exame",
+                "attachments": [oversized],
+            },
+            follow=True,
+        )
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "anexo-grande.jpg" in body
+    assert Case.objects.exclude(pk=original.pk).count() == 0
+
+
+def test_upload_script_reenables_attachments_on_submit_for_server() -> None:
+    """P1-1 (fix-2): anexos já selecionados são submetidos com >1 relatório.
+
+    Com >1 relatório o input de anexos fica ``disabled`` durante a edição
+    (regra visual/hint preservada), mas o navegador não submete controles
+    desabilitados — o servidor nunca veria um anexo já selecionado para
+    emitir o erro não-bloqueante nomeado (R1, specs/attachments). O
+    handler de submit reabilita o input antes de sincronizar, então o
+    servidor, autoridade, cria os casos sem anexos e nomeia o erro.
+    """
+    script_path = finders.find("js/intake-upload.js")
+    assert script_path is not None
+    script = Path(script_path).read_text(encoding="utf-8")
+
+    # A regra da edição (disabled + hint) é preservada.
+    assert ".disabled =" in script
+    # O submit reabilita os anexos já selecionados e sincroniza.
+    submit_index = script.index('addEventListener("submit"')
+    tail = script[submit_index:]
+    assert "disabled = false" in tail
+    assert "syncFiles" in tail

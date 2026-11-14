@@ -619,7 +619,7 @@ def test_resubmit_view_flow(
     _login(client, nir_user)
     resubmit_url = reverse("intake:case_resubmit", args=[original.case_id])
 
-    # GET: form com arquivos, radio único do catálogo e motivo.
+    # GET: form com arquivos, select único do catálogo (slice 002) e motivo.
     response = client.get(resubmit_url)
     assert response.status_code == 200
     body = response.content.decode()
@@ -789,14 +789,15 @@ def test_corrected_form_documents_hint_is_single_pdf() -> None:
 
 
 def test_corrected_form_inherits_single_type_and_attachments() -> None:
-    """R3: o reenvio herda o tipo único do slice 002 (radio obrigatório do
-    catálogo) e o campo de anexos segue o do envio — o reenvio é sempre de 1
-    paciente, então anexos são permitidos sob as mesmas regras."""
+    """R3: o reenvio herda o tipo único do slice 002 (select canônico
+    obrigatório do catálogo — era radio) e o campo de anexos segue o do
+    envio — o reenvio é sempre de 1 paciente, então anexos são permitidos
+    sob as mesmas regras."""
     form = CorrectedResubmissionForm()
 
     field = form.fields["procedure_type"]
     assert isinstance(field, forms.ChoiceField)
-    assert isinstance(field.widget, forms.RadioSelect)
+    assert isinstance(field.widget, forms.Select)
     assert field.required is True
     assert "procedure_types" not in form.fields
 
@@ -812,8 +813,8 @@ def test_resubmit_page_renders_single_pdf_hints(
     user_factory: Callable[[str, str], User],
 ) -> None:
     """R1/R3: a página do reenvio renderiza os hints do reenvio — exatamente 1
-    PDF do relatório corrigido, tipo único (radio) e anexos do envio; o hint do
-    LOTE não aparece em lugar nenhum da página."""
+    PDF do relatório corrigido, tipo único (select — slice 002, era radio) e
+    anexos do envio; o hint do LOTE não aparece em lugar nenhum da página."""
     doctor = user_factory("doctor-resub-hints", DOCTOR_ROLE)
     original = _cleaned_case(created_by=nir_user, doctor=doctor)
     _login(client, nir_user)
@@ -823,7 +824,8 @@ def test_resubmit_page_renders_single_pdf_hints(
     assert response.status_code == 200
     body = response.content.decode()
     assert CORRECTED_DOCUMENTS_HINT in body
-    assert 'type="radio"' in body
+    assert 'name="procedure_type"' in body
+    assert 'type="radio"' not in body
     assert "Anexos de evidência" in body
     assert BATCH_DOCUMENTS_HINT not in body
 

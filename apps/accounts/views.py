@@ -251,6 +251,25 @@ def notification_open(request: HttpRequest, notification_id: uuid.UUID) -> HttpR
 
 @login_required
 @require_POST
+def notification_read(request: HttpRequest, notification_id: uuid.UUID) -> HttpResponse:
+    """Leitura individual: marca só ela como lida e volta à lista (slice 005, R2).
+
+    ``notifications_open`` marca e redireciona ao caso; aqui o POST mínimo
+    marca e redireciona à lista — leitura sem abrir o caso. O guard de
+    destinatário é o mesmo do ``open``: alheia = 404, nada é marcado.
+    """
+    user = _require_user(request)
+    notification = get_object_or_404(
+        UserNotification, notification_id=notification_id, recipient=user
+    )
+    if notification.read_at is None:
+        notification.read_at = timezone.now()
+        notification.save(update_fields=["read_at"])
+    return redirect("notifications")
+
+
+@login_required
+@require_POST
 def notifications_mark_all_read(request: HttpRequest) -> HttpResponse:
     """Marca todas as não lidas do usuário como lidas e volta à lista (D2)."""
     user = _require_user(request)

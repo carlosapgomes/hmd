@@ -57,7 +57,9 @@ CSRF_COOKIE_SECURE = False
 SESSION_COOKIE_SECURE = False
 
 # Determinístico independente de .env local.
-APP_DISPLAY_NAME = "HMD — Hemodinâmica"
+# Default reservado (ui-parity-foundation D1); o override por ambiente
+# segue coberto via override_settings nos testes de renderização.
+APP_DISPLAY_NAME = "SAR – HMD"
 
 # Labels de unidade canônicos na suíte (change unit-labels-env, review P2):
 # sem o pin, HMD_UNIT_*_LABEL no host/.env tornaria os testes de default

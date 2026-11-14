@@ -4,6 +4,8 @@
 {% block title %}{{ app_display_name }} — Caso {{ case_reference }}: decisão médica{% endblock %}
 
 {% block content %}
+<h1 class="page-title">Caso {{ case_reference }}: decisão médica</h1>
+<div class="doctor-decision-layout">
 <div class="row justify-content-center mt-4">
   <div class="col-12 col-lg-10">
     <nav aria-label="breadcrumb" class="mb-3">
@@ -51,7 +53,7 @@
       </div>
       {% endif %}
 
-      <div class="card shadow-sm mb-3">
+      <div class="card shadow-sm mb-3 doctor-decision-form-card">
         <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
           <h2 class="h5 mb-0">Decisão médica por procedimento</h2>
           <span class="badge rounded-pill text-bg-secondary ms-auto">{{ status_label }}</span>
@@ -124,6 +126,7 @@
       </form>
     </div>
   </div>
+</div>
 </div>
 {% endblock %}
 

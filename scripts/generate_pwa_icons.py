@@ -10,10 +10,12 @@ manifest.json`` estão presentes no diretório ``static/icons/``.
 
 Desenho (mesma geometria dos SVGs hand-written ``hmd-base.svg``/
 ``hmd-maskable.svg``): quadrado na cor do app (``--hmd-primary`` de
-``static/css/app.css``, base do gradiente do ``.app-header``), letras "HMD"
-em Helvetica-Bold branco centralizadas. O base tem cantos arredondados e
-transparência fora do retângulo; o maskable é full-bleed com o conteúdo em
-~80% central (safe zone recortada por launchers adaptativos).
+``static/css/app.css``, base do gradiente do ``.app-header``), faixa
+superior de família SAR (secundária do tema, sem texto pequeno — D6) e
+letras "HMD" em Helvetica-Bold branco centralizadas abaixo da faixa. O
+base tem cantos arredondados e transparência fora do retângulo; o
+maskable é full-bleed com o conteúdo em ~80% central (safe zone
+recortada por launchers adaptativos).
 
 Esta é a única fonte de verdade da geometria em Python; o SVG é a versão
 vetorial equivalente. Ao mudar cor/proporção, ajuste os dois.
@@ -30,7 +32,16 @@ import pymupdf
 # Cor do app (--hmd-primary de static/css/app.css) — a MESMA do theme_color
 # do manifest e do fundo do ícone.
 THEME_COLOR_RGB = (0x0D / 255, 0x4A / 255, 0x8A / 255)
+# Faixa de família SAR (ui-parity-foundation D6): a secundária do tema
+# HMD, sem texto pequeno — apenas o marcador geométrico superior.
+BAND_COLOR_RGB = (0x16 / 255, 0x64 / 255, 0x7A / 255)
 TEXT_COLOR_RGB = (1.0, 1.0, 1.0)
+# Faixa superior em frações do quadrado (espelha os SVGs: x=72/512,
+# y=64/512, largura=368/512, altura=56/512).
+BAND_X_RATIO = 72 / 512
+BAND_Y_RATIO = 64 / 512
+BAND_WIDTH_RATIO = 368 / 512
+BAND_HEIGHT_RATIO = 56 / 512
 
 TEXT = "HMD"
 # Helvetica-Bold embutida do PyMuPDF (nome curto "hebo").
@@ -78,12 +89,42 @@ def render_icon_png(size: int, *, maskable: bool) -> bytes:
                 radius=CORNER_RADIUS_RATIO,
             )
 
-        font = pymupdf.Font(FONT_NAME)  # type: ignore[no-untyped-call]
+        # Faixa de família: no maskable ela vive dentro do conteúdo
+        # escalado a 80% (safe zone), como no SVG; no base, nas
+        # coordenadas cheias do quadrado.
         content_ratio = MASKABLE_CONTENT_RATIO if maskable else 1.0
+
+        def _content_coord(value: float) -> float:
+            """Coord. do quadrado cheia → coord. do conteúdo (maskable: 80%)."""
+            center = size / 2
+            return center + (value - center) * content_ratio
+
+        band_rect = pymupdf.Rect(  # type: ignore[no-untyped-call]
+            _content_coord(size * BAND_X_RATIO),
+            _content_coord(size * BAND_Y_RATIO),
+            _content_coord(size * (BAND_X_RATIO + BAND_WIDTH_RATIO)),
+            _content_coord(size * (BAND_Y_RATIO + BAND_HEIGHT_RATIO)),
+        )
+        # Base espelha o rx=8 do SVG; no maskable a faixa é retangular
+        # (o SVG maskable não usa rx= em nenhum rect).
+        if maskable:
+            page.draw_rect(band_rect, color=None, fill=BAND_COLOR_RGB, width=0)
+        else:
+            page.draw_rect(
+                band_rect,
+                color=None,
+                fill=BAND_COLOR_RGB,
+                width=0,
+                radius=0.02,
+            )
+
+        font = pymupdf.Font(FONT_NAME)  # type: ignore[no-untyped-call]
         font_size = size * FONT_SIZE_RATIO * content_ratio
-        # Baseline que centraliza a altura das maiúsculas (bbox do "H").
+        # Baseline que centraliza a altura das maiúsculas (bbox do "H")
+        # abaixo da faixa superior (desvio de 0,06 do quadrado, como nos
+        # SVGs: texto a 324/512 no base).
         cap_height = font.glyph_bbox(ord("H")).y1 * font_size  # type: ignore[no-untyped-call]
-        baseline = size / 2 + cap_height / 2
+        baseline = size / 2 + cap_height / 2 + size * 0.06 * content_ratio
         width = font.text_length(TEXT, font_size)  # type: ignore[no-untyped-call]
         page.insert_text(
             pymupdf.Point(size / 2 - width / 2, baseline),  # type: ignore[no-untyped-call]

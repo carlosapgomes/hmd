@@ -19,7 +19,7 @@ from collections.abc import Sequence
 
 import pytest
 from django.conf import settings
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 
 from apps.accounts.models import Role, User
@@ -187,9 +187,23 @@ class TestHomePlaceholder:
         response = client.get(reverse("home"))
         assert response.status_code == 200
         body = response.content.decode()
-        assert settings.APP_DISPLAY_NAME in body
+        # Slice 001 (ui-parity-foundation): default reservado SAR – HMD.
+        assert settings.APP_DISPLAY_NAME == "SAR – HMD"
+        assert "SAR – HMD" in body
         assert DISPLAY_NAME in body
         assert "nurse" in body
+
+    def test_home_renders_env_override_display_name(self, client: Client) -> None:
+        """Override de ambiente preservado: valor configurado substitui o default."""
+        _create_user(first_name="Maria", last_name="Silva", role_names=("nurse",))
+        client.post(reverse("login"), {"username": USERNAME, "password": PASSWORD})
+
+        with override_settings(APP_DISPLAY_NAME="Nome Sobrescrito"):
+            response = client.get(reverse("home"))
+            assert response.status_code == 200
+            body = response.content.decode()
+            assert "Nome Sobrescrito" in body
+            assert "SAR – HMD" not in body
 
 
 @pytest.mark.django_db

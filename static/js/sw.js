@@ -1,12 +1,13 @@
 /* HMD — Service Worker (change dashboard-notifications-pwa, D4/R4) */
 
-const CACHE_NAME = "hmd-cache-v1";
+const CACHE_NAME = "hmd-cache-v2";
 const STATIC_ASSETS = [
   "/static/manifest.json",
   "/static/js/sw.js",
   "/static/css/app.css",
   "/static/icons/hmd-base.svg",
   "/static/icons/hmd-maskable.svg",
+  "/static/icons/hmd-contrast.svg",
   "/static/icons/icon-72.png",
   "/static/icons/icon-96.png",
   "/static/icons/icon-128.png",

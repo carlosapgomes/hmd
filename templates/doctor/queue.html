@@ -1,26 +1,14 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}{{ app_display_name }} — Fila médica{% endblock %}
+
+{% block nav %}{% include "doctor/_nav.html" with active_tab=tab pending_count=doctor_pending_count decided_count=doctor_decided_count %}{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center mt-4">
   <div class="col-12 col-lg-10">
-    <h1 class="h3 mb-3">Fila médica</h1>
-
-    <ul class="nav nav-tabs mb-3">
-      <li class="nav-item">
-        <a class="nav-link{% if tab == 'aguardando' %} active{% endif %}"
-           href="{% url 'doctor:queue' %}?tab=aguardando{% if subtype %}&subtype={{ subtype }}{% endif %}">
-          Aguardando decisão
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link{% if tab == 'decididos' %} active{% endif %}"
-           href="{% url 'doctor:queue' %}?tab=decididos{% if subtype %}&subtype={{ subtype }}{% endif %}">
-          Decididos
-        </a>
-      </li>
-    </ul>
+    <h1 class="page-title">Fila médica</h1>
 
     <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
       <form method="get" action="{% url 'doctor:queue' %}" class="d-flex align-items-center gap-2">
@@ -43,105 +31,66 @@
       {% endfor %}
     </div>
 
-    {% if items %}
-    <div class="list-group shadow-sm">
-      {% for item in items %}
-      {% comment %}
-      A aba aguardando abre a página de trabalho (leitura + decisão); a aba
-      decididos segue no detalhe read-only (case-work-lock slice 001).
-      {% endcomment %}
-      {% if tab == 'aguardando' %}
-      {% url 'doctor:case_decide' case_id=item.case_id as card_url %}
-      {% else %}
-      {% url 'doctor:case_detail' case_id=item.case_id as card_url %}
-      {% endif %}
-      {% if tab == 'aguardando' and item.lock.is_locked and not item.lock.is_locked_by_current_user %}
-      {% comment %}
-      Reservado por outro médico (case-work-lock D2): card SEM ação primária
-      — o clique não abre a página de trabalho (evita leitura duplicada).
-      {% endcomment %}
-      <div class="list-group-item py-3">
-      {% else %}
-      <a class="list-group-item list-group-item-action py-3"
-         href="{{ card_url }}">
-      {% endif %}
-        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-          <span class="badge rounded-pill text-bg-secondary">{{ item.status_label }}</span>
-          {% if tab == 'decididos' %}
-          <span class="ms-auto small text-nowrap">Abrir caso →</span>
-          {% endif %}
-        </div>
-        <div class="fw-semibold">{{ item.patient_name }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}</div>
-        <div class="small text-muted">
-          Nº de ocorrência: <strong>{{ item.agency_record_number }}</strong>
-          <span class="mx-2">·</span>
-          {% if tab == 'aguardando' %}⏱ Aguardando há {{ item.created_at|timesince }}{% else %}Recebido há {{ item.created_at|timesince }}{% endif %}
-          <span class="mx-2">·</span> Recebido em {{ item.created_at|date:"d/m/Y H:i" }}
-          {% if item.days_on_screen is not None %}<span class="mx-2">·</span><span class="badge rounded-pill text-bg-light border text-muted">{{ item.days_on_screen }} d em tela</span>{% endif %}
-        </div>
-        {% if item.procedures %}
-        <div class="mt-2 d-flex flex-wrap align-items-center gap-2">
-          {% for procedure in item.procedures %}
-          <span class="small">{{ procedure.label }}</span>
-          <span class="badge rounded-pill text-bg-light border text-muted">{{ procedure.subtype }}</span>
+    <div class="mb-3" id="doctor-queue-search-bar">
+      <div class="mb-3" id="doctor-queue-type-filter">
+        <label class="form-label fw-semibold mb-2" for="doctor-queue-exam-type">Filtrar por tipo de exame</label>
+        <select class="form-select" id="doctor-queue-exam-type" data-doctor-exam-filter>
+          <option value="all" data-exam-type-label="Todos" data-exam-type-count="all" selected>Todos (0)</option>
+          {% for option in subtype_options %}
+          <option value="{{ option }}" data-exam-type-label="{{ option }}" data-exam-type-count="{{ option }}">{{ option }} (0)</option>
           {% endfor %}
-        </div>
-        {% endif %}
-        {% if tab == 'aguardando' %}
-        <div class="mt-2">
-          {% if item.lock.is_locked_by_current_user %}
-          <span class="btn btn-sm btn-success">▶ Continuar avaliação</span>
-          {% elif item.lock.is_locked %}
-          <button type="button" class="btn btn-sm btn-secondary" disabled
-                  title="Reservado por {{ item.lock.locked_by_display }}">🔒 Reservado</button>
-          <div class="small text-muted mt-1">por {{ item.lock.locked_by_display }}</div>
-          {% else %}
-          <span class="btn btn-sm btn-primary">Avaliar</span>
-          {% endif %}
-        </div>
-        {% endif %}
-      {% if tab == 'aguardando' and item.lock.is_locked and not item.lock.is_locked_by_current_user %}
+        </select>
       </div>
-      {% else %}
-      </a>
-      {% endif %}
-      {% endfor %}
-    </div>
-    {% else %}
-    <div class="card shadow-sm">
-      <div class="card-body text-muted">
-        {% if tab == 'decididos' %}
-        Nenhum caso decidido até agora.
-        {% else %}
-        Nenhum caso aguardando decisão médica.
-        {% endif %}
+      <label for="doctor-queue-search-input" class="form-label fw-semibold">
+        Buscar por nome ou ocorrência
+      </label>
+      <div class="input-group">
+        <input
+          type="search"
+          id="doctor-queue-search-input"
+          class="form-control"
+          placeholder="Digite nome do paciente ou nº da ocorrência"
+          data-doctor-queue-search
+          aria-describedby="doctor-queue-search-clear"
+        >
+        <button
+          type="button"
+          class="btn btn-outline-secondary"
+          id="doctor-queue-search-clear"
+          data-doctor-queue-clear
+          style="display: none;"
+        >
+          Limpar
+        </button>
+      </div>
+      <div
+        data-doctor-queue-filter-status
+        class="mt-2 text-muted small"
+        aria-live="polite"
+      >
+      </div>
+      <div
+        data-doctor-queue-no-results
+        class="alert alert-info mt-2 mb-0"
+        role="status"
+        style="display: none;"
+      >
+        Nenhum caso encontrado para os filtros selecionados.
       </div>
     </div>
-    {% endif %}
 
-    {% if page_obj.paginator.num_pages > 1 %}
-    <nav class="mt-3" aria-label="Paginação da fila">
-      <ul class="pagination pagination-sm justify-content-center">
-        <li class="page-item{% if not page_obj.has_previous %} disabled{% endif %}">
-          {% if page_obj.has_previous %}
-          <a class="page-link" href="{% url 'doctor:queue' %}?page={{ page_obj.previous_page_number }}{% if filter_qs %}&{{ filter_qs }}{% endif %}">Anterior</a>
-          {% else %}
-          <span class="page-link">Anterior</span>
-          {% endif %}
-        </li>
-        <li class="page-item disabled">
-          <span class="page-link">Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
-        </li>
-        <li class="page-item{% if not page_obj.has_next %} disabled{% endif %}">
-          {% if page_obj.has_next %}
-          <a class="page-link" href="{% url 'doctor:queue' %}?page={{ page_obj.next_page_number }}{% if filter_qs %}&{{ filter_qs }}{% endif %}">Próxima</a>
-          {% else %}
-          <span class="page-link">Próxima</span>
-          {% endif %}
-        </li>
-      </ul>
-    </nav>
-    {% endif %}
+    <div
+      id="doctor-queue-content"
+      hx-get="{% url 'doctor:queue_partial' %}?tab={{ tab }}{% if subtype %}&subtype={{ subtype }}{% endif %}{% if page_obj.number > 1 %}&page={{ page_obj.number }}{% endif %}"
+      hx-trigger="every 20s"
+      hx-swap="innerHTML"
+    >
+      {% include "doctor/_queue_content.html" %}
+    </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/doctor_queue_filter.js' %}"></script>
 {% endblock %}

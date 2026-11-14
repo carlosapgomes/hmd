@@ -1,4 +1,4 @@
-"""Base Django settings do HMD — Hemodinâmica.
+"""Base Django settings do SAR – HMD.
 
 Settings independentes de ambiente, compartilhadas por dev/prod/test.
 Valores sensíveis ou variáveis por ambiente são lidos do ambiente nos módulos
@@ -19,7 +19,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 # Nome do app exibido no cabeçalho, título da página e meta tags.
-APP_DISPLAY_NAME = os.environ.get("APP_DISPLAY_NAME", "HMD — Hemodinâmica")
+# Default reservado (ui-parity-foundation D1): família SAR + unidade HMD;
+# override por ambiente preservado.
+APP_DISPLAY_NAME = os.environ.get("APP_DISPLAY_NAME", "SAR – HMD")
 
 INSTALLED_APPS = [
     # Admin (change admin-local-identity, slice 001/D3): app config custom com
@@ -182,6 +184,7 @@ TEMPLATES = [
                 "apps.accounts.context_processors.app_display_name",
                 "apps.accounts.context_processors.role_context",
                 "apps.accounts.context_processors.notification_unread_count",
+                "apps.accounts.context_processors.queue_counters",
                 "apps.accounts.context_processors.unit_labels",
             ],
         },

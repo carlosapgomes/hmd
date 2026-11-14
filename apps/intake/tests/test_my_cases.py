@@ -275,7 +275,7 @@ def test_navbar_links_for_nir(
     assert response.status_code == 200
     body = response.content.decode()
     assert reverse("intake:my_cases") in body
-    assert f'href="{reverse("intake:home")}">Enviar relatório</a>' in body
+    assert f'href="{reverse("intake:home")}">Novo Encaminhamento</a>' in body
 
     doctor = user_factory("doctor-fora", DOCTOR_ROLE)
     client.force_login(doctor)

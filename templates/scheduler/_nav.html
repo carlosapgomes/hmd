@@ -1,0 +1,51 @@
+{% comment %}
+Partial de navegação do agendador com as abas Pendentes / Processados,
+no vocabulário do ats-web (ui-parity-foundation slice 004). Adaptado do
+molde `scheduler/_nav.html` do ats-web (D3) para as rotas do HMD.
+
+D4 (análogo ao médico): a segunda aba chama-se `Processados` — fiel ao
+filtro por estado atual (`?tab=processados`) — e NÃO `Processados Hoje`.
+A terceira aba do molde (`Buscar caso antigo`) não tem rota no HMD e é
+omitida (sem historical_search). Os valores `?tab=` são preservados.
+
+Contexto:
+  active_tab: "aguardando" | "processados" (opcional; nenhuma aba fica
+  ativa se ausente — página transversal fora da fila).
+  pending_count / processed_count: int (opcionais, para badges; os
+  plugs os alimentam com os totais do context processor `queue_counters`
+  (scheduler_pending_count/scheduler_processed_count), sob os mesmos
+  guards da view).
+
+Uso:
+  {% include "scheduler/_nav.html" with active_tab=tab %}
+{% endcomment %}
+<nav class="app-nav mt-3" aria-label="Navegação">
+  <ul class="nav nav-pills gap-2">
+    <li class="nav-item">
+      {% if pending_count is not None %}
+      <a class="nav-link text-white {% if active_tab == 'aguardando' %}active{% endif %} {% if pending_count %}nav-count-badge nav-count-badge--danger{% endif %}"
+         data-count="{{ pending_count }}"
+         {% if pending_count %}style="position:relative;"{% endif %}
+         {% if active_tab == 'aguardando' %}aria-current="page"{% endif %}
+         href="{% url 'scheduler:queue' %}?tab=aguardando">Pendentes{% if pending_count %} <span class="badge rounded-pill text-bg-light text-dark">{{ pending_count }}</span>{% endif %}</a>
+      {% else %}
+      <a class="nav-link text-white {% if active_tab == 'aguardando' %}active{% endif %}"
+         {% if active_tab == 'aguardando' %}aria-current="page"{% endif %}
+         href="{% url 'scheduler:queue' %}?tab=aguardando">Pendentes</a>
+      {% endif %}
+    </li>
+    <li class="nav-item">
+      {% if processed_count is not None %}
+      <a class="nav-link text-white {% if active_tab == 'processados' %}active{% endif %} {% if processed_count %}nav-count-badge nav-count-badge--neutral{% endif %}"
+         data-count="{{ processed_count }}"
+         {% if processed_count %}style="position:relative;"{% endif %}
+         {% if active_tab == 'processados' %}aria-current="page"{% endif %}
+         href="{% url 'scheduler:queue' %}?tab=processados">Processados{% if processed_count %} <span class="badge rounded-pill text-bg-light text-dark">{{ processed_count }}</span>{% endif %}</a>
+      {% else %}
+      <a class="nav-link text-white {% if active_tab == 'processados' %}active{% endif %}"
+         {% if active_tab == 'processados' %}aria-current="page"{% endif %}
+         href="{% url 'scheduler:queue' %}?tab=processados">Processados</a>
+      {% endif %}
+    </li>
+  </ul>
+</nav>

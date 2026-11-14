@@ -19,14 +19,15 @@
 
 <article class="container py-3 manual" aria-label="Manual de uso">
   <header class="mb-4">
-    <h1 class="h3 mb-1">Manual de uso — {{ app_display_name }}</h1>
+    <h1 class="page-title">Manual de uso</h1>
     <p class="text-muted mb-0">
       Guia das operações de cada papel no ciclo do caso. Esta página é estática
       (não exibe dados de pacientes) e pode ser impressa.
     </p>
   </header>
 
-  <section id="ciclo" class="mb-5" aria-labelledby="ciclo-titulo">
+  <section id="ciclo" class="card shadow-sm mb-5" aria-labelledby="ciclo-titulo">
+    <div class="card-body">
     <h2 id="ciclo-titulo" class="h4">Visão geral do ciclo do caso</h2>
     <p>
       Todo caso percorre o mesmo ciclo, do envio pelo NIR até o encerramento. A
@@ -78,9 +79,11 @@
       <code>FINAL_REPLY_POSTED</code>, <code>AWAITING_NIR_ACK</code>,
       <code>CLEANING</code>, <code>CLEANED</code>.
     </p>
+  </div>
   </section>
 
-  <section id="nir" class="mb-5" aria-labelledby="nir-titulo">
+  <section id="nir" class="card shadow-sm mb-5" aria-labelledby="nir-titulo">
+    <div class="card-body">
     <h2 id="nir-titulo" class="h4">NIR — envio e acompanhamento</h2>
     <ul>
       <li>
@@ -129,9 +132,11 @@
         novamente (nunca herdado).
       </li>
     </ul>
+  </div>
   </section>
 
-  <section id="medico" class="mb-5" aria-labelledby="medico-titulo">
+  <section id="medico" class="card shadow-sm mb-5" aria-labelledby="medico-titulo">
+    <div class="card-body">
     <h2 id="medico-titulo" class="h4">Médico — decisão por procedimento</h2>
     <ul>
       <li>
@@ -167,9 +172,11 @@
         o caso à fila de agendamento.
       </li>
     </ul>
+  </div>
   </section>
 
-  <section id="agendador" class="mb-5" aria-labelledby="agendador-titulo">
+  <section id="agendador" class="card shadow-sm mb-5" aria-labelledby="agendador-titulo">
+    <div class="card-body">
     <h2 id="agendador-titulo" class="h4">Agendador — confirmação por unidade</h2>
     <ul>
       <li>
@@ -207,9 +214,11 @@
         repetir.
       </li>
     </ul>
+  </div>
   </section>
 
-  <section id="transversal" class="mb-5" aria-labelledby="transversal-titulo">
+  <section id="transversal" class="card shadow-sm mb-5" aria-labelledby="transversal-titulo">
+    <div class="card-body">
     <h2 id="transversal-titulo" class="h4">Recursos transversais</h2>
     <ul>
       <li>
@@ -239,6 +248,7 @@
         própria; o app funciona com cache dos arquivos estáticos.
       </li>
     </ul>
+  </div>
   </section>
 
   <footer class="text-muted small border-top pt-3">

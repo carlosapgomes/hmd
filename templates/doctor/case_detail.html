@@ -4,6 +4,8 @@
 {% block title %}{{ app_display_name }} — Caso {{ case_reference }}{% endblock %}
 
 {% block content %}
+<h1 class="page-title">Caso {{ case_reference }}</h1>
+<div class="doctor-decision-layout">
 <div class="row justify-content-center mt-4">
   <div class="col-12 col-lg-10">
     <nav aria-label="breadcrumb" class="mb-3">
@@ -17,7 +19,7 @@
 
     {% if decision_event %}
     <!-- Decisões registradas (pós-decisão, read-only — R5) -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 doctor-report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Decisões registradas</h2>
       </div>
@@ -56,5 +58,6 @@
     </div>
     {% endif %}
   </div>
+</div>
 </div>
 {% endblock %}

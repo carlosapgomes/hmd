@@ -5,6 +5,8 @@
 {% block title %}{{ app_display_name }} — Caso {{ case_reference }}{% endblock %}
 
 {% block content %}
+<h1 class="page-title">Caso {{ case_reference }}</h1>
+<div class="detail-layout">
 <div class="row justify-content-center mt-4">
   <div class="col-12 col-lg-10">
     <nav aria-label="breadcrumb" class="mb-3">
@@ -15,7 +17,7 @@
     </nav>
 
     <!-- Identificação do paciente -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
         <h1 class="h5 mb-0">Identificação do paciente</h1>
         <span class="badge rounded-pill text-bg-secondary ms-auto">{{ status_label }}</span>
@@ -39,21 +41,23 @@
     </div>
 
     <!-- Diagnóstico resumido (one-liner re-identificado na renderização) -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Diagnóstico resumido</h2>
       </div>
-      <div class="card-body">
+      <div class="card-body report-block-body">
+        <div class="summary-box">
         {% if summary_line %}
         <p class="mb-0">{{ summary_line }}</p>
         {% else %}
         <p class="text-muted mb-0">Diagnóstico não disponível para este caso.</p>
         {% endif %}
+        </div>
       </div>
     </div>
 
     <!-- Procedimentos declarados + decisões médicas -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Procedimentos declarados e decisões médicas</h2>
       </div>
@@ -87,7 +91,7 @@
 
     {% if has_scheduling %}
     <!-- Dados de agendamento atuais -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Agendamento</h2>
       </div>
@@ -132,7 +136,7 @@
     <div id="work-lock-warning" class="alert alert-warning mb-3" style="display:none;"></div>
 
     <!-- Ações do agendador (estado aguardando) -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 report-card scheduler-decision-form-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Confirmar agendamento</h2>
       </div>
@@ -163,7 +167,7 @@
       </div>
     </div>
 
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 report-card scheduler-decision-form-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Negar agendamento</h2>
       </div>
@@ -225,7 +229,7 @@
 
     {% if can_view_pdf %}
     <!-- PDFs originais do caso processado pelo próprio agendador (R7) -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Documentos</h2>
       </div>
@@ -260,7 +264,7 @@
     {% endif %}
 
     <!-- Thread de comunicações -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Comunicações</h2>
       </div>
@@ -288,6 +292,7 @@
       </ul>
     </div>
   </div>
+</div>
 </div>
 {% endblock %}
 

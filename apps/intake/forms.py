@@ -5,12 +5,13 @@ Referência de padrão: ats-web ``apps/intake/forms.py`` — lá o form é vazio
 validação de arquivos fica no serviço (o Django não tem ``FileField`` múltiplo
 nativo). Divergência HMD (D1/R4): o form declara o campo de arquivos com o
 atributo HTML ``multiple`` e o tipo do lote como um ``ChoiceField`` único em
-radio — mas quem valida é sempre ``apps.intake.services`` (fonte única); o
+select canônico (combobox pesquisável com JS — slice 002) — mas quem valida
+é sempre ``apps.intake.services`` (fonte única); o
 campo de arquivos é um ``Field`` próprio cujo valor limpo é a lista de
 ``UploadedFile`` (``files.getlist``), sem validação de conteúdo aqui.
 
 Semântica de lote (slice 002, R1/R2): cada PDF é o relatório de um paciente e
-vira um caso, então o tipo é ÚNICO por envio (radio, obrigatório — tipo
+vira um caso, então o tipo é ÚNICO por envio (select, obrigatório — tipo
 ausente/fora do catálogo é erro de formulário, sem chegar ao serviço) e os
 hints dos campos são montados com os números reais dos settings (D3) a cada
 instanciação. O reenvio corrigido (slice 003, R1) sobrescreve o hint do campo
@@ -28,8 +29,14 @@ from django.core.files.uploadedfile import UploadedFile
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 
 # Ordem do registro do catálogo (code-first); labels da fonte clínica.
-_PROCEDURE_TYPE_CHOICES = tuple(
-    (profile.procedure_type, profile.label) for profile in PROCEDURE_PROFILES
+# A opção vazia é o placeholder do select canônico (ui-parity-intake-detail,
+# slice 002): sem ela o navegador pré-selecionaria o 1º tipo e um envio sem
+# escolha submteria valor — vazio deve cair no "Este campo é obrigatório."
+# como o radio sem marcação. Busca do combobox restrita a label + código
+# canônico (sem sinônimos: o catálogo não tem aliases — R3 do slice).
+_PROCEDURE_TYPE_CHOICES = (
+    ("", "Selecione o tipo de procedimento…"),
+    *((profile.procedure_type, profile.label) for profile in PROCEDURE_PROFILES),
 )
 
 
@@ -110,7 +117,8 @@ class IntakeUploadForm(forms.Form):
     """Envio do relatório: 1–N PDFs (1 caso por PDF) + 1 tipo único (R1/R2).
 
     Os campos de arquivo coletam valores sem validar (a validação real é do
-    serviço — R3 do slice 001); o tipo ÚNICO é obrigatório e restrito ao
+    serviço — R3 do slice 001); o tipo ÚNICO (select canônico, slice 002) é
+    obrigatório e restrito ao
     catálogo, de modo que um envio sem tipo válido nem chega ao serviço (R1).
     """
 
@@ -142,13 +150,21 @@ class IntakeUploadForm(forms.Form):
             }
         ),
     )
+    # Select canônico com progressive enhancement do combobox pesquisável
+    # (slice 002, D2): sem JS o select submete o código; com JS o input
+    # espelha nele apenas a opção confirmada (nunca texto livre). A validação
+    # é a do ChoiceField (mesmos textos do radio).
     procedure_type = forms.ChoiceField(
         label="Tipo de procedimento",
         required=True,
         help_text="Um tipo por envio, aplicado a todos os relatórios do lote.",
         choices=_PROCEDURE_TYPE_CHOICES,
-        widget=forms.RadioSelect(
-            attrs={"class": "form-check-input"},
+        widget=forms.Select(
+            attrs={
+                "class": "form-select",
+                "data-procedure-combobox": "",
+                "data-combobox-placeholder": "Digite para buscar — ex.: cateterismo, nefrostomia…",
+            },
         ),
     )
 

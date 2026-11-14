@@ -125,10 +125,10 @@ def test_login_nir_lands_on_intake_home(client: Client) -> None:
 
 @pytest.mark.django_db
 def test_nir_nav_order_send_report_first(client: Client) -> None:
-    """R4: "Enviar relatório" precede "Meus casos" no HTML de uma página nir."""
+    """R4: "Novo Encaminhamento" precede "Meus Casos" no HTML de uma página nir."""
     _create_user(username="regulador.nir", role_names=("nir",))
     _login_with_active_role(client, username="regulador.nir", role="nir")
 
     body = client.get(reverse("intake:home")).content.decode()
 
-    assert body.index("Enviar relatório") < body.index("Meus casos")
+    assert body.index("Novo Encaminhamento") < body.index("Meus Casos")

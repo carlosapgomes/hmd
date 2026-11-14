@@ -31,6 +31,11 @@ urlpatterns: list[URLPattern] = [
         name="notifications_open",
     ),
     path(
+        "notifications/<uuid:notification_id>/read/",
+        views.notification_read,
+        name="notifications_read",
+    ),
+    path(
         "notifications/mark-all-read/",
         views.notifications_mark_all_read,
         name="notifications_mark_all_read",

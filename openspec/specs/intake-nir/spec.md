@@ -6,27 +6,51 @@ Porta de entrada de casos do HMD: o NIR envia os PDFs do relatório de regulaç�
 
 ## Requirements
 
-### Requirement: Criação de caso com upload multi-PDF e declaração de tipos
+### Requirement: Envio em lote: um PDF por caso, tipo único
 
-O NIR (papel ativo `nir`) SHALL criar um caso enviando de 1 a N arquivos PDF que compõem o relatório de regulação e declarando ao menos um tipo de procedimento do catálogo. A criação SHALL ser atômica: caso em `NEW`, documentos ordenados e declaração de procedimentos ocorrem juntos ou nada ocorre. Arquivos não-PDF ou acima dos limites configurados SHALL ser rejeitados com erro claro, sem criar o caso; tipos fora do catálogo rejeitados pela validação existente.
+O NIR (papel ativo `nir`) SHALL enviar de 1 a N arquivos PDF num único envio, onde cada PDF é o relatório de um paciente e vira um caso independente. Cada caso SHALL nascer atomicamente (caso em `NEW`, exatamente 1 documento, declaração do único tipo do lote e eventos juntos ou nada). O tipo de procedimento SHALL ser único por envio/lote (validado contra o catálogo; múltiplos tipos não são permitidos). O lote SHALL respeitar limites configurados de contagem de arquivos, tamanho por arquivo e tamanho total, rejeitados com erro claro antes de qualquer persistência. Falhas por arquivo (não-PDF, tamanho) SHALL rejeitar apenas aquele arquivo: os válidos viram casos e o resultado lista os casos criados e os erros por arquivo; exceção de persistência num caso do lote SHALL resultar em erro por arquivo, preservando os casos já criados. Anexos seguem a regra da spec `attachments` (somente com exatamente 1 PDF; no lote multi-PDF com anexos enviados, os casos são criados sem anexos e o erro informa a restrição). O envio com exatamente 1 PDF e anexo inválido SHALL abortar todo o envio (nada criado).
 
-#### Scenario: Criação com múltiplos PDFs e tipos declarados
-
-- **GIVEN** um usuário com papel ativo `nir`
-- **WHEN** envia 2 PDFs válidos e declara `art_perif` e `cat_cardiaco`
-- **THEN** o caso nasce em `NEW` com 2 documentos ordenados e exatamente os dois tipos declarados, com evento de declaração na trilha
-
-#### Scenario: Arquivo não-PDF rejeita a criação inteira
+#### Scenario: Lote de dois PDFs cria dois casos independentes
 
 - **GIVEN** um usuário com papel ativo `nir`
-- **WHEN** envia 1 PDF e 1 imagem (não-PDF) com tipos válidos
-- **THEN** nenhum caso é criado e o erro identifica o arquivo inválido
+- **WHEN** envia 2 PDFs válidos declarando um único tipo do catálogo
+- **THEN** dois casos independentes nascem em `NEW`, cada um com exatamente 1 documento e o tipo declarado, com evento de declaração por caso na trilha
 
-#### Scenario: Limite de quantidade excede
+#### Scenario: Arquivo inválido no lote rejeita apenas ele
 
-- **GIVEN** a configuração de limite de documentos por caso
-- **WHEN** o NIR envia mais arquivos que o limite
-- **THEN** a criação é rejeitada com erro claro antes de qualquer persistência
+- **GIVEN** um lote com 2 PDFs válidos e 1 imagem (não-PDF)
+- **WHEN** o envio é submetido
+- **THEN** os 2 casos dos PDFs válidos são criados e o resultado lista o erro nomeado do arquivo inválido, sem interromper os demais
+
+#### Scenario: Tipo único inválido rejeita o lote inteiro
+
+- **GIVEN** um envio com tipo fora do catálogo (ou mais de um tipo)
+- **WHEN** o envio é submetido
+- **THEN** nenhum caso é criado e o erro informa a restrição de tipo único
+
+#### Scenario: Limites do lote excedidos rejeitam tudo
+
+- **GIVEN** a configuração de limites de contagem/tamanho do lote
+- **WHEN** o envio excede arquivos por lote ou tamanho total
+- **THEN** nada é criado e o erro informa o limite violado antes de qualquer persistência
+
+#### Scenario: Enviar um único PDF com anexo inválido aborta tudo
+
+- **GIVEN** um envio com exatamente 1 PDF válido e 1 anexo fora dos limites
+- **WHEN** o envio é submetido
+- **THEN** nenhum caso é criado e o erro nomeado do anexo é retornado
+
+#### Scenario: Lote multi-PDF com anexos cria casos sem anexos
+
+- **GIVEN** um envio com 2 PDFs válidos e anexos
+- **WHEN** o envio é submetido
+- **THEN** os 2 casos são criados sem anexos e o resultado informa que anexos só são permitidos com exatamente 1 relatório
+
+#### Scenario: Cada caso do lote é atomicamente criado
+
+- **GIVEN** um lote em que o 2º arquivo falha na persistência após o 1º caso já criado
+- **WHEN** o envio é processado
+- **THEN** o 1º caso permanece criado e íntegro e o resultado lista o erro do 2º arquivo
 
 ### Requirement: Extração assíncrona no cluster pdf
 
@@ -92,7 +116,7 @@ O processamento SHALL validar o documento contra o padrão do relatório de regu
 
 ### Requirement: Revisão NIR do gate
 
-O NIR SHALL conseguir revisar casos retidos pelo gate na tela de detalhe, com duas ações: **liberar** (bypass — o caso avança para `ANONYMIZING` com evento de bypass registrado) e **reenviar documentos** (substitui os PDFs do caso e reprocessa do início da extração, zerando a flag e o texto anterior). Ambas as ações ficam disponíveis apenas enquanto o caso estiver retido.
+O NIR SHALL conseguir revisar casos retidos pelo gate na tela de detalhe, com duas ações: **liberar** (bypass — o caso avança para `ANONYMIZING` com evento de bypass registrado) e **reenviar documento** (substitui o PDF do caso por exatamente 1 novo arquivo — erro nomeado caso contrário, sem efeito — e reprocessa do início da extração, zerando a flag e o texto anterior). Ambas as ações ficam disponíveis apenas enquanto o caso estiver retido.
 
 #### Scenario: Liberar avança com evento de bypass
 
@@ -102,13 +126,19 @@ O NIR SHALL conseguir revisar casos retidos pelo gate na tela de detalhe, com du
 
 #### Scenario: Reenviar documentos reprocessa do zero
 
-- **GIVEN** um caso retido com documentos inválidos
-- **WHEN** o NIR reenvia novos PDFs válidos
-- **THEN** os documentos antigos são substituídos, a flag de revisão é zerada, o texto anterior é descartado e o caso é reprocessado
+- **GIVEN** um caso retido com documento inválido
+- **WHEN** o NIR reenvia exatamente 1 PDF válido
+- **THEN** o documento antigo é substituído, a flag de revisão é zerada, o texto anterior é descartado e o caso é reprocessado
+
+#### Scenario: Reenvio do gate exige exatamente um PDF
+
+- **GIVEN** um caso retido
+- **WHEN** o NIR reenvia 0 ou mais de 1 arquivo
+- **THEN** nada é alterado e o erro nomeado informa que o reenvio aceita exatamente 1 PDF
 
 ### Requirement: Meus casos e detalhe do NIR
-
 O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com status, tipos declarados, indicador de retenção pelo gate e a identificação do paciente (nome e idade quando presentes — o NIR é o criador do caso); o detalhe de um caso SHALL exibir a identificação do paciente (nome e idade, padrão da lista) num card «Identificação do paciente» com badge de status no header, além de documentos (com visualização do PDF) e comunicações — **sem a trilha de eventos** (a trilha vive no painel; caso `FAILED` exibe badge de erro «Falha no processamento»). Acesso a caso criado por outro usuário SHALL ser negado. Os cards NÃO exibem o uid completo do caso — a única exceção é o sufixo curto de desambiguação (`· <8 chars>`), exibido apenas no cenário de nº duplicado descrito abaixo. Toda referência textual a um caso no âmbito do NIR — `<title>`, breadcrumb, cabeçalho do detalhe, mensagens flash e alerta de lote — SHALL usar a **referência humana**: nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel); o uid completo NÃO é exibido em texto visível (permanece apenas como chave das URLs). A linha rotulada «Nº de ocorrência» dos cards mantém `—` quando o nº está ausente (decisão vigente de `queues-remove-uid`: card sem nº fica apenas com a identificação do paciente) — o fallback em `uid <8 chars>` aplica-se a referências (títulos, breadcrumbs, cabeçalho do detalhe, mensagens), não a essa linha rotulada. Onde dois casos compartilham o mesmo nº (reenvio corrigido cria caso novo), a referência SHALL ser desambiguada com sufixo curto (`nº · <8 chars>`): link de «Reenvios corrigidos» no detalhe, página «Reenviar corrigido», flash do novo caso e cards de «meus casos» quando a lista contém nº duplicado. O detalhe exibe TODAS as rows de procedimento do caso com a origem («Declarado» NIR / «Detectado na extração») e o status de detecção após a reconciliação; no card de revisão por divergência, o resumo declarados × detectados acompanha a ação de liberar.
+ A lista segue o padrão ats-web: visual de cards com alerta de espera, abas `Ativos/Encerrados` com contadores, filtros server-side (busca por nº de ocorrência com mínimo de 3 caracteres, status, tipo de procedimento) e atualização automática via partial; escopo por criador e semântica das abas preservados.
 
 #### Scenario: Lista mostra apenas casos do próprio NIR
 
@@ -144,7 +174,7 @@ O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com s
 
 - **GIVEN** casos com uid interno e nº de ocorrência
 - **WHEN** a lista é renderizada
-- **THEN** nenhum card exibe o uid completo do caso — o nº de ocorrência (com `—` quando ausente) e a identificação do paciente são os identificadores do card, sem fragmento de uid em cards com nº único (o sufixo curto só surge no cenário de nº duplicado)
+- **THEN** nenhum card exibe o uid do caso — o nº de ocorrência (com `—` quando ausente) e a identificação do paciente são os identificadores do card
 
 #### Scenario: Detalhe retido por divergência lista declarados e detectados
 
@@ -182,3 +212,26 @@ O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com s
 - **WHEN** o NIR abre «meus casos»
 - **THEN** os cards dos casos com nº N exibem o nº acompanhado do sufixo curto (`N · <8 chars>`); cards com nº único permanecem apenas com o nº
 
+#### Scenario: Filtros server-side compõem por AND
+
+- **GIVEN** casos do NIR com nºs, status e tipos distintos
+- **WHEN** filtra por nº (≥3 caracteres) + status + tipo de procedimento
+- **THEN** apenas os casos que atendem a todos os critérios são listados, com os filtros preservados entre página cheia e partial
+
+#### Scenario: Abas Ativos e Encerrados com contadores
+
+- **GIVEN** 2 casos ativos e 1 encerrado (CLEANED) do NIR
+- **WHEN** abre meus casos
+- **THEN** as abas exibem as contagens 2 e 1, e cada aba lista só os casos da situação correspondente
+
+#### Scenario: Partial atualiza meus casos sem reload
+
+- **GIVEN** meus casos abertos e um novo caso criado pelo NIR, compatível com os filtros ativos
+- **WHEN** decorre o intervalo de atualização
+- **THEN** o novo card aparece sem recarregar a página, preservando aba e filtros
+
+#### Scenario: Caso fora do filtro não aparece no refresh
+
+- **GIVEN** meus casos filtrados por um status e um novo caso criado em outro status
+- **WHEN** decorre o intervalo de atualização
+- **THEN** nenhum card novo aparece e os filtros seguem aplicados

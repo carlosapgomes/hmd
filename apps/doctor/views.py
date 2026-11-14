@@ -293,15 +293,21 @@ def _queue_item(case: Case, *, user: User) -> dict[str, object]:
             }
             for row in rows
         ],
+        # Subtipos declarados (sem duplicar, ordem canônica) — o filtro
+        # client-side de exame só refina dentro do escopo server (D3).
+        "subtypes": list(
+            dict.fromkeys(_PROFILE_BY_TYPE[row.procedure_type].doctor_subtipo for row in rows)
+        ),
     }
 
 
-@role_required("doctor", "admin")
-def queue(request: HttpRequest) -> HttpResponse:
-    """Fila médica por estado (abas) com filtro de subtipo (R2–R5, D2/D5).
+def _build_queue_context(request: HttpRequest) -> dict[str, object]:
+    """Contexto da fila médica (assembly único página + partial, D1/D9).
 
-    Ordenada por tempo de tela (``days_on_screen`` desc nulls-last, desempate
-    FIFO) em TODAS as abas — o tempo de tela persiste pós-decisão.
+    Mesmos guards, filtro de subtipo server-side autoritativo, ordenação
+    por tempo de tela e expiração lazy de leases antes da montagem —
+    o partial executa o MESMO caminho da página cheia (D9: não é GET
+    puro; o efeito colateral de expiração é preexistente).
     """
     user = _require_user(request)
     active_role = request.session.get("active_role", "")
@@ -337,7 +343,7 @@ def queue(request: HttpRequest) -> HttpResponse:
     if subtype:
         filter_parts.append(("subtype", subtype))
 
-    context = {
+    return {
         "tab": tab,
         "subtype": subtype,
         "subtype_options": subtype_options,
@@ -346,7 +352,29 @@ def queue(request: HttpRequest) -> HttpResponse:
         "items": items,
         "filter_qs": urlencode(filter_parts),
     }
-    return render(request, "doctor/queue.html", context)
+
+
+@role_required("doctor", "admin")
+def queue(request: HttpRequest) -> HttpResponse:
+    """Fila médica por estado (abas) com filtro de subtipo (R2–R5, D2/D5).
+
+    Ordenada por tempo de tela (``days_on_screen`` desc nulls-last, desempate
+    FIFO) em TODAS as abas — o tempo de tela persiste pós-decisão.
+    """
+    return render(request, "doctor/queue.html", _build_queue_context(request))
+
+
+@role_required("doctor", "admin")
+def queue_partial(request: HttpRequest) -> HttpResponse:
+    """Fragmento da fila para o polling htmx de 20 s (ui-parity-queues D1/D9).
+
+    Reutiliza o assembly da página cheia (``_build_queue_context``) e
+    renderiza SÓ ``doctor/_queue_content.html`` — o mesmo fragmento que a
+    página inclui no server-side. Mesmos guards (``role_required`` +
+    matriz de subtipo dentro do assembly) e o mesmo efeito colateral de
+    expiração lazy de leases (D9).
+    """
+    return render(request, "doctor/_queue_content.html", _build_queue_context(request))
 
 
 @role_required("doctor", "admin")

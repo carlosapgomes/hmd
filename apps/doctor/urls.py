@@ -20,6 +20,7 @@ app_name = "doctor"
 
 urlpatterns: list[URLPattern] = [
     path("", views.queue, name="queue"),
+    path("partials/queue/", views.queue_partial, name="queue_partial"),
     path("case/<uuid:case_id>/", views.case_detail, name="case_detail"),
     path("case/<uuid:case_id>/pdf/<int:position>/", views.case_pdf, name="case_pdf"),
     path("case/<uuid:case_id>/decide/", views.case_decide, name="case_decide"),

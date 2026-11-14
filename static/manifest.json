@@ -1,5 +1,5 @@
 {
-  "name": "Regulação - HMD",
+  "name": "SAR – HMD",
   "short_name": "HMD",
   "description": "Sistema de apoio à regulação de pacientes do serviço de hemodinâmica (HGRS).",
   "start_url": "/",
@@ -18,6 +18,12 @@
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "maskable"
+    },
+    {
+      "src": "/static/icons/hmd-contrast.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
     },
     {
       "src": "/static/icons/icon-72.png",

@@ -8,7 +8,7 @@ Confirmar, negar e reabrir o agendamento de casos aceitos pelo médico nas duas 
 
 ### Requirement: Fila do agendador completa
 
-O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos prontos para agendamento (estados `SCHEDULER_REQUESTED` e `AWAITING_SCHEDULING` — pedidos novos e casos reabertos por intercorrência), ordenada por **tempo de tela** — `days_on_screen` (descendente, casos sem o campo ao fim), desempate FIFO por `created_at` — paginada, **sem diferenciação por unidade**, com aba de casos processados do agendamento; os cards exibem nome e idade do paciente (quando presentes), nº de ocorrência, tempo de espera e o tempo de tela oficial quando presente. Antes de montar a aba aguardando, o sistema SHALL expirar reservas vencidas dos casos nesses estados; cada card dessa aba SHALL refletir o estado de reserva: sem reserva → ação livre que abre a página de confirmação; reservado pelo próprio agendador → ação «Continuar»; reservado por outro portador → botão desabilitado «Reservado» com o nome do portador. Outros papéis ativos recebem 403; anônimo é redirecionado ao login. Os cards NÃO exibem o identificador interno do caso (uid).
+O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos prontos para agendamento (estados `SCHEDULER_REQUESTED` e `AWAITING_SCHEDULING` — pedidos novos e casos reabertos por intercorrência), ordenada por **tempo de tela** — `days_on_screen` (descendente, casos sem o campo ao fim), desempate FIFO por `created_at` — paginada, **sem diferenciação por unidade**, com aba de casos processados do agendamento; os cards exibem nome e idade do paciente (quando presentes), nº de ocorrência, tempo de espera e o tempo de tela oficial quando presente. Antes de montar a aba aguardando, o sistema SHALL expirar reservas vencidas dos casos nesses estados; cada card dessa aba SHALL refletir o estado de reserva: sem reserva → ação livre que abre a página de confirmação; reservado pelo próprio agendador → ação «Continuar»; reservado por outro portador → botão desabilitado «Reservado» com o nome do portador. Outros papéis ativos recebem 403; anônimo é redirecionado ao login. Os cards NÃO exibem o identificador interno do caso (uid). A apresentação segue o padrão ats-web: abas `Pendentes/Processados`, visual `case-card` com alerta de espera, badges de contagem nas abas, busca client-side por nome/ocorrência e atualização automática via partial a cada 20 s; ordenação, guards e paginação server-side preservados.
 
 #### Scenario: Agendador vê a fila completa
 
@@ -57,6 +57,30 @@ O sistema SHALL exibir ao papel ativo `scheduler`/`admin` a fila de casos pronto
 - **GIVEN** um caso pronto para agendamento com reserva ativa do próprio agendador
 - **WHEN** ele acessa a fila (aba aguardando)
 - **THEN** o card exibe a ação «Continuar» que reabre a página de trabalho do agendamento
+
+#### Scenario: Partial atualiza a fila sem reload
+
+- **GIVEN** a fila aberta e um novo caso chegando à fila de agendamento, posicionado na página exibida
+- **WHEN** decorre o intervalo de atualização
+- **THEN** o novo card aparece sem recarregar a página, preservando aba e paginação
+
+#### Scenario: Caso de outra página não aparece
+
+- **GIVEN** a fila com paginação e um novo caso posicionado em outra página
+- **WHEN** decorre o intervalo de atualização
+- **THEN** nenhum card novo aparece na página exibida
+
+#### Scenario: Busca client-side filtra os cards
+
+- **GIVEN** a fila com vários casos renderizados
+- **WHEN** o agendador digita o nome do paciente ou o nº de ocorrência na busca
+- **THEN** apenas os cards correspondentes permanecem visíveis, sem nova requisição
+
+#### Scenario: Badges de contagem nas abas
+
+- **GIVEN** 2 casos aguardando e 4 processados acessíveis ao agendador
+- **WHEN** a fila é renderizada
+- **THEN** as abas exibem as contagens 2 e 4
 
 ### Requirement: Confirmação de agendamento com unidade e resposta final
 

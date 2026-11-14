@@ -8,7 +8,7 @@ Processar anexos de evidência dos casos com OCR híbrido (local para PDFs com t
 
 ### Requirement: Upload e listagem de anexos pelo NIR
 
-O sistema SHALL permitir ao NIR anexar arquivos (JPEG, PNG ou PDF) no momento da criação do caso e no reenvio corrigido, respeitando limites de contagem e tamanho por arquivo, com rejeição nomeada antes de qualquer gravação; anexos aceitos ficam listados no detalhe do caso para o criador com nome e status de processamento legível. O caso sem anexos SHALL seguir idêntico ao fluxo atual.
+O sistema SHALL permitir ao NIR anexar arquivos (JPEG, PNG ou PDF) no momento da criação do caso e no reenvio corrigido, respeitando limites de contagem e tamanho por arquivo, com rejeição nomeada antes de qualquer gravação; anexos aceitos ficam listados no detalhe do caso para o criador com nome e status de processamento legível. O caso sem anexos SHALL seguir idêntico ao fluxo atual. Anexos exigem exatamente 1 relatório: com múltiplos PDFs, anexos geram erro nomeado NÃO-bloqueante (casos criados sem anexos); com 1 PDF, anexo inválido ABORTA o envio inteiro.
 
 #### Scenario: Anexos criados junto com o caso
 
@@ -27,6 +27,12 @@ O sistema SHALL permitir ao NIR anexar arquivos (JPEG, PNG ou PDF) no momento da
 - **GIVEN** um caso do NIR com um anexo já processado e outro pendente
 - **WHEN** ele abre o detalhe do caso
 - **THEN** ambos os anexos são listados com nome e status legível de processamento
+
+#### Scenario: Anexos com múltiplos relatórios são recusados sem bloquear
+
+- **GIVEN** um upload com 2 PDFs de relatório válidos e dois anexos
+- **WHEN** a criação é submetida
+- **THEN** os dois casos são criados sem anexos e o erro nomeado informa que anexos exigem exatamente 1 relatório
 
 ### Requirement: Extração híbrida com auditoria de OCR externo
 

@@ -62,3 +62,4 @@ seeding is never feature proof. Skipped entry points remain unverified.
   nome/código sem acentos, teclado ↑↓/Enter, edição pós-seleção limpa
   o canônico, submit não-confirmado rejeitado e select nativo sem JS
   (ui-parity-intake-detail slice 002).
+- [Detalhe, decisão e confirmação por papel](detalhe-papeis.md): jornada médico→agendador→NIR no layout ats-web (ui-parity-intake-detail slice 003).

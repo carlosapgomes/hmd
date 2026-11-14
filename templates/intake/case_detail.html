@@ -7,6 +7,7 @@
 
 {% block content %}
 <h1 class="page-title">Caso {{ case.display_reference }}</h1>
+<div class="detail-layout">
 <div class="row justify-content-center mt-4">
   <div class="col-12 col-lg-10">
     <nav aria-label="breadcrumb" class="mb-3">
@@ -22,7 +23,7 @@
          Idade omitida quando ausente («0 a» exibe); o nº usa a referência
          humana do model (fallback `uid <8 chars>`, D1) e o uid completo fica
          apenas nas URLs. -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
         <h1 class="h5 mb-0">Identificação do paciente</h1>
         {% if case.status == 'FAILED' %}
@@ -37,7 +38,7 @@
         <span class="badge rounded-pill text-bg-secondary ms-auto">{{ status_label }}</span>
         {% endif %}
       </div>
-      <div class="card-body">
+      <div class="card-body report-block-body">
         <dl class="row mb-2">
           <dt class="col-sm-3">Paciente</dt>
           <dd class="col-sm-9">{{ case.patient_name|default:"—" }}</dd>
@@ -55,7 +56,7 @@
       </div>
     </div>
 
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 report-card">
       <div class="card-body">
         {% if case.manual_review_required %}
           {% if case.status == 'LLM_EXTRACTING' and case.manual_review_reason == 'procedure_divergence' %}
@@ -114,7 +115,7 @@
     {% if corrections %}
     <!-- Correções do original (nir-result-closure, slice 004, R4): os novos
          casos que reenviam este caso, ordenados por criação. -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Reenvios corrigidos deste caso</h2>
       </div>
@@ -142,12 +143,12 @@
     {% if has_outcome %}
     <!-- Seção de resultado (nir-result-closure, slice 003, R1): decisões por
          procedimento + agendamento quando houver + ciência do NIR. -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
         <h2 class="h5 mb-0">Resultado</h2>
         <span class="badge rounded-pill text-bg-secondary ms-auto">{{ status_label }}</span>
       </div>
-      <div class="card-body">
+      <div class="card-body report-block-body">
         <h3 class="h6 text-muted text-uppercase mb-2">Decisões médicas por procedimento</h3>
         <ul class="list-group list-group-flush mb-3">
           {% for decision in procedure_decisions %}
@@ -204,7 +205,7 @@
 
     {% if case.manual_review_required %}
       {% if case.status == 'LLM_EXTRACTING' and case.manual_review_reason == 'procedure_divergence' %}
-      <div class="card shadow-sm mb-4 border-info">
+      <div class="card shadow-sm mb-4 report-card border-info">
         <div class="card-header bg-info-subtle">
           <h2 class="h5 mb-0">Revisão do gate — divergência de procedimentos</h2>
         </div>
@@ -241,7 +242,7 @@
         </div>
       </div>
       {% elif case.status == 'PDF_EXTRACTING' %}
-      <div class="card shadow-sm mb-4 border-warning">
+      <div class="card shadow-sm mb-4 report-card border-warning">
         <div class="card-header bg-warning-subtle">
           <h2 class="h5 mb-0">Revisão do gate</h2>
         </div>
@@ -274,7 +275,7 @@
       {% endif %}
     {% endif %}
 
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Documentos</h2>
       </div>
@@ -315,7 +316,7 @@
     <!-- Anexos (attachment-processing-ocr, slice 001, R4): evidências
          enviadas junto com o relatório — bloco ausente quando não há anexos.
          Sem conteúdo de verificação (o resultado clínico é do médico). -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Anexos</h2>
       </div>
@@ -346,7 +347,7 @@
 
     <div class="row g-4">
       <div class="col-12">
-        <div class="card shadow-sm mb-4">
+        <div class="card shadow-sm mb-4 report-card">
           <div class="card-header bg-white">
             <h2 class="h5 mb-0">Comunicações</h2>
           </div>
@@ -379,5 +380,6 @@
       </div>
     </div>
   </div>
+</div>
 </div>
 {% endblock %}

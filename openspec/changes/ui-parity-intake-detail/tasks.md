@@ -27,10 +27,10 @@ Contract: `slices/slice-002-procedure-combobox.md`
 
 Contract: `slices/slice-003-detail-decision-visual.md`
 
-- [ ] 3.1 Detalhe do caso (médico, agendador, NIR) no layout
+- [x] 3.1 Detalhe do caso (médico, agendador, NIR) no layout
   ats-web com o conteúdo atual intacto; verificar com testes de
   conteúdo + capturas vs ats-web
-- [ ] 3.2 Decisão e confirmação/negação no layout, formulários e
+- [x] 3.2 Decisão e confirmação/negação no layout, formulários e
   atomics intactos (zero comportamento portado); verificar com a
   suíte existente verde sem alteração + jornada de decisão completa
 

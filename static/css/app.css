@@ -533,6 +533,68 @@ body.hospital-shell h6 {
   content: "⚠ ";
 }
 
+/* ---------- Detalhe/decisão/confirmação no padrão ats-web (ui-parity-intake-detail, slice 003) ---------- */
+/* Layout 2 colunas e blocos de relatório do molde ``doctor/decision.html``
+   do ats-web, adaptados aos tokens do HMD (a primária #0d4a8a segue
+   reservada). Só apresentação: formulários, ordem clínica e guards
+   intactos — nenhum comportamento de ``decision.js`` foi portado (Q6). */
+
+.doctor-decision-layout,
+.detail-layout {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.doctor-decision-form-card,
+.scheduler-decision-form-card {
+  border-top: 4px solid var(--hospital-primary);
+}
+
+.doctor-report-card,
+.report-card {
+  border-left: 4px solid rgba(11, 66, 99, 0.18);
+}
+
+.doctor-report-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1.25rem;
+}
+
+.doctor-report-grid .report-block {
+  border: 1px solid var(--hospital-border);
+  border-radius: 0.65rem;
+  padding: 0.85rem;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+@media (max-width: 991.98px) {
+  .doctor-report-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Report blocks (relatório médico) ---------- */
+
+.report-block {
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--hospital-border);
+}
+
+.report-block:last-child {
+  border-bottom: none;
+}
+
+.report-block-body {
+  font-size: 0.86rem;
+  color: var(--hospital-text);
+  line-height: 1.55;
+}
+
+.report-block-body p {
+  margin-bottom: 0.25rem;
+}
+
 /* ---------- Responsivo ---------- */
 
 @media (max-width: 767.98px) {

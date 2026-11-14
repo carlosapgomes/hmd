@@ -14,7 +14,7 @@ detalhe read-only (`case_detail.html`).
 {% endcomment %}
 
     <!-- Identificação do paciente -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 doctor-report-card">
       <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
         <h1 class="h5 mb-0">Identificação do paciente</h1>
         {% if is_failed %}
@@ -76,7 +76,7 @@ detalhe read-only (`case_detail.html`).
     </div>
 
     <!-- Procedimentos do caso -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 doctor-report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Procedimentos do caso</h2>
       </div>
@@ -107,12 +107,13 @@ detalhe read-only (`case_detail.html`).
       </div>
     </div>
 
+    <div class="doctor-report-grid mb-4">
     <!-- Sumário clínico -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 doctor-report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Sumário clínico</h2>
       </div>
-      <div class="card-body">
+      <div class="card-body report-block-body">
         {% if summary_lines %}
         {% for line in summary_lines %}
         <p class="mb-2{% if forloop.last %} mb-0{% endif %}">{{ line }}</p>
@@ -124,11 +125,11 @@ detalhe read-only (`case_detail.html`).
     </div>
 
     <!-- Estrutura extraída -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 doctor-report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Estrutura extraída</h2>
       </div>
-      <div class="card-body">
+      <div class="card-body report-block-body">
         {% for section in sections %}
         {% if section.lines %}
         <h3 class="h6 text-muted text-uppercase mt-3{% if forloop.first %} mt-0{% endif %}">{{ section.title }}</h3>
@@ -147,8 +148,10 @@ detalhe read-only (`case_detail.html`).
       </div>
     </div>
 
+    </div>
+
     <!-- Prior-case -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 doctor-report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Prior-case</h2>
       </div>
@@ -184,7 +187,7 @@ detalhe read-only (`case_detail.html`).
     </div>
 
     <!-- Documentos -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 doctor-report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Documentos</h2>
       </div>
@@ -223,7 +226,7 @@ detalhe read-only (`case_detail.html`).
     <!-- Anexos (attachment-processing-ocr, slice 004/D5): cards consultivos —
          re-identificação na renderização, mismatch é alerta (danger) com texto
          fixo e NENHUMA ação automática (sem descarte/bloqueio). -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 doctor-report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Anexos</h2>
       </div>
@@ -272,7 +275,7 @@ detalhe read-only (`case_detail.html`).
     {% endif %}
 
     <!-- Requisitos gerais acionáveis -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 doctor-report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Requisitos gerais acionáveis</h2>
       </div>
@@ -290,7 +293,7 @@ detalhe read-only (`case_detail.html`).
     </div>
 
     {% if aggregate.suggestion %}
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 doctor-report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Recomendação agregada do pipeline</h2>
       </div>
@@ -312,13 +315,13 @@ detalhe read-only (`case_detail.html`).
     {% endif %}
 
     <!-- Alertas consultivos por procedimento -->
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-4 doctor-report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Alertas consultivos</h2>
       </div>
-      <div class="card-body">
+      <div class="card-body report-block-body">
         {% for advisory in advisories %}
-        <div class="card mb-3{% if advisory.recommendation == 'recomenda_recusar' %} border-danger{% endif %}">
+        <div class="card mb-3 report-block{% if advisory.recommendation == 'recomenda_recusar' %} border-danger{% endif %}">
           <div class="card-header{% if advisory.recommendation == 'recomenda_recusar' %} bg-danger-subtle{% else %} bg-white{% endif %} d-flex flex-wrap align-items-center gap-2">
             <h3 class="h6 mb-0">{{ advisory.label }}</h3>
             <span class="badge rounded-pill text-bg-light border text-muted">{{ advisory.subtype }}</span>

@@ -4,6 +4,43 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.16] — 2026-11-14
+
+**Paridade visual SAR–HMD (casca, filas, intake/detalhe/painel) + semântica
+de lote do intake** — 4 changes (`ui-parity-foundation`,
+`ui-parity-queues`, `ui-parity-intake-detail`, `intake-batch-semantics`),
+15 slices TDD com revisão independente por slice. Suíte 1553 →
+**1705** (+152 testes). Sem migrations (deploy direto).
+
+- **ui-parity-foundation** — o HMD entra na família SAR: rename para
+  «SAR – HMD» (manifest, títulos, ícone com a sigla + marcador geométrico
+  da família, PNGs regenerados; cor primária e `short_name` preservados),
+  header com logo, faixa de navegação por papel, fontes do tema
+  hospitalar e CSS com tokens; harness de verificação `verify-hmd`
+  (launch isolado com seed sintético, drive Playwright pinado).
+- **ui-parity-queues** — filas médica e do agendador em `case-cards` com
+  `summary-box`, alerta de espera (`waiting-time`), `status-badge` e abas
+  com contadores (aba do médico rotulada «Decididos», fiel à query);
+  busca client-side por nome/nº de ocorrência; partials htmx com
+  auto-refresh a cada 20 s; «Meus casos» do NIR em cards com filtros
+  server-side (nº, status, tipo) + auto-refresh. Sem mudança em regra de
+  negócio, ordenação, guards ou semântica das abas.
+- **ui-parity-intake-detail** — última milha da paridade: upload NIR com
+  drag-and-drop e preview (arquivos, contagem, tamanho total);
+  `procedure_type` vira combobox pesquisável (labels + códigos dos 13
+  perfis, ignora acentos, navegação por teclado; sem JS o select canônico
+  funciona); detalhe do caso (médico, agendador, NIR), página de
+  trabalho/decisão e confirmação/negação do agendador no layout do
+  ats-web; painel gerencial no visual (seletor de período, cards de
+  métrica).
+- **intake-batch-semantics** — semântica correta do lote, corrigida antes
+  da fase 2 (antes, N PDFs produziriam UM caso com N pacientes):
+  **cada PDF = um caso independente**, tipo único de procedimento por
+  envio, anexos somente quando o envio tem exatamente 1 PDF, falhas
+  parciais (PDF inválido rejeita só ele, casos dos válidos criados com os
+  erros listados) e limites de lote descritos na UI. Novo serviço
+  `submit_report_batch` no molde ats-web.
+
 ## [0.1.15] — 2026-09-22
 
 **Referência humana (nº de ocorrência) em toda a UI** — 1 change

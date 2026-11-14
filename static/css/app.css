@@ -533,6 +533,78 @@ body.hospital-shell h6 {
   content: "⚠ ";
 }
 
+/* ---------- Painel gerencial: toolbar de período e cards de métrica (ui-parity-intake-detail, slice 004) ---------- */
+/* Adaptado do molde ``dashboard/index.html`` do ats-web para os tokens do
+   HMD (a primária #0d4a8a segue reservada). Só apresentação: as métricas
+   e os filtros são os do HMD, intactos — nenhum comportamento. */
+
+.metrics-period-card {
+  border-color: rgba(199, 216, 226, 0.85);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.metrics-period-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.metrics-period-title {
+  color: var(--hospital-text);
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.metrics-period-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.metrics-period-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border: 1px solid var(--hospital-border);
+  border-radius: 0.55rem;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--hospital-primary);
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.metrics-period-option:hover,
+.metrics-period-option:focus {
+  border-color: var(--hospital-primary);
+  background: var(--hospital-accent-light);
+  color: var(--hospital-primary);
+}
+
+.metrics-period-option.is-active {
+  border-color: var(--hospital-primary);
+  background: var(--hospital-primary);
+  color: #ffffff;
+  box-shadow: 0 0 0 0.12rem rgba(11, 66, 99, 0.16);
+}
+
+@media (min-width: 768px) {
+  .metrics-period-toolbar {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .metrics-period-options {
+    width: auto;
+    margin-left: auto;
+  }
+}
+
 /* ---------- Detalhe/decisão/confirmação no padrão ats-web (ui-parity-intake-detail, slice 003) ---------- */
 /* Layout 2 colunas e blocos de relatório do molde ``doctor/decision.html``
    do ats-web, adaptados aos tokens do HMD (a primária #0d4a8a segue

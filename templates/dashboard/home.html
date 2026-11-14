@@ -12,22 +12,34 @@
      EXTERNO/LLM; a UI interna de funcionários mostra o paciente), filtros de
      data/tipo/status/busca compondo por AND, default sem filtros = HOJE em
      todos os estados, e o botão [Detalhes] (o encerramento administrativo vive
-     no detalhe). -->
-<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-  <h1 class="page-title">Painel gerencial</h1>
-  <nav class="btn-group" aria-label="Período das métricas">
-    {% for option in period_options %}
-    <a href="?period={{ option.value }}{% if list_qs %}&{{ list_qs }}{% endif %}"
-       class="btn btn-sm {% if option.value == period %}btn-primary{% else %}btn-outline-secondary{% endif %}"
-       {% if option.value == period %}aria-current="page"{% endif %}>{{ option.label }}</a>
-    {% endfor %}
-  </nav>
+     no detalhe).
+     Slice 004 do change ui-parity-intake-detail (D4): só apresentação — a
+     toolbar de período, os cards de métrica e a lista em ``case-card`` seguem
+     o molde ``dashboard/index.html`` do ats-web; queries, filtros e fontes
+     imutáveis intactos (nenhum número muda). -->
+<div class="card metrics-period-card mb-3">
+  <div class="card-body p-3">
+    <div class="metrics-period-toolbar" id="metrics-period-selector">
+      <div class="metrics-period-heading">
+        <div class="metrics-period-title">Período das métricas</div>
+      </div>
+      <div class="metrics-period-options" role="group" aria-label="Período das métricas">
+        {% for option in period_options %}
+        <a href="?period={{ option.value }}{% if list_qs %}&{{ list_qs }}{% endif %}"
+           class="btn btn-sm metrics-period-option{% if option.value == period %} is-active{% endif %}"
+           {% if option.value == period %}aria-current="page"{% endif %}>{{ option.label }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
 </div>
+
+<h1 class="page-title">Painel gerencial</h1>
 
 <!-- Cards de resumo do período -->
 <div class="row row-cols-2 row-cols-md-6 g-3 mb-4">
   <div class="col">
-    <div class="card h-100 text-center">
+    <div class="card metrics-summary-card h-100 text-center">
       <div class="card-body">
         <div class="fs-3 fw-bold">{{ summary.total }}</div>
         <div class="text-muted small text-uppercase">Total</div>
@@ -35,7 +47,7 @@
     </div>
   </div>
   <div class="col">
-    <div class="card h-100 text-center border-success">
+    <div class="card metrics-summary-card h-100 text-center border-success">
       <div class="card-body">
         <div class="fs-3 fw-bold text-success">{{ summary.agendados }}</div>
         <div class="text-muted small text-uppercase">Agendados</div>
@@ -43,7 +55,7 @@
     </div>
   </div>
   <div class="col">
-    <div class="card h-100 text-center border-danger">
+    <div class="card metrics-summary-card h-100 text-center border-danger">
       <div class="card-body">
         <div class="fs-3 fw-bold text-danger">{{ summary.negados }}</div>
         <div class="text-muted small text-uppercase">Negados</div>
@@ -51,7 +63,7 @@
     </div>
   </div>
   <div class="col">
-    <div class="card h-100 text-center border-secondary">
+    <div class="card metrics-summary-card h-100 text-center border-secondary">
       <div class="card-body">
         <div class="fs-3 fw-bold text-secondary">{{ summary.em_andamento }}</div>
         <div class="text-muted small text-uppercase">Em andamento</div>
@@ -59,7 +71,7 @@
     </div>
   </div>
   <div class="col">
-    <div class="card h-100 text-center">
+    <div class="card metrics-summary-card h-100 text-center">
       <div class="card-body">
         <div class="fs-3 fw-bold">{{ summary.encerrados }}</div>
         <div class="text-muted small text-uppercase">Encerrados</div>
@@ -67,7 +79,7 @@
     </div>
   </div>
   <div class="col">
-    <div class="card h-100 text-center border-warning">
+    <div class="card metrics-summary-card h-100 text-center border-warning">
       <div class="card-body">
         <div class="fs-3 fw-bold text-warning-emphasis">{{ summary.administratively_closed }}</div>
         <div class="text-muted small text-uppercase">Encerr. administrativos</div>
@@ -191,52 +203,54 @@
       <button type="submit" class="btn btn-sm btn-outline-secondary">Filtrar</button>
     </form>
   </div>
-  <div class="table-responsive">
-    <table class="table table-sm align-middle mb-0">
-      <thead>
-        <tr>
-          <th scope="col">Paciente</th>
-          <th scope="col">Fase</th>
-          <th scope="col">Procedimentos</th>
-          <th scope="col">Inserido em</th>
-          <th scope="col">Resultado</th>
-          <th scope="col" class="text-end">Ações</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in cases %}
-        <tr>
-          <td>
-            <div class="fw-semibold">
-              <span class="case-patient-name">{{ item.patient_name|default:"—" }}</span>{% if item.patient_age is not None %}<span class="text-muted small"> · {{ item.patient_age }} a</span>{% endif %}
+  <div class="card-body">
+    {% if cases %}
+    <div class="d-flex flex-column gap-2">
+      {% for item in cases %}
+      <div class="case-card card">
+        <div class="card-body py-2 px-3">
+          <div class="row align-items-center g-2">
+            <div class="col-12 col-lg-3">
+              <div class="fw-semibold">
+                <span class="case-patient-name">{{ item.patient_name|default:"—" }}</span>{% if item.patient_age is not None %}<span class="text-muted small"> · {{ item.patient_age }} a</span>{% endif %}
+              </div>
+              <small class="text-muted">
+                {% if item.origin_unit %}<span class="case-origin-unit">{{ item.origin_unit }}</span> · {% endif %}Nº de ocorrência: <strong>{% if item.agency_record_number %}{{ item.agency_record_number }}{% else %}uid {{ item.short_id }}{% endif %}</strong>
+              </small>
             </div>
-            <div class="small text-muted">
-              {% if item.origin_unit %}<span class="case-origin-unit">{{ item.origin_unit }}</span> · {% endif %}Nº de ocorrência: <strong>{% if item.agency_record_number %}{{ item.agency_record_number }}{% else %}uid {{ item.short_id }}{% endif %}</strong>
+            <div class="col-6 col-lg-2">
+              <span class="badge rounded-pill text-bg-secondary">{{ item.status_label }}</span>
+              <div class="small text-muted mt-1">{{ item.next_step_label }}</div>
             </div>
-          </td>
-          <td class="small">
-            <span class="badge rounded-pill text-bg-secondary">{{ item.status_label }}</span>
-            <div class="mt-1">{{ item.next_step_label }}</div>
-          </td>
-          <td class="small">
-            {% if item.procedure_labels %}{{ item.procedure_labels|join:" · " }}{% else %}—{% endif %}
-          </td>
-          <td class="small text-nowrap">{{ item.created_at|date:"d/m/Y H:i" }}</td>
-          <td class="small">{{ item.result_label }}</td>
-          <td class="text-end">
-            <a href="{% url 'dashboard:case_detail' item.case_id %}{% if filter_qs %}?{{ filter_qs }}{% endif %}"
-               class="btn btn-sm btn-outline-secondary">Detalhes</a>
-          </td>
-        </tr>
-        {% empty %}
-        <tr>
-          <td colspan="6" class="text-muted small">
-            Nenhum caso no período com os filtros selecionados.
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+            <div class="col-6 col-lg-3">
+              <div class="d-flex flex-wrap gap-1">
+                {% if item.procedure_labels %}
+                {% for label in item.procedure_labels %}
+                <span class="badge bg-secondary badge-wrap">{{ label }}</span>
+                {% endfor %}
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+              </div>
+            </div>
+            <div class="col-6 col-lg-2">
+              <small class="text-muted text-nowrap">{{ item.created_at|date:"d/m/Y H:i" }}</small>
+              <div class="small">{{ item.result_label }}</div>
+            </div>
+            <div class="col-12 col-lg-2 text-lg-end mt-1 mt-lg-0">
+              <a href="{% url 'dashboard:case_detail' item.case_id %}{% if filter_qs %}?{{ filter_qs }}{% endif %}"
+                 class="btn btn-sm btn-outline-secondary">Detalhes</a>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-muted small mb-0">
+      Nenhum caso no período com os filtros selecionados.
+    </p>
+    {% endif %}
   </div>
   {% if page_obj.paginator.num_pages > 1 %}
   <div class="card-footer">

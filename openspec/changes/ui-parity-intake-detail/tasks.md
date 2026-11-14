@@ -38,9 +38,9 @@ Contract: `slices/slice-003-detail-decision-visual.md`
 
 Contract: `slices/slice-004-panel-visual.md`
 
-- [ ] 4.1 Toolbar de período, cards de métrica e lista em
+- [x] 4.1 Toolbar de período, cards de métrica e lista em
   `case-card` com queries e filtros atuais; verificar com testes
   de conteúdo + capturas vs ats-web
-- [ ] 4.2 Rodar o mapa verify-hmd completo, gate verde e
+- [x] 4.2 Rodar o mapa verify-hmd completo, gate verde e
   `PROJECT_CONTEXT.md` atualizado para o archive; verificar com
   evidência do harness + gate

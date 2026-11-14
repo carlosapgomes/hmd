@@ -19,7 +19,7 @@ Python 3.13+ · Django 5.2+ · PostgreSQL 17+ · Bootstrap 5.3 · Vanilla JS · 
 ## Status
 
 **v0.1.9 — piloto fase 2 (intake ativo; anonimização determinística-first)**: autenticação por AD
-(Kerberos), admin, painel, manual e navegação em `https://hmd.projetoshgrs.com`
+(Kerberos), admin, painel, manual e navegação em `https://<domínio público do piloto>`
 atrás de Cloudflare→Caddy; imagem GHCR não-root (uid 10001), segredos 100% por
 arquivo, intake/workers/egress LLM desligados (fase 1). Ciclo do caso completo
 (`NEW→CLEANED`) implementado — upload com anexos, extração/anonimização
@@ -298,12 +298,14 @@ não-sensível; a senha vem do arquivo). **Obrigatórios e não default**: os
 arquivos de segredo reais (a chave de exemplo é pública e serve só p/ dev),
 `DB_HOST`/`DB_NAME` apontando o DB `app_hmd` com a credencial da APLICAÇÃO
 (distinta da migrator; a role da aplicação precisa de **DML** nas tabelas do
-schema, incluindo `hmd_cache`), `ALLOWED_HOSTS=hmd.projetoshgrs.com` (sem
+schema, incluindo `hmd_cache`), `ALLOWED_HOSTS=<domínio público>` (sem
 ele, a URL pública dá 400 mesmo com o container healthy — o healthcheck
 interno usa 127.0.0.1) e o username do superusuário do seed — sem ele o passo
 1 aborta antes de semear os prompts (o `&&` do one-shot é sequencial).
-(`CSRF_TRUSTED_ORIGINS`/`PROXY_SSL_HEADER` têm default no compose, mas
-defina-os explicitamente para não depender disso.) Use
+`CSRF_TRUSTED_ORIGINS` e `HMD_INGRESS_IPV4` são **obrigatórias e sem default**
+no compose (domínio público e IP de ingress não são versionados neste repo;
+valores reais só no `.env` do host); `PROXY_SSL_HEADER` tem default, mas
+defina-o explicitamente para não depender disso.) Use
 `DB_HOST=postgres-app-hmd` (alias inequívoco do PG na rede do banco) — **nunca**
 `hmd`, que na rede de ingress é o alias do próprio web (ambiguidade de DNS
 Docker entre redes).
@@ -314,7 +316,7 @@ PostgreSQL compartilhado (DB `app_hmd` + aliases `postgres-app-hmd`/`hmd`)
 devem existir ANTES do `up`; e o host precisa de credencial para puxar a
 imagem do GHCR (`docker login ghcr.io` com PAT `read:packages`) — ou o
 pacote deve ser público. Ajustes do
-piloto: `ALLOWED_HOSTS=hmd.projetoshgrs.com` (o compose acrescenta
+piloto: `ALLOWED_HOSTS=<domínio público>` (o compose acrescenta
 `127.0.0.1` automaticamente p/ o healthcheck), `AD_DCS` e
 `INTRANET_IP_RANGE` (valores reais fora do Git).
 `INTRANET_RESTRICTED_ROLES` tem default `nir` no compose (iguais ao ATS).

@@ -45,7 +45,8 @@ llm 512m · attachments 512m.
 5. NTP ativo (leases/work-lock dependem de relógio).
 6. Segredos em `./secrets/` legíveis pelo uid/gid 10001.
 7. `.env` no host: `HMD_IMAGE_TAG` pinado, `ALLOWED_HOSTS`,
-   `CSRF_TRUSTED_ORIGINS`, `PROXY_SSL_HEADER=true`,
+   `CSRF_TRUSTED_ORIGINS`, `HMD_INGRESS_IPV4` (IP fixo do web na rede de
+   ingress — ver 6.1), `PROXY_SSL_HEADER=true`,
    `TRUSTED_PROXY_HEADER=HTTP_CF_CONNECTING_IP`, `AD_DCS`,
    `INTRANET_IP_RANGE`, `DB_*`, `MIGRATOR_DB_USER`,
    `DJANGO_SUPERUSER_USERNAME`, `LLM1_MODEL`/`LLM2_MODEL`/`VISION_MODEL`.
@@ -68,11 +69,12 @@ docker compose --env-file .env -f docker-compose.prod.yml ps   # registrar o que
 git fetch --tags --prune
 git checkout --detach vA.B.C        # ex.: v0.1.16 — nunca branch, sempre tag
 
-# 2. Reaplicar o patch local (IP fixo) — ver seção 6.1:
-#    após o checkout, `git diff docker-compose.prod.yml` deve mostrar SOMENTE
-#    uma linha `ipv4_address: <ip-do-web>` (o valor real está registrado só no
-#    host — repo público não versiona IPs internos) em
-#    `services.web.networks.hospital_ingress_hmd`.
+# 2. Compor o IP de ingress: a partir da release que parametrizou o compose
+#    (v0.1.17+), o IP fixo vem da env — conferir no .env:
+#      HMD_INGRESS_IPV4=<ip-do-web>      # dentro da subnet da rede de ingress
+#    No upgrade TRANSICIONAL (último com patch local do ipv4_address),
+#    reverter o patch do working tree (`git checkout -- docker-compose.prod.yml`)
+#    e setar a env acima. `git diff` deve ficar VAZIO daí em diante.
 #    Se o diff mostrar outra coisa: PARAR e reconciliar com o repo antes de seguir.
 
 # 3. Conferir o pin no .env (uma linha só, tag@digest do workflow):
@@ -100,9 +102,9 @@ docker exec hmd-prod-worker-pdf-1 printenv INTAKE_ENABLED         # false
 docker logs --tail 20 hmd-prod-web-1
 ```
 
-Smoke funcional: abrir `https://hmd.projetoshgrs.com`, login AD, home por
-papel, e uma fila (visível no footer/manifest a versão do release —
-`APP_DISPLAY_NAME`/ícones mudam quando o default do compose muda).
+Smoke funcional: abrir a URL pública do piloto (`<domínio público>`), login
+AD, home por papel, e uma fila (visível no footer/manifest a versão do
+release — `APP_DISPLAY_NAME`/ícones mudam quando o default do compose muda).
 
 ### 3.2 Housekeeping pós-aceite
 
@@ -143,15 +145,16 @@ docker logs --tail 50 hmd-prod-worker-llm-1   # idem web/pdf/anonymization/attac
 
 ## 6. Divergências conhecidas (servidor × repo) e plano
 
-### 6.1 IP fixo não versionado (ativo)
+### 6.1 IP fixo do ingress (parametrizado a partir da release com a env)
 
-O compose do servidor carrega um patch local: `ipv4_address: <ip-do-web>`
-para o web em `hospital_ingress_hmd` (o Caddy aponta para esse IP). O repo é
-**público** e não versiona IPs internos do hospital — o patch é reaplicado a
-cada checkout de release (passo 2 do upgrade) e o valor vive apenas no host.
-Há um backup manual `docker-compose.prod.yml.before-ip-pin-*.yml` no host.
-**Plano:** mover o override (e valores reais de infra) para um repo **privado**
-de infraestrutura, carregado com `-f` adicional — repo público fica limpo.
+**Histórico:** o compose do servidor carregava um patch local
+(`ipv4_address: <ip-do-web>` no web em `hospital_ingress_hmd`), pois o repo é
+**público** e não versiona IPs internos do hospital. **Resolvido:** o compose
+passou a exigir `HMD_INGRESS_IPV4` (env obrigatória, fail-closed, sem default)
+— o valor vive só no `.env` do host, dentro da subnet da rede externa de
+egress→ingress. No primeiro upgrade com a env, reverter o patch local
+(`git checkout -- docker-compose.prod.yml`) e o `git status` do clone fica
+limpo permanentemente.
 
 ### 6.2 `INTAKE_ENABLED` duplicado no `.env` (ativo)
 

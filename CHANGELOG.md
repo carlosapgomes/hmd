@@ -4,6 +4,31 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.17] — 2026-11-14
+
+**Runbook de deploy unificado + repo neutro em infra** — 3 changes de
+operação (docs/parametrização/auditoria), sem mudança funcional de
+aplicação. Suíte 1705 → **1707** (+2 testes-guarda). Sem migrations
+(deploy direto). **Ação exigida no host:** o compose passa a exigir
+`HMD_INGRESS_IPV4` e `CSRF_TRUSTED_ORIGINS` no `.env` (fail-closed em dois
+níveis: compose sem default + settings sem default).
+
+- **Runbook de deploy** (`docs/runbook-deploy-producao.md`): topologia real
+  do servidor de produção, procedimento de upgrade passo a passo,
+  pós-checks, rollback, diagnósticos, housekeeping e divergências conhecidas
+  — unifica README (piloto/fase 2) + spec `production-deployment` + estado
+  verificado no host.
+- **Parametrização de infra**: IP fixo do web na rede de ingress passa a
+  `HMD_INGRESS_IPV4` (env obrigatória) — elimina o patch local de
+  `ipv4_address` no host; `CSRF_TRUSTED_ORIGINS` sem default no compose
+  (domínio público não versionado em repo público).
+- **Auditoria de exposição**: domínio real deixa de ser default das
+  settings de prod (lista vazia), host de produção neutralizado em docs e
+  comentários, e dois testes-guarda novos: compose falha nomeado sem as
+  envs obrigatórias; `git grep` impede domínio real e IPs internos
+  (`172.30.x`, `10.17.168.x`) em arquivos vivos (histórico/CHANGELOG/
+  archives ficam fora — registro imutável).
+
 ## [0.1.16] — 2026-11-14
 
 **Paridade visual SAR–HMD (casca, filas, intake/detalhe/painel) + semântica

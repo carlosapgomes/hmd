@@ -472,9 +472,10 @@ def test_upload_flow_via_view(
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """GET renderiza o form (1–N PDFs + tipo único em radio); POST de 1 PDF +
-    1 tipo cria o caso e redireciona ao detalhe (contrato redirect×resultado
-    preservado: 1 caso sem erros — design D4)."""
+    """GET renderiza o form (1–N PDFs + tipo único em select canônico —
+    slice 002, era radio); POST de 1 PDF + 1 tipo cria o caso e redireciona
+    ao detalhe (contrato redirect×resultado preservado: 1 caso sem erros —
+    design D4)."""
     client.force_login(nir_user)
     url = reverse("intake:home")
 
@@ -482,7 +483,8 @@ def test_upload_flow_via_view(
     assert response.status_code == 200
     body = response.content.decode()
     assert 'name="documents"' in body
-    assert 'type="radio"' in body
+    assert 'name="procedure_type"' in body
+    assert 'type="radio"' not in body
     assert "Arteriografia periférica" in body
     assert 'value="cat_cardiaco"' in body
 

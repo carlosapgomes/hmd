@@ -54,3 +54,11 @@ seeding is never feature proof. Skipped entry points remain unverified.
 - [Notificações](notificacoes.md): jornada 3 não lidas → marca 1 sem abrir
   → sino 3→2 → abrir caso → marcar todas → sino zerado; item alheio 404
   (slice 005).
+- [Upload com drag-and-drop](upload-dragdrop.md): zona + preview (lista,
+  contagem, tamanho), toggle de anexos 1→2→1, submit sem confirmação,
+  lote misto nomeado e form nativo sem JS (ui-parity-intake-detail
+  slice 001).
+- [Combobox de procedimento](combobox-procedimento.md): busca por
+  nome/código sem acentos, teclado ↑↓/Enter, edição pós-seleção limpa
+  o canônico, submit não-confirmado rejeitado e select nativo sem JS
+  (ui-parity-intake-detail slice 002).

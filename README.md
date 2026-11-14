@@ -112,7 +112,7 @@ do modelo spaCy nos workers.
 # .env do host: a env já é passada adiante nos workers que anonimizam
 ANONYMIZATION_USE_NER=true
 ANONYMIZATION_SPACY_MODEL=pt_core_news_lg   # ou md em host enxuto
-docker compose -f docker-compose.prod.yml up -d --profile workers
+docker compose -f docker-compose.prod.yml --profile workers up -d
 ```
 
 Antes de reativar, **calibre pelo benchmark**: com o NER desligado o corpus
@@ -378,7 +378,7 @@ ar, o web segue recusando envios. A ativação é explícita, nesta ordem:
    `.env`. Modelo vazio não quebra o boot: o uso falha fechado e o caso fica
    retido com motivo.
 4. **Sobe os workers:**
-   `docker compose -f docker-compose.prod.yml up -d --profile workers`
+   `docker compose -f docker-compose.prod.yml --profile workers up -d`
    (pdf/anonymization/llm/attachments). Os limites de memória são tunáveis por
    `WORKER_*_MEM_LIMIT`; o `worker-anonymization` cobre **2 processos** (engine
    spaCy singleton POR PROCESSO): calibre pelo pico de RSS do

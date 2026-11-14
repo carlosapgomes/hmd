@@ -89,7 +89,7 @@ docker compose --env-file .env -f docker-compose.prod.yml pull
 docker compose --env-file .env -f docker-compose.prod.yml --profile migrate run --rm migrate
 
 # 6. Subir TUDO (web + workers) com a imagem nova:
-docker compose --env-file .env -f docker-compose.prod.yml up -d --profile workers
+docker compose --env-file .env -f docker-compose.prod.yml --profile workers up -d
 ```
 
 ### 3.1 Pós-checks (aceite do deploy)
@@ -119,7 +119,7 @@ Disco de referência: ~42% de 461G usados; cada imagem ~1GB.
 
 1. Repin a última imagem boa no `.env`
    (`v0.1.15@sha256:7b3f3ad0e55676e28d366faf72dcf0939992088516e4f5494040340b09dd30bf`
-   enquanto a 0.1.15 for a N-1), `pull`, `up -d --profile workers`.
+   enquanto a 0.1.15 for a N-1), `pull`, `--profile workers up -d`.
 2. **Atenção a schema**: se a release nova aplicou migrations, avaliar
    reversibilidade antes do rollback de imagem (migrations HMD têm sido
    aditivas; conferir o changelog da release).

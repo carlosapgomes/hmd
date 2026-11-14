@@ -1,13 +1,13 @@
-# Runbook de deploy em produção — HMD (servidor `eon`)
+# Runbook de deploy em produção — HMD (servidor de produção)
 
 Fonte única de verdade operacional, unificando: README (seção Piloto/fase 2),
 spec `openspec/specs/production-deployment/spec.md` e o **estado real
 verificado no servidor em 2026-11-14**. Em caso de conflito, este documento
 prevalece; divergências conhecidas estão na seção final.
 
-## 1. Topologia real (verificada em eon)
+## 1. Topologia real (verificada no servidor de produção)
 
-Host `eon`, diretório do deploy: **`/srv/apps/hmd`** (clone git do repo —
+Host de produção, diretório do deploy: **`<dir-deploy>`** (clone git do repo —
 serve de fonte do `docker-compose.prod.yml` e documentação; o código que roda
 vem **sempre da imagem GHCR**, nunca do working tree).
 

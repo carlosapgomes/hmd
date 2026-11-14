@@ -10,7 +10,7 @@ Cobre:
   precedência sobre ``DJANGO_SUPERUSER_PASSWORD``; fail-closed sem fonte);
 - R3/R4: ``docker-compose.prod.yml`` resolve com TODOS os profiles e um
   segredo por consumidor, sem ``DATABASE_URL``/``MIGRATOR_DATABASE_URL``;
-- Hardening de container (diretiva blueprint/Eon): limites PLANEJADOS de
+- Hardening de container (diretiva blueprint do servidor de produção): limites PLANEJADOS de
   fase 1 do web (512m/1.0/200) + rootfs read-only/no-new-privileges/
   cap_drop ALL (mitigações mantidas como defesa em profundidade) e a env
   ``DJANGO_SETTINGS_MODULE=prod`` do web (P1: o gunicorn não aceita
@@ -271,7 +271,12 @@ def _create_secret_dummies(tmp_path: Path) -> dict[str, str]:
 
 
 def _compose_env(dummies: dict[str, str]) -> dict[str, str]:
-    """Ambiente do compose: dummies apontados pelas envs ``*_FILE``."""
+    """Ambiente do compose: dummies apontados pelas envs ``*_FILE``.
+
+    ``CSRF_TRUSTED_ORIGINS`` e ``HMD_INGRESS_IPV4`` usam valores SINTÉTICOS
+    (documentation ranges): são obrigatórias no compose (fail-closed) e o
+    repo não versiona domínio/IP reais do hospital.
+    """
     return {
         **os.environ,
         "APP_DB_PASSWORD_FILE": dummies["app_db_password"],
@@ -279,6 +284,8 @@ def _compose_env(dummies: dict[str, str]) -> dict[str, str]:
         "OPENROUTER_API_KEY_FILE": dummies["openrouter_api_key"],
         "SECRET_KEY_FILE": dummies["secret_key"],
         "SUPERUSER_PASSWORD_FILE": dummies["superuser_password"],
+        "CSRF_TRUSTED_ORIGINS": "https://hmd.exemplo.intranet",
+        "HMD_INGRESS_IPV4": "192.0.2.10",
     }
 
 
@@ -308,6 +315,50 @@ def _run_compose(
         text=True,
         check=False,
     )
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker compose indisponível")
+def test_compose_required_envs_fail_closed_without_values(tmp_path: Path) -> None:
+    """Sem ``CSRF_TRUSTED_ORIGINS``/``HMD_INGRESS_IPV4`` o compose FALHA nomeado
+    (repo público não versiona domínio/IP de ingress — valores reais só no
+    ``.env`` do host)."""
+    env = _compose_env(_create_secret_dummies(tmp_path))
+    env.pop("CSRF_TRUSTED_ORIGINS")
+    env.pop("HMD_INGRESS_IPV4")
+
+    result = _run_compose(env, quiet=True)
+
+    assert result.returncode != 0
+    assert "required variable CSRF_TRUSTED_ORIGINS" in result.stderr
+    assert "required variable HMD_INGRESS_IPV4" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git indisponível")
+def test_repo_does_not_version_real_domain_or_internal_ips() -> None:
+    """Guarda de neutralidade: arquivos vivos não versionam o domínio real do
+    piloto nem IPs internos do hospital (histórico/CHANGELOG/archives são
+    registro imutável e ficam fora; os padrões vivem neste teste por isso ele
+    mesmo é excluído do pathspec)."""
+    domain = "projetos" + "hgrs"  # concatenação: o fonte não contém o domínio
+    result = subprocess.run(
+        [
+            "git",
+            "grep",
+            "-nE",
+            f"{domain}|172\\.30\\.|10\\.17\\.168\\.",
+            "--",
+            ".",
+            ":!CHANGELOG.md",
+            ":!openspec/changes/archive",
+            ":!apps/accounts/tests/test_prod_secrets.py",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, f"padrão sensível versionado em arquivo vivo:\n{result.stdout}"
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker compose indisponível")

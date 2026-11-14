@@ -27,7 +27,7 @@ from django.urls import reverse
 
 from apps.accounts.models import Role, User
 
-PUBLIC_ORIGIN = "https://hmd.projetoshgrs.com"
+PUBLIC_ORIGIN = "https://hmd.exemplo.intranet"
 EXTERNAL_IP = "203.0.113.10"
 INTRANET_CIDR = "10.0.0.0/8"
 GUARD_SETTINGS = {
@@ -136,12 +136,13 @@ class TestProdSettings:
         assert prod.CACHES["default"]["BACKEND"] == DATABASE_CACHE_BACKEND
 
     def test_prod_csrf_trusted_origins_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Sem env, a origem pública do piloto é a confiável (D3)."""
+        """Sem env, NENHUMA origem é confiável (repo público não versiona o
+        domínio real — o compose prod exige a env, fail-closed)."""
         monkeypatch.delenv("CSRF_TRUSTED_ORIGINS", raising=False)
 
         prod = _load_prod_settings(monkeypatch)
 
-        assert prod.CSRF_TRUSTED_ORIGINS == [PUBLIC_ORIGIN]
+        assert prod.CSRF_TRUSTED_ORIGINS == []
 
     def test_prod_csrf_trusted_origins_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Env com várias origens: split por vírgula, com strip e sem vazios."""

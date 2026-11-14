@@ -43,7 +43,7 @@ services:
     image: ghcr.io/carlosapgomes/hmd:${HMD_IMAGE_TAG:-v0.1.16}
     restart: unless-stopped
     stop_grace_period: 40s
-    # Limites de recurso — PLANEJADOS/INICIAIS da fase 1 (blueprint/Eon,
+    # Limites de recurso — PLANEJADOS/INICIAIS da fase 1 (blueprint do servidor de produção,
     # 2026-09-11): gunicorn 3×2 sem spaCy no processo web. A revisar por
     # observação em produção; os workers da fase 2 têm faixas PRÓPRIAS
     # (`mem_limit` no bloco de workers abaixo — o worker-anonymization orça 2

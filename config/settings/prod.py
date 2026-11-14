@@ -59,11 +59,12 @@ ALLOWED_HOSTS = [
     host.strip() for host in os.environ.get("ALLOWED_HOSTS", "").split(",") if host.strip()
 ]
 
-# Origem pública do piloto como default (D3): DNS público, não secret. O env
-# aceita várias origens separadas por vírgula.
+# Origens confiáveis do CSRF: SEM default — o domínio real não é versionado
+# neste repo (público); o compose prod exige a env (fail-closed em ambos os
+# níveis). O env aceita várias origens separadas por vírgula.
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
-    for origin in os.environ.get("CSRF_TRUSTED_ORIGINS", "https://hmd.projetoshgrs.com").split(",")
+    for origin in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",")
     if origin.strip()
 ]
 

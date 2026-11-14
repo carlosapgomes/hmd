@@ -360,6 +360,31 @@ body.hospital-shell h6 {
   opacity: 0.55;
 }
 
+/* ---------- Indicador pulsante do alerta da fila (ui-parity-queues) ---------- */
+/* Círculo de 8 px com pulso de opacidade no alerta “N casos aguardando
+   avaliação” do fragmento da fila — adaptado do molde ats-web (mesmo
+   comportamento, token de perigo do HMD; a primária #0d4a8a segue reservada). */
+
+@keyframes pulse-dot {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.pulse-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--hospital-danger);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
 /* ---------- Responsivo ---------- */
 
 @media (max-width: 767.98px) {

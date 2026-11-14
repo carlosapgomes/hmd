@@ -901,14 +901,16 @@ class TestCanAccessCase:
 
 
 def _card_slice(body: str, case_id: object) -> str:
-    """Fatia o HTML do card do caso (do item de lista ao item seguinte).
+    """Fatia o HTML do card do caso (do wrapper ao wrapper seguinte).
 
     O escopo por card evita assert global de uid: o ``href`` da rota carrega o
-    uid (chave técnica) e o card é localizado por ele.
+    uid (chave técnica) e o card é localizado por ele. Desde ui-parity-queues
+    o wrapper é ``data-doctor-queue-card`` (case-card); o nome do paciente
+    também aparece no atributo desse wrapper, então a fatia parte dele.
     """
     anchor = body.index(str(case_id))
-    start = body.rindex('<a class="list-group-item', 0, anchor)
-    end = body.find('<a class="list-group-item', anchor)
+    start = body.rindex('<div class="col-12" data-doctor-queue-card', 0, anchor)
+    end = body.find('<div class="col-12" data-doctor-queue-card', anchor)
     return body[start:] if end == -1 else body[start:end]
 
 
@@ -939,7 +941,9 @@ def test_queue_card_does_not_show_case_uid(
     assert f"Caso {case.case_id}" not in card
     assert str(case.case_id) not in _card_visible_text(card)
     assert "Paciente Sem Uid" in card
-    assert "Nº de ocorrência: <strong>5040778</strong>" in card
+    # ui-parity-queues: nº na summary-box (rótulo + valor), sem uid.
+    assert "Nº de ocorrência" in card
+    assert "5040778" in card
     # A rota do card segue técnica (uid no href).
     assert str(case.case_id) in body
 
@@ -958,7 +962,7 @@ def test_queue_card_without_occurrence_has_no_uid(
     body = client.get(reverse("doctor:queue")).content.decode()
 
     card = _card_slice(body, case.case_id)
-    assert "Nº de ocorrência: <strong>—</strong>" in card
+    assert "Nº de ocorrência" in card
     assert "Paciente Sem Ocorrencia" in card
     assert f"Caso {case.case_id}" not in card
     assert str(case.case_id) not in _card_visible_text(card)
@@ -1000,29 +1004,28 @@ def test_queue_cards_close_anchor(
 
 # ── case-work-lock slice 002: reserva nos cards da fila (R8) ──────────────
 
-# Aberturas possíveis do item de lista: link (caso livre/próprio) ou bloco
-# estático (reservado por outro — sem ação primária, padrão ats-web).
-_CARD_OPENINGS = ('<a class="list-group-item', '<div class="list-group-item')
+# Wrapper do card desde ui-parity-queues: ``data-doctor-queue-card``. O nome
+# do paciente também aparece no atributo desse wrapper — a fatia parte dele
+# (não do link/bloco interno), senão o marcador por nome localiza o card
+# anterior.
+_CARD_OPENING = '<div class="col-12" data-doctor-queue-card'
 
 LOCK_CONTEXT = "doctor_decision"
 
 
 def _card_block(body: str, marker: object) -> str:
-    """Fatia o item de lista localizado pelo ``marker`` (uid ou nome único).
+    """Fatia o card localizado pelo ``marker`` (uid ou nome único).
 
-    ``rfind``/``find`` (não ``rindex``/``index``): a ausência de uma das
-    aberturas possíveis devolve -1 em vez de levantar ``ValueError``. O uid
-    só existe no corpo quando o card tem ação (``<a href>``); o card reservado
-    por outro médico é um bloco sem link e é localizado por um marcador visível
-    único (nome do paciente).
+    O uid só existe no corpo quando o card tem ação (``<a href>``); o card
+    reservado por outro médico é um bloco sem link e é localizado por um
+    marcador visível único (nome do paciente, também no atributo do
+    wrapper).
     """
     anchor = body.index(str(marker))
-    starts = [
-        index for index in (body.rfind(mark, 0, anchor) for mark in _CARD_OPENINGS) if index != -1
-    ]
-    ends = [index for index in (body.find(mark, anchor) for mark in _CARD_OPENINGS) if index != -1]
-    start = max(starts)
-    return body[start : min(ends) if ends else len(body)]
+    start = body.rfind(_CARD_OPENING, 0, anchor)
+    assert start != -1
+    end = body.find(_CARD_OPENING, anchor)
+    return body[start : end if end != -1 else len(body)]
 
 
 @pytest.mark.django_db

@@ -693,3 +693,30 @@ body.hospital-shell h6 {
     font-size: 0.98rem;
   }
 }
+
+/* ---------- Listas operacionais: página completa (OLI-001 D2/D3) ---------- */
+/* Escopo explícito: nenhuma regra global de ``.case-card``/``.summary-box``
+   é alterada. A região 8/4 vem do grid do Bootstrap; aqui só garantimos
+   wrap, alvo mínimo do CTA e ausência de overflow no card operacional. */
+
+.operational-list-page .case-card .badge-wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.operational-list-page .case-card .btn {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.operational-list-page .case-card {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 991.98px) {
+  .operational-list-page .case-card .col-lg-4 .btn {
+    width: 100%;
+  }
+}

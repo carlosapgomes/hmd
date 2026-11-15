@@ -11,6 +11,7 @@ reservas/ordenação/paginação preservadas inclusive via partial (D9).
 
 from __future__ import annotations
 
+import pathlib
 from collections.abc import Callable, Sequence
 from datetime import timedelta
 
@@ -82,7 +83,7 @@ def test_queue_cards_use_case_card_visual_markers(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R1: card com case-card/summary-box/waiting-time/status-badge + nome/idade."""
+    """OLI-001 rev: card pendente sem badge genérico de status (sem redundância)."""
     case = _make_awaiting_case(
         nir_user,
         (ANGIO_TYPE,),
@@ -99,11 +100,16 @@ def test_queue_cards_use_case_card_visual_markers(
     assert "case-card" in card
     assert "summary-box" in card
     assert "waiting-time" in card
-    assert "status-badge" in card
+    # Revisão OLI-001: sem ``status-badge`` genérico nos pendentes; os badges
+    # de subtipo/procedimento e ``Dias em tela`` permanecem.
+    assert "status-badge" not in card
+    assert "Aguardando decisão médica" not in card
+    assert "badge rounded-pill" in card
     assert "Paciente Paridade" in card
     assert "84 a" in card
     assert "777001" in card
-    assert "6 d em tela" in card
+    assert "Dias em tela: 6" in card
+    assert "6 d em tela" not in card
     assert "Arteriografia periférica" in card
     assert "angio" in card
     assert "Aguardando há" in card
@@ -142,7 +148,7 @@ def test_queue_page_has_htmx_polling_search_and_exam_filter(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R2/R3: container htmx 20 s p/ partial, busca client-side, filtro de exame, ARIA."""
+    """OLI-001 R2/R6: htmx 20 s, busca client-side, filtro único server-side, ARIA."""
     _make_awaiting_case(
         nir_user,
         (ANGIO_TYPE,),
@@ -158,7 +164,9 @@ def test_queue_page_has_htmx_polling_search_and_exam_filter(
     assert 'hx-trigger="every 20s"' in body
     assert 'hx-swap="innerHTML"' in body
     assert "data-doctor-queue-search" in body
-    assert "data-doctor-exam-filter" in body
+    # OLI-001 R2: sem seletor client-side redundante.
+    assert "data-doctor-exam-filter" not in body
+    assert body.count('name="subtype"') == 1
     assert "data-doctor-queue-filter-status" in body
     assert 'aria-live="polite"' in body
     assert "data-doctor-queue-no-results" in body
@@ -197,7 +205,7 @@ def test_queue_partial_returns_same_fragment_with_same_guards(
     assert "case-card" in partial_body
     assert "summary-box" in partial_body
     # Fragmento, não a página cheia (sem heading/nav/base).
-    assert "Fila médica</h1>" not in partial_body
+    assert "Casos aguardando decisão</h1>" not in partial_body
     assert "doctor-queue-content" not in partial_body
 
     # Mesmo fragmento do server-side: o card aparece igual na página cheia.
@@ -322,3 +330,44 @@ def test_queue_render_query_count_bounded_independent_of_card_count(
     # nenhuma escala com o nº de cards. Limite folgado sem mascarar N+1.
     assert page_count_many <= 20
     assert partial_count_many <= 20
+
+
+def test_operational_list_css_scope_and_search_js_without_exam_filter() -> None:
+    """OLI-001 R2/D2: CSS escopado à lista operacional; JS sem filtro de exame."""
+    css = pathlib.Path("static/css/app.css").read_text(encoding="utf-8")
+    assert ".operational-list-page" in css
+    js = pathlib.Path("static/js/doctor_queue_filter.js").read_text(encoding="utf-8")
+    assert "data-doctor-exam-filter" not in js
+    assert "typeSelect" not in js
+    assert "data-doctor-queue-search" in js
+
+
+@pytest.mark.django_db
+def test_queue_decided_card_keeps_status_badge(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """Revisão OLI-001 pontual: só os pendentes perdem o badge genérico.
+
+    A apresentação temporária de decididos (OLI-003) mantém ``status-badge``
+    com a disposição/estado — este teste impede remoção acidental em massa.
+    """
+    doctor = user_factory("medico-paridade-dec", (DOCTOR_ROLE,))
+    decided = Case.objects.create(created_by=nir_user)
+    CaseProcedure.objects.create(case=decided, procedure_type=ANGIO_TYPE, declared_by_nir=True)
+    decided.start_pdf_extraction(user=None, role=SYSTEM_ROLE)
+    decided.complete_pdf_extraction(user=None, role=SYSTEM_ROLE)
+    decided.complete_anonymization(user=None, role=SYSTEM_ROLE)
+    decided.complete_llm_extraction(user=None, role=SYSTEM_ROLE)
+    decided.complete_llm_summarization(user=None, role=SYSTEM_ROLE)
+    decided.record_doctor_decision(accepted=False, user=doctor, role=DOCTOR_ROLE)
+    decided.refresh_from_db()
+    login_user(user_factory("geral-paridade-dec", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
+
+    card = _card_wrapper(body, decided.case_id)
+    assert "status-badge" in card
+    assert "Negado pelo médico" in card

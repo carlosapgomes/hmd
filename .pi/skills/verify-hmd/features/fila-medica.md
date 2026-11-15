@@ -7,7 +7,7 @@ initial journey proves **reading only**: no decision is submitted.
 
 ## Sub-features
 
-- `queue-heading-tabs`: heading *Fila médica* with the *Aguardando decisão*
+- `queue-heading-tabs`: heading *Casos aguardando decisão* with the *Aguardando decisão*
   (default) and *Decididos* tabs.
 - `queue-lists-synthetic-case`: the seeded `VERIFY-001` card shows
   *Paciente Sintético Um*, the record number and the declared procedure
@@ -29,7 +29,7 @@ initial journey proves **reading only**: no decision is submitted.
 Same drive as [login.md](login.md): after the doctor login, assert the queue
 heading, assert the body text contains `VERIFY-001` and *Paciente Sintético
 Um*, snapshot (`doctor-queue.png/.txt`), click the first
-`a.list-group-item-action` card, assert the URL matches
+`[data-doctor-queue-card] a.stretched-link` CTA, assert the URL matches
 `/doctor/case/<id>/decide/`, snapshot (`doctor-case-read.png/.txt`). The
 drive stops at reading — it never fills or submits the decision form.
 

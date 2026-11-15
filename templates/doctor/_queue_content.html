@@ -1,17 +1,16 @@
 {% comment %}
-Fragmento compartilhado da fila médica (ui-parity-queues D1): a página cheia
-(``queue.html``) inclui este arquivo no server-side dentro do container htmx
-e o endpoint ``doctor:queue_partial`` renderiza SÓ este arquivo — server ==
-partial. Contém cards ``case-card + summary-box + waiting-time +
-status-badge`` (padrão visual da casa, ``_case_cards.html``/``app.css``),
-estado vazio e paginação server-side preservada (D2; links de página são
-navegação normal, fora do swap).
-
-Contexto (de ``_build_queue_context``): ``tab``, ``items``, ``page_obj``,
-``filter_qs``. Atributos ``data-doctor-queue-card``/``data-patient-name``/
-``data-agency-record-number``/``data-exam-type`` alimentam o filtro
-client-side (``doctor_queue_filter.js``) — só refinam o renderizado,
-nunca ampliam o escopo server de ``?subtype=`` (D3).
+Fragmento compartilhado da fila médica (OLI-001): página cheia inclui este
+arquivo dentro do container htmx e ``doctor:queue_partial`` renderiza SÓ este
+arquivo — server == partial. Card operacional compacto (D3): uma única
+superfície ``.case-card > .row`` com conteúdo ``col-lg-8`` e tempo/ação
+``col-lg-4``; CTA real com ``stretched-link`` quando a ação é permitida.
+A aba decididos mantém temporariamente sua apresentação anterior (OLI-003
+entrega o card orientado ao resultado) dentro da mesma estrutura 8/4.
+Contexto: ``tab``, ``items``, ``page_obj``, ``filter_qs``. Atributos
+``data-doctor-queue-card``/``data-patient-name``/
+``data-agency-record-number``/``data-exam-type`` alimentam a busca client-side
+(``doctor_queue_filter.js``) — só refinam o renderizado, nunca ampliam o
+escopo server de ``?subtype=``.
 {% endcomment %}
 {% if tab == 'aguardando' and page_obj.paginator.count > 0 %}
 <div class="alert alert-warning d-flex align-items-center gap-2 mb-3" role="alert">
@@ -25,94 +24,78 @@ nunca ampliam o escopo server de ``?subtype=`` (D3).
   {% for item in items %}
   <div class="col-12" data-doctor-queue-card data-patient-name="{{ item.patient_name }}" data-agency-record-number="{{ item.agency_record_number }}" data-exam-type="{% for subtype in item.subtypes %}{{ subtype }}{% if not forloop.last %} {% endif %}{% endfor %}">
     <div class="case-card card p-3">
-      {% comment %}
-      A aba aguardando abre a página de trabalho (leitura + decisão); a aba
-      decididos segue no detalhe read-only (case-work-lock slice 001).
-      {% endcomment %}
       {% if tab == 'aguardando' %}
       {% url 'doctor:case_decide' case_id=item.case_id as card_url %}
       {% else %}
       {% url 'doctor:case_detail' case_id=item.case_id as card_url %}
       {% endif %}
-      {% if tab == 'aguardando' and item.lock.is_locked and not item.lock.is_locked_by_current_user %}
-      {% comment %}
-      Reservado por outro médico (case-work-lock D2): card SEM ação primária
-      — o clique não abre a página de trabalho (evita leitura duplicada).
-      {% endcomment %}
-      <div class="list-group-item py-3">
-      {% else %}
-      <a class="list-group-item list-group-item-action py-3"
-         href="{{ card_url }}">
-      {% endif %}
-        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-          <span class="status-badge {% if tab == 'aguardando' %}status-pending{% else %}status-done{% endif %}">{{ item.status_label }}</span>
+      <div class="row">
+        <div class="col-lg-8">
           {% if tab == 'decididos' %}
-          <span class="ms-auto small text-nowrap">Abrir caso →</span>
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="status-badge status-done">{{ item.status_label }}</span>
+          </div>
           {% endif %}
-        </div>
-        <div class="fw-semibold patient-name">{{ item.patient_name }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}</div>
-        <div class="small text-muted case-meta">
-          {% if tab == 'aguardando' %}⏱ Aguardando há {{ item.created_at|timesince }}{% else %}Recebido há {{ item.created_at|timesince }}{% endif %}
-          <span class="mx-2">·</span> Recebido em {{ item.created_at|date:"d/m/Y H:i" }}
-          {% if item.days_on_screen is not None %}<span class="mx-2">·</span><span class="badge rounded-pill text-bg-light border text-muted">{{ item.days_on_screen }} d em tela</span>{% endif %}
-        </div>
-        <div class="summary-box mt-2">
-          <div class="row">
-            <div class="col-sm-6 mb-2">
-              <div class="summary-label">Nº de ocorrência</div>
-              <div class="summary-value">{{ item.agency_record_number }}</div>
-            </div>
-            <div class="col-sm-6 mb-2">
-              <div class="summary-label">Procedimentos</div>
-              <div class="summary-value">
-                {% if item.procedures %}
-                <span class="d-flex flex-wrap align-items-center gap-2">
-                  {% for procedure in item.procedures %}
-                  <span class="small">{{ procedure.label }}</span>
-                  <span class="badge rounded-pill text-bg-light border text-muted">{{ procedure.subtype }}</span>
-                  {% endfor %}
-                </span>
-                {% else %}
-                —
-                {% endif %}
+          <div class="fw-semibold patient-name">{{ item.patient_name }}</div>
+          <div class="small text-muted case-meta">
+            Nº de ocorrência: {{ item.agency_record_number }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}{% if item.patient_gender %} · {{ item.patient_gender }}{% endif %}{% if item.origin_unit %} · 🏥 {{ item.origin_unit }}{% endif %}
+          </div>
+          <div class="summary-box mt-2">
+            <div class="row">
+              <div class="col-sm-12 mb-2">
+                <div class="summary-label">Procedimentos</div>
+                <div class="summary-value">
+                  {% if item.procedures %}
+                  <span class="d-flex flex-wrap align-items-center gap-2">
+                    {% for procedure in item.procedures %}
+                    <span class="small">{{ procedure.label }}</span>
+                    <span class="badge rounded-pill text-bg-light border text-muted">{{ procedure.subtype }}</span>
+                    {% endfor %}
+                  </span>
+                  {% else %}
+                  —
+                  {% endif %}
+                </div>
               </div>
             </div>
           </div>
         </div>
-        <div class="waiting-time mt-2">
-          {% if tab == 'aguardando' %}⏱ Aguardando há {{ item.created_at|timesince }}{% else %}Recebido há {{ item.created_at|timesince }}{% endif %}
-        </div>
-        {% if tab == 'aguardando' %}
-        <div class="mt-2">
+        <div class="col-lg-4 text-lg-end mt-3 mt-lg-0 d-flex flex-lg-column flex-wrap justify-content-between align-items-lg-end gap-2">
+          {% if tab == 'aguardando' %}
+          {% if item.days_on_screen is not None %}
+          <span class="badge badge-wrap bg-warning text-dark mb-2">Dias em tela: {{ item.days_on_screen }}</span>
+          {% endif %}
+          <div class="waiting-time">
+            ⏱ Aguardando há {{ item.created_at|timesince }}
+          </div>
           {% if item.lock.is_locked_by_current_user %}
-          <span class="btn btn-sm btn-success">▶ Continuar avaliação</span>
+          <a href="{{ card_url }}" class="btn btn-sm btn-success stretched-link mt-2">▶ Continuar avaliação</a>
           {% elif item.lock.is_locked %}
-          <button type="button" class="btn btn-sm btn-secondary" disabled
+          <button type="button" class="btn btn-sm btn-secondary mt-2" disabled
                   title="Reservado por {{ item.lock.locked_by_display }}">🔒 Reservado</button>
           <div class="small text-muted mt-1">por {{ item.lock.locked_by_display }}</div>
           {% else %}
-          <span class="btn btn-sm btn-primary">Avaliar</span>
+          <a href="{{ card_url }}" class="btn btn-sm btn-primary stretched-link mt-2">Avaliar</a>
+          {% endif %}
+          {% else %}
+          <div class="waiting-time">
+            Recebido há {{ item.created_at|timesince }}
+          </div>
+          <a href="{{ card_url }}" class="btn btn-sm btn-outline-primary stretched-link mt-2">Abrir caso →</a>
           {% endif %}
         </div>
-        {% endif %}
-      {% if tab == 'aguardando' and item.lock.is_locked and not item.lock.is_locked_by_current_user %}
       </div>
-      {% else %}
-      </a>
-      {% endif %}
     </div>
   </div>
   {% endfor %}
 </div>
 {% else %}
-<div class="card shadow-sm">
-  <div class="card-body text-muted">
-    {% if tab == 'decididos' %}
-    Nenhum caso decidido até agora.
-    {% else %}
-    Nenhum caso aguardando decisão médica.
-    {% endif %}
-  </div>
+<div class="alert alert-info d-flex align-items-center gap-2 mb-3" role="alert">
+  {% if tab == 'decididos' %}
+  Nenhum caso decidido até agora.
+  {% else %}
+  Nenhum caso aguardando avaliação no momento.
+  {% endif %}
 </div>
 {% endif %}
 

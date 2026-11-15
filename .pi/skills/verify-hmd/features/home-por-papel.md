@@ -9,8 +9,8 @@ redirect, not by navigating directly to the destination.
 
 - `nir-home-intake`: `verify-nir` → `/intake/` with heading *Envio de
   relatório de regulação*.
-- `doctor-home-queue`: `verify-doctor` → `/doctor/` with heading *Fila
-  médica* (see [fila-medica.md](fila-medica.md)).
+- `doctor-home-queue`: `verify-doctor` → `/doctor/` with heading *Casos aguardando
+  decisão* (see [fila-medica.md](fila-medica.md)).
 - `scheduler-home-queue`: `verify-scheduler` → `/scheduler/` with heading
   *Fila de agendamento*.
 - `manager-home-panel`: `verify-manager` → `/dashboard/` with heading
@@ -25,7 +25,7 @@ redirect, not by navigating directly to the destination.
 - Log in (the login redirects to `/`, which dispatches to the role area), or
   open `/` while authenticated.
 - Each role's header nav links to its own area (*Enviar relatório*,
-  *Fila médica*, *Fila de agendamento*, *Painel*).
+  *Casos aguardando decisão*, *Fila de agendamento*, *Painel*).
 
 ## Driving it with Playwright
 

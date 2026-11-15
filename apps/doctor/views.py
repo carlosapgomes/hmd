@@ -282,6 +282,8 @@ def _queue_item(case: Case, *, user: User) -> dict[str, object]:
         "status_label": case.get_status_display(),
         "patient_name": case.patient_name or "—",
         "patient_age": case.patient_age,
+        "patient_gender": case.patient_gender or "",
+        "origin_unit": case.origin_unit or "",
         "days_on_screen": case.days_on_screen,
         "agency_record_number": case.agency_record_number or "—",
         "created_at": case.created_at,
@@ -338,6 +340,13 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
         if access.allows_declared_types(_declared_types_of_case(case))
     ]
     pending_counts = _pending_counts_by_subtype(access, subtype_options)
+    # OLI-001 D6: opções do filtro server-side já projetadas — em
+    # ``aguardando`` cada opção carrega a contagem de pendentes; em
+    # ``decididos`` o template ignora a contagem.
+    subtype_option_items = [
+        {"value": option, "label": option, "pending_count": pending_counts[option]}
+        for option in subtype_options
+    ]
 
     filter_parts: list[tuple[str, str]] = [("tab", tab)]
     if subtype:
@@ -347,6 +356,7 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
         "tab": tab,
         "subtype": subtype,
         "subtype_options": subtype_options,
+        "subtype_option_items": subtype_option_items,
         "pending_counts": pending_counts,
         "page_obj": page,
         "items": items,

@@ -35,4 +35,12 @@ urlpatterns: list[URLPattern] = [
         views.admin_close,
         name="admin_close",
     ),
+    path("case/<uuid:case_id>/pdf/<int:position>/", views.case_pdf, name="case_pdf"),
+    # Viewer mobile do PDF original (slice PVP-005, R1): mesmo guard do
+    # detalhe; ?next= validado com resolve_safe_next_url.
+    path(
+        "case/<uuid:case_id>/pdf/<int:position>/viewer/",
+        views.pdf_viewer,
+        name="pdf_viewer",
+    ),
 ]

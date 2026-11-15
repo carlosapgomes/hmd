@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% load role_labels %}
+{% load static %}
 {% block title %}Caso {% if agency_record_number %}{{ agency_record_number }}{% else %}uid {{ short_id }}{% endif %} — {{ app_display_name }}{% endblock %}
 
 {% block content %}
@@ -54,6 +55,78 @@
   </ul>
 </div>
 
+<!-- Card de texto do relatório (slice PVP-005, R2/D1/D2/D8): OMITIDO quando
+     vazio (padrão NIR/agendador — diferença contratual vs médico, que exibe
+     placeholder). Renderiza APÓS "Procedimentos declarados", ANTES da trilha. -->
+{% if case.extracted_text %}
+<div class="card mb-3">
+  <div class="card-header d-flex flex-wrap align-items-center gap-2">
+    <span>
+      <button class="btn btn-link text-decoration-none p-0 collapsed" type="button"
+              data-bs-toggle="collapse" data-bs-target="#text-collapse"
+              aria-expanded="false" aria-controls="text-collapse">
+        Texto Extraído do PDF
+      </button>
+    </span>
+  </div>
+  <div class="collapse" id="text-collapse">
+    <div class="card-body">
+      <pre class="bg-light p-3 rounded-3 mb-0" style="white-space: pre-wrap; font-size: 0.875rem;">{{ case.extracted_text }}</pre>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Visualizar PDF Original (slice PVP-005, R2/D1/D2/D8): um sub-collapse
+     por documento (``data-pdf-doc-collapse``), embed lazy com ``data-src``
+     SEM ``src``, "Abrir em nova aba" e link mobile (``d-md-none``)
+     identificando cada documento ("PDF N — arquivo") para o viewer
+     dedicado com ``?next=``. O fallback sem-JS vive FORA dos
+     collapses. -->
+{% if pdf_items %}
+<div class="card mb-3">
+  <div class="card-header d-flex flex-wrap align-items-center gap-2">
+    <span>
+      <button class="btn btn-link text-decoration-none p-0 collapsed" type="button"
+              data-bs-toggle="collapse" data-bs-target="#pdf-collapse"
+              aria-expanded="false" aria-controls="pdf-collapse">
+        Visualizar PDF Original
+      </button>
+    </span>
+  </div>
+  <div class="collapse" id="pdf-collapse">
+    <div class="card-body">
+      {% for item in pdf_items %}
+      <div class="mb-3">
+        <a href="{{ item.viewer_url }}?next={{ detail_url|urlencode }}"
+           class="btn btn-sm btn-outline-primary d-inline-flex d-md-none align-items-center gap-2 text-break">
+          PDF {{ item.position }} — {{ item.filename }}
+        </a>
+        <button class="btn btn-link text-decoration-none p-0 text-dark d-none d-md-inline-flex align-items-center gap-2 collapsed" type="button"
+                data-bs-toggle="collapse" data-bs-target="#pdf-collapse-{{ item.position }}"
+                aria-expanded="false" aria-controls="pdf-collapse-{{ item.position }}">
+          {{ item.filename }} <small class="text-muted">({{ item.size|filesizeformat }})</small>
+        </button>
+        <div class="collapse" id="pdf-collapse-{{ item.position }}" data-pdf-doc-collapse>
+          <div class="mb-2 text-end">
+            <a href="{{ item.serve_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Abrir em nova aba</a>
+          </div>
+          <div class="ratio ratio-1x1 d-none d-md-block" style="max-height: 80vh;">
+            <embed class="pdf-lazy-embed" data-src="{{ item.serve_url }}" type="application/pdf" style="width: 100%; height: 100%;">
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+<noscript>
+  {% for item in pdf_items %}
+  <p class="mb-2"><a href="{{ item.serve_url }}" target="_blank" rel="noopener">Abrir PDF {{ item.filename }}</a></p>
+  {% endfor %}
+</noscript>
+{% endif %}
+
 <div class="card mb-3">
   <div class="card-header d-flex flex-wrap align-items-center gap-2">
     <span>Trilha de eventos</span>
@@ -94,5 +167,13 @@
        class="btn btn-sm btn-outline-danger">Encerrar administrativamente</a>
   </div>
 </div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<!-- Lazy-embed dos PDFs do relatório (slice PVP-005, R2/D2): sem ele os
+     sub-collapses de documento não carregam por expansão no desktop. -->
+{% if pdf_items %}
+<script src="{% static 'js/pdf-lazy-embed.js' %}"></script>
 {% endif %}
 {% endblock %}

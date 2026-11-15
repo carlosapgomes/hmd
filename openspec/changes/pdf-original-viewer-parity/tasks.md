@@ -40,10 +40,10 @@ Contract: `slices/slice-004-scheduler-report-cards.md`
 
 Contract: `slices/slice-005-dashboard-report-cards.md`
 
-- [ ] 5.1 Escrever RED das rotas `dashboard:case_pdf` + `dashboard:pdf_viewer` (403/404/headers) e dos cards; executar os testes focados e registrar as falhas esperadas.
-- [ ] 5.2 Implementar serve, viewer, `pdf_items` e os dois cards (posição D8); verificar testes focados verdes e a suíte dashboard sem regressão.
-- [ ] 5.3 Rodar `painel-visual` em 1280/390: concluir os asserts existentes de dois casos antes de criar a fixture, depois verificar o detalhe novo; registrar PNG/snapshot/JSON.
-- [ ] 5.4 Rodar o quality gate, produzir `/tmp/hmd-slice-pvp-005-report.md` e submeter o slice à revisão independente antes de avançar.
+- [x] 5.1 Escrever RED das rotas `dashboard:case_pdf` + `dashboard:pdf_viewer` (403/404/headers) e dos cards; executar os testes focados e registrar as falhas esperadas.
+- [x] 5.2 Implementar serve, viewer, `pdf_items` e os dois cards (posição D8); verificar testes focados verdes e a suíte dashboard sem regressão.
+- [x] 5.3 Rodar `painel-visual` em 1280/390: concluir os asserts existentes de dois casos antes de criar a fixture, depois verificar o detalhe novo; registrar PNG/snapshot/JSON.
+- [x] 5.4 Rodar o quality gate, produzir `/tmp/hmd-slice-pvp-005-report.md` e submeter o slice à revisão independente antes de avançar.
 
 ## 6. Slice 006 — Anexos NIR + médico com visualização
 

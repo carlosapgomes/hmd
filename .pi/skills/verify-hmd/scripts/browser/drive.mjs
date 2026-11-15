@@ -210,7 +210,7 @@ try {
   // 2) Homes por papel (login real pelo form em cada um).
   const homes = [
     ['verify-nir', 'nir', '/intake/', 'Envio de relatório de regulação'],
-    ['verify-scheduler', 'scheduler', '/scheduler/', 'Fila de agendamento'],
+    ['verify-scheduler', 'scheduler', '/scheduler/', 'Solicitações de agendamento aguardando confirmação'],
     ['verify-manager', 'manager', '/dashboard/', 'Painel gerencial'],
     ['verify-admin', 'admin', '/dashboard/', 'Painel gerencial'],
   ];

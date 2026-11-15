@@ -1,17 +1,18 @@
 """Paridade visual/interação da fila do agendador (ui-parity-queues, slice 002).
 
-R1–R4: cards ``case-card + summary-box + waiting-time + status-badge``;
-bloco legado ``nav-tabs`` removido (navegação só pelo ``_nav`` pills
-``Pendentes/Processados`` com badges); endpoint ``scheduler:queue_partial``
-com o MESMO fragmento/guards da página cheia e htmx a cada 20 s
-reaplicando a busca; busca client-side por nome/ocorrência sem
-requisição; reservas (Abrir/Continuar/Reservado+portador), ordenação e
-paginação preservadas inclusive via partial (D9); sem diferenciação por
-unidade na fila.
+OLI-002 R1–R6: card pendente operacional compacto ``.case-card > .row``
+com conteúdo ``col-lg-8`` e tempo/ação ``col-lg-4`` (sem badge genérico
+de status, sem ``list-group-item``, espera única), título/contagem/vazio
+em ``alert-info``, filtro server-side ``procedure_type`` (antes da
+paginação, propagado a paginação/partial) + busca client-side, decisões
+médicas por procedimento, reservas (Agendar/Continuar/Reservado+portador)
+preservadas inclusive via partial (D9); aba processados preservada fora
+do ramo pendente; sem diferenciação por unidade na fila.
 """
 
 from __future__ import annotations
 
+import pathlib
 from collections.abc import Callable, Sequence
 from datetime import timedelta
 
@@ -134,7 +135,7 @@ def test_queue_cards_use_case_card_visual_markers(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R1: card com case-card/summary-box/waiting-time/status-badge + nome/idade."""
+    """OLI-002 R3: card pendente sem badge genérico; 8/4, espera única, CTA real."""
     doctor = user_factory("medico-paridade-agendador", (DOCTOR_ROLE,))
     case = _make_awaiting_case(
         nir_user,
@@ -153,16 +154,25 @@ def test_queue_cards_use_case_card_visual_markers(
     assert "case-card" in card
     assert "summary-box" in card
     assert "waiting-time" in card
-    assert "status-badge" in card
+    # Revisão OLI-002: sem ``status-badge`` genérico nos pendentes; os
+    # badges de subtipo/disposição e ``Dias em tela`` permanecem.
+    assert "status-badge" not in card
+    assert "Aguardando confirmação de agendamento" not in card
+    assert "badge rounded-pill" in card
     assert "Paciente Paridade Agendamento" in card
     assert "84 a" in card
     assert "777001" in card
-    assert "6 d em tela" in card
+    assert "Dias em tela: 6" in card
+    assert "6 d em tela" not in card
     assert "Arteriografia periférica" in card
     assert "angio" in card
+    assert "Aprovado" in card
     assert "Aguardando há" in card
-    # Reserva livre: ação que abre a página de trabalho.
-    assert "Abrir caso" in card
+    assert card.count("Aguardando há") == 1
+    assert "list-group-item" not in card
+    # Reserva livre: CTA primário «Agendar» que abre a página de trabalho.
+    assert ">Agendar</a>" in card
+    assert "Abrir caso" not in card
 
 
 @pytest.mark.django_db
@@ -294,7 +304,7 @@ def test_queue_partial_returns_same_fragment_with_same_guards(
     assert "case-card" in partial_body
     assert "summary-box" in partial_body
     # Fragmento, não a página cheia (sem heading/nav/base).
-    assert "Fila de agendamento</h1>" not in partial_body
+    assert "Solicitações de agendamento aguardando confirmação</h1>" not in partial_body
     assert "scheduler-queue-content" not in partial_body
 
     # Mesmo fragmento do server-side: o card aparece igual na página cheia.
@@ -414,7 +424,7 @@ def test_queue_partial_reflects_lock_and_expires_stale(
     partial_body = client.get(reverse("scheduler:queue_partial")).content.decode()
 
     free_card = _card_wrapper(partial_body, free.case_id)
-    assert "Abrir caso" in free_card
+    assert "Agendar" in free_card
 
     mine_card = _card_wrapper(partial_body, mine.case_id)
     assert "Continuar" in mine_card
@@ -425,7 +435,7 @@ def test_queue_partial_reflects_lock_and_expires_stale(
     assert "disabled" in other_card
 
     stale_card = _card_wrapper(partial_body, stale.case_id)
-    assert "Abrir caso" in stale_card
+    assert "Agendar" in stale_card
     assert "Reservado" not in stale_card
     stale.refresh_from_db()
     assert stale.lock_token is None
@@ -476,3 +486,138 @@ def test_queue_render_query_count_bounded_independent_of_card_count(
     # Teto folgado sem mascarar N+1 (a igualdade acima é a trava real).
     assert page_count_many <= 25
     assert partial_count_many <= 25
+
+
+@pytest.mark.django_db
+def test_queue_pending_card_regions_8_4_and_single_surface(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R3: ``.case-card > .row`` com conteúdo 8 e tempo/ação 4."""
+    doctor = user_factory("medico-oli-regioes-par", (DOCTOR_ROLE,))
+    case = _make_awaiting_case(
+        nir_user,
+        doctor,
+        (ANGIO_TYPE,),
+        patient_name="Paciente Regioes Par",
+        agency_record_number="OLI-PAR",
+        days_on_screen=2,
+    )
+    login_user(user_factory("agendador-oli-regioes-par", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    card = _card_wrapper(body, case.case_id)
+    assert '<div class="case-card card p-3">' in card
+    assert '<div class="row">' in card
+    assert "col-lg-8" in card
+    assert "col-lg-4" in card
+    assert card.index("col-lg-8") < card.index("col-lg-4")
+    assert "list-group-item" not in card
+    assert card.count("Aguardando há") == 1
+    assert "Dias em tela: 2" in card
+    assert "Recebido em " not in card
+
+
+@pytest.mark.django_db
+def test_queue_procedure_type_filter_server_side_and_partial(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R2/D7: filtro server-side por tipo; inválido equivale a vazio."""
+    doctor = user_factory("medico-oli-filtro-par", (DOCTOR_ROLE,))
+    angio = _make_awaiting_case(
+        nir_user, doctor, (ANGIO_TYPE,), patient_name="Angio Par", agency_record_number="PAR-A"
+    )
+    cardio = _make_awaiting_case(
+        nir_user, doctor, (CARDIO_TYPE,), patient_name="Cardio Par", agency_record_number="PAR-C"
+    )
+    login_user(user_factory("agendador-oli-filtro-par", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    filtered = client.get(
+        reverse("scheduler:queue"), {"tab": "aguardando", "procedure_type": CARDIO_TYPE}
+    ).content.decode()
+    assert "Cardio Par" in filtered
+    assert "Angio Par" not in filtered
+    assert f'value="{CARDIO_TYPE}" selected' in filtered
+
+    partial = client.get(
+        reverse("scheduler:queue_partial"),
+        {"tab": "aguardando", "procedure_type": CARDIO_TYPE},
+    ).content.decode()
+    assert "Cardio Par" in partial
+    assert "Angio Par" not in partial
+
+    invalid = client.get(
+        reverse("scheduler:queue"), {"tab": "aguardando", "procedure_type": "invalido"}
+    ).content.decode()
+    assert "Angio Par" in invalid
+    assert "Cardio Par" in invalid
+
+    assert str(angio.case_id) in filtered or "Angio Par" not in filtered
+    assert str(cardio.case_id) in filtered
+
+
+@pytest.mark.django_db
+def test_queue_empty_state_is_single_info_alert(
+    client: Client,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R1/D10: vazio é um único ``alert-info``, sem segundo card."""
+    login_user(user_factory("agendador-oli-vazio-par", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    assert "alert alert-info" in body
+    assert "Nenhum caso aguardando agendamento" in body
+    assert "card shadow-sm" not in body
+    fragment = body.split('id="scheduler-queue-content"', 1)[1]
+    assert fragment.count("alert alert-info") == 1
+
+
+@pytest.mark.django_db
+def test_queue_processed_card_keeps_status_badge(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R5: só os pendentes perdem o badge genérico; processados não."""
+    doctor = user_factory("medico-oli-proc-par", (DOCTOR_ROLE,))
+    scheduler = user_factory("agendador-oli-proc-par", (SCHEDULER_ROLE,))
+    case = _make_confirmed_case(
+        nir_user,
+        doctor,
+        scheduler,
+        (ANGIO_TYPE,),
+        patient_name="Processado Par",
+        agency_record_number="PAR-P",
+        days_on_screen=1,
+        unit=1,
+    )
+    login_user(user_factory("agendador-oli-proc-view-par", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue"), {"tab": "processados"}).content.decode()
+
+    card = _card_wrapper(body, case.case_id)
+    assert "status-badge" in card
+    assert "Recebido há" in card
+    assert "Unidade 1" in card
+
+
+def test_operational_list_css_scope_and_search_js() -> None:
+    """OLI-002 R5/D2: CSS escopado à lista operacional; busca preservada."""
+    css = pathlib.Path("static/css/app.css").read_text(encoding="utf-8")
+    assert ".operational-list-page" in css
+    # Filtro server-side por procedimento quebra sem overflow em 390px.
+    assert "#procedure-type-filter" in css
+    js = pathlib.Path("static/js/scheduler_queue_filter.js").read_text(encoding="utf-8")
+    assert "data-scheduler-queue-search" in js
+    assert "htmx:afterSwap" in js
+    queue_template = pathlib.Path("templates/scheduler/queue.html").read_text(encoding="utf-8")
+    assert "operational-list-page" in queue_template

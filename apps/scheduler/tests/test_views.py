@@ -124,6 +124,8 @@ def _apply_metadata(
     agency_record_number: str = "",
     patient_age: int | None = None,
     days_on_screen: int | None = None,
+    patient_gender: str = "",
+    origin_unit: str = "",
 ) -> None:
     """Ajusta campos de exibição do caso (``created_at`` inclusa)."""
     Case.objects.filter(pk=case.pk).update(
@@ -133,6 +135,8 @@ def _apply_metadata(
         agency_record_number=agency_record_number,
         patient_age=patient_age,
         days_on_screen=days_on_screen,
+        patient_gender=patient_gender,
+        origin_unit=origin_unit,
     )
     case.refresh_from_db()
 
@@ -479,7 +483,10 @@ def test_queue_invalid_tab_falls_back_to_awaiting(
     assert str(awaiting.case_id) in body
     assert "Só Aguardando" in body
     assert str(decided.case_id) not in body
-    assert "Aguardando confirmação de agendamento" in body
+    # OLI-002 R1: pendentes sem badge genérico de status — o título prova
+    # a aba aguardando (sem «Aguardando confirmação de agendamento»).
+    assert "Solicitações de agendamento aguardando confirmação</h1>" in body
+    assert "Aguardando confirmação de agendamento" not in body
     assert "Resposta final publicada" not in body
 
 
@@ -579,7 +586,7 @@ def test_queue_card_shows_age_days_and_waiting_label(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R2: card da aba ativa com idade, «⏱ Aguardando há» e «N d em tela»."""
+    """R2: card da aba ativa com idade, «⏱ Aguardando há» e «Dias em tela: N»."""
     doctor = user_factory("medico-card-tela-agendador", (DOCTOR_ROLE,))
     case = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
     _apply_metadata(
@@ -594,11 +601,11 @@ def test_queue_card_shows_age_days_and_waiting_label(
 
     assert "Paciente Identificado · 84 a" in body
     assert "Aguardando há" in body
-    assert "6 d em tela" in body
-    # P1 da review: data absoluta pré-existente preservada junto ao rótulo relativo
-    assert "Recebido em " in body
-    # P2 da review: dias em tela como badge Bootstrap de fato
-    assert ">6 d em tela</span>" in body
+    assert "Dias em tela: 6" in body
+    # OLI-002 R3: sem data de recebimento repetida e sem badge compacto.
+    assert "Recebido em " not in body
+    assert "6 d em tela" not in body
+    assert ">Dias em tela: 6</span>" in body
 
 
 @pytest.mark.django_db
@@ -631,7 +638,7 @@ def test_queue_card_zero_age_and_zero_days_on_screen(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R2 (P1 da review): ZERO é válido e DEVE exibir «0 a» e «0 d em tela»."""
+    """R2 (P1 da review): ZERO é válido e DEVE exibir «0 a» e «Dias em tela: 0»."""
     doctor = user_factory("medico-zero-tela-agendador", (DOCTOR_ROLE,))
     case = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
     _apply_metadata(case, patient_name="Recem Nascido", patient_age=0, days_on_screen=0)
@@ -640,7 +647,7 @@ def test_queue_card_zero_age_and_zero_days_on_screen(
     body = client.get(reverse("scheduler:queue")).content.decode()
 
     assert "Recem Nascido · 0 a" in body
-    assert "0 d em tela" in body
+    assert "Dias em tela: 0" in body
 
 
 @pytest.mark.django_db
@@ -660,7 +667,7 @@ def test_queue_card_absent_age_and_days_on_screen(
 
     assert "Paciente Sem Demografia" in body
     assert "Paciente Sem Demografia · " not in body
-    assert "d em tela" not in body
+    assert "Dias em tela" not in body
 
 
 @pytest.mark.django_db
@@ -700,6 +707,370 @@ def test_queue_cards_show_types_and_unit(
     assert "1302" in processed_body
     # Unidade definida no agendamento aparece no card processado.
     assert "Unidade 2" in processed_body
+
+
+# ── OLI-002: página completa dos pendentes (R1–R5) ──────────────────────────
+
+
+@pytest.mark.django_db
+def test_queue_pending_title_and_full_container(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R1: título via ``page_title`` e container integral alinhado."""
+    doctor = user_factory("medico-oli-titulo", (DOCTOR_ROLE,))
+    _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    login_user(user_factory("agendador-oli-titulo", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    assert "Solicitações de agendamento aguardando confirmação</h1>" in body
+    assert "Fila de agendamento</h1>" not in body
+    assert "col-lg-10" not in body
+    assert "justify-content-center" not in body
+    assert "operational-list-page" in body
+
+
+@pytest.mark.django_db
+def test_queue_procedure_type_filter_server_side(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R2/D7: ``procedure_type`` filtra no server antes da paginação."""
+    doctor = user_factory("medico-oli-filtro", (DOCTOR_ROLE,))
+    for index in range(20):
+        case = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+        _apply_metadata(case, patient_name=f"Angio Filtro {index:02d}", days_on_screen=10)
+    cardio = _awaiting_scheduling_case(nir_user, doctor, (CARDIO_TYPE,))
+    _apply_metadata(cardio, patient_name="Cardio Filtro", days_on_screen=0)
+    login_user(user_factory("agendador-oli-filtro", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    filtered = client.get(
+        reverse("scheduler:queue"), {"tab": "aguardando", "procedure_type": CARDIO_TYPE}
+    )
+    assert filtered.status_code == 200
+    filtered_body = filtered.content.decode()
+    # Caso fora da página 1 sem filtro aparece na página 1 filtrada
+    # (prova de filtro antes da paginação, não client-side na página).
+    assert "Cardio Filtro" in filtered_body
+    assert "Angio Filtro" not in filtered_body
+    # Form server-side com a opção selecionada e hx-get preservando o tipo.
+    assert 'name="procedure_type"' in filtered_body
+    assert f'value="{CARDIO_TYPE}" selected' in filtered_body
+    assert f"procedure_type={CARDIO_TYPE}" in filtered_body
+    assert (
+        f'hx-get="{reverse("scheduler:queue_partial")}?tab=aguardando&procedure_type={CARDIO_TYPE}"'
+        in filtered_body
+    )
+
+
+@pytest.mark.django_db
+def test_queue_procedure_type_invalid_ignored(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R2: valor fora do catálogo equivale a vazio (sem erro)."""
+    doctor = user_factory("medico-oli-filtro-invalido", (DOCTOR_ROLE,))
+    angio = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(angio, patient_name="Angio Invalido", agency_record_number="OLI-IN1")
+    cardio = _awaiting_scheduling_case(nir_user, doctor, (CARDIO_TYPE,))
+    _apply_metadata(cardio, patient_name="Cardio Invalido", agency_record_number="OLI-IN2")
+    login_user(user_factory("agendador-oli-filtro-invalido", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(
+        reverse("scheduler:queue"), {"tab": "aguardando", "procedure_type": "nao-existe"}
+    ).content.decode()
+
+    assert "Angio Invalido" in body
+    assert "Cardio Invalido" in body
+    assert "procedure_type=nao-existe" not in body
+
+
+@pytest.mark.django_db
+def test_queue_procedure_type_filter_pagination_and_partial(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R2/R6: filtro viaja em paginação e partial (sem reampliar)."""
+    doctor = user_factory("medico-oli-filtro-pag", (DOCTOR_ROLE,))
+    base = timezone.now()
+    for index in range(21):
+        case = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+        _apply_metadata(
+            case,
+            created_at=base - timedelta(seconds=21 - index),
+            patient_name=f"Angio Pag {index:02d}",
+        )
+    cardio = _awaiting_scheduling_case(nir_user, doctor, (CARDIO_TYPE,))
+    _apply_metadata(cardio, patient_name="Cardio Pag Fora", days_on_screen=99)
+    login_user(user_factory("agendador-oli-filtro-pag", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    page_one = client.get(
+        reverse("scheduler:queue"), {"tab": "aguardando", "procedure_type": ANGIO_TYPE}
+    ).content.decode()
+    assert "Angio Pag 00" in page_one
+    assert "Cardio Pag Fora" not in page_one
+    assert "Página 1 de 2" in page_one
+    # Paginação server-side preserva o filtro (link de próxima página).
+    assert f"procedure_type={ANGIO_TYPE}" in page_one.split("Página 1 de 2")[1]
+
+    partial = client.get(
+        reverse("scheduler:queue_partial"),
+        {"tab": "aguardando", "procedure_type": ANGIO_TYPE},
+    ).content.decode()
+    assert "Angio Pag 00" in partial
+    assert "Cardio Pag Fora" not in partial
+
+    cardio_page = client.get(
+        reverse("scheduler:queue"), {"tab": "aguardando", "procedure_type": CARDIO_TYPE}
+    ).content.decode()
+    assert "Cardio Pag Fora" in cardio_page
+    assert "Angio Pag" not in cardio_page
+
+
+@pytest.mark.django_db
+def test_queue_processed_ignores_procedure_type_filter(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R2/R5: aba processados não recebe o novo filtro."""
+    doctor = user_factory("medico-oli-filtro-processados", (DOCTOR_ROLE,))
+    scheduler = user_factory("agendador-oli-filtro-proc", (SCHEDULER_ROLE,))
+    processed = _confirmed_case(2, created_by=nir_user, decided_by=doctor, scheduled_by=scheduler)
+    _apply_metadata(processed, patient_name="Processado Sem Filtro")
+    login_user(user_factory("agendador-oli-filtro-proc-view", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(
+        reverse("scheduler:queue"), {"tab": "processados", "procedure_type": CARDIO_TYPE}
+    ).content.decode()
+
+    assert "Processado Sem Filtro" in body
+    assert 'name="procedure_type"' not in body
+
+
+@pytest.mark.django_db
+def test_queue_pending_card_regions_8_4_and_single_surface(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R3: ``.case-card > .row`` com conteúdo 8 e tempo/ação 4."""
+    doctor = user_factory("medico-oli-regioes", (DOCTOR_ROLE,))
+    case = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(
+        case, patient_name="Paciente Regioes", agency_record_number="OLI002", days_on_screen=2
+    )
+    login_user(user_factory("agendador-oli-regioes", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    card = _card_slice(body, case.case_id)
+    assert '<div class="case-card card p-3">' in card
+    assert '<div class="row">' in card
+    assert "col-lg-8" in card
+    assert "col-lg-4" in card
+    assert card.index("col-lg-8") < card.index("col-lg-4")
+    assert "list-group-item" not in card
+    assert card.count("Aguardando há") == 1
+    assert "Dias em tela: 2" in card
+    assert "status-badge" not in card
+    assert "Aguardando confirmação de agendamento" not in card
+
+
+@pytest.mark.django_db
+def test_queue_pending_card_mixed_dispositions_per_procedure(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R3/D8: aprovado + negado no mesmo caso, sem agregar decisões."""
+    doctor = user_factory("medico-oli-disposicoes", (DOCTOR_ROLE,))
+    case = _awaiting_scheduling_case(
+        nir_user,
+        doctor,
+        (ANGIO_TYPE, CARDIO_TYPE),
+        decisions={
+            ANGIO_TYPE: ("approved", ""),
+            CARDIO_TYPE: ("denied", "INR elevado"),
+        },
+    )
+    _apply_metadata(case, patient_name="Paciente Disposicoes", agency_record_number="OLI-DSP")
+    login_user(user_factory("agendador-oli-disposicoes", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    card = _card_slice(body, case.case_id)
+    assert ANGIO_LABEL in card
+    assert CARDIO_LABEL in card
+    assert "angio" in card
+    assert "cardio" in card
+    assert "Aprovado" in card
+    assert "Negado" in card
+
+
+@pytest.mark.django_db
+def test_queue_pending_card_demography_and_reopen(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R3/R6: demografia (sexo/origem) e alerta de reabertura."""
+    doctor = user_factory("medico-oli-reabertura", (DOCTOR_ROLE,))
+    scheduler = user_factory("agendador-oli-reabertura", (SCHEDULER_ROLE,))
+    case = _reopened_case(created_by=nir_user, decided_by=doctor, scheduled_by=scheduler)
+    _apply_metadata(
+        case,
+        patient_name="Paciente Reaberto Demo",
+        agency_record_number="OLI-REO",
+        patient_age=71,
+        days_on_screen=4,
+        patient_gender="Masculino",
+        origin_unit="Hospital Regional",
+    )
+    login_user(user_factory("agendador-oli-reabertura-view", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    card = _card_slice(body, case.case_id)
+    assert "Paciente Reaberto Demo" in card
+    assert "71 a" in card
+    assert "Masculino" in card
+    assert "Hospital Regional" in card
+    assert REOPEN_REASON in card
+
+
+@pytest.mark.django_db
+def test_queue_pending_empty_and_count_are_info_alerts(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R1/D10: contagem e vazio em ``alert-info``, sem warning/card."""
+    login_user(user_factory("agendador-oli-vazio", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    empty_body = client.get(reverse("scheduler:queue")).content.decode()
+    assert "alert alert-info" in empty_body
+    assert "alert-warning" not in empty_body
+    assert "Nenhum caso aguardando agendamento" in empty_body
+    assert "card shadow-sm" not in empty_body
+
+    doctor = user_factory("medico-oli-contagem", (DOCTOR_ROLE,))
+    _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _awaiting_scheduling_case(nir_user, doctor, (CARDIO_TYPE,))
+    count_body = client.get(reverse("scheduler:queue")).content.decode()
+    assert "alert alert-info" in count_body
+    assert "alert-warning" not in count_body
+    assert "2 caso" in count_body
+
+
+@pytest.mark.django_db
+def test_queue_pending_cta_stretched_link_states(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R4: Agendar/Continuar reais com stretched-link; outro sem link."""
+    doctor = user_factory("medico-oli-cta", (DOCTOR_ROLE,))
+    free = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(free, patient_name="Paciente CTA Livre")
+    mine = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(mine, patient_name="Paciente CTA Meu")
+    other = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(other, patient_name="Paciente CTA Outro")
+    scheduler = user_factory("agendador-oli-cta", (SCHEDULER_ROLE,))
+    other_scheduler = user_factory("agendador-oli-cta-outro", (SCHEDULER_ROLE,))
+    claim_case_lock(mine, user=scheduler, context=LOCK_CONTEXT, role=SCHEDULER_ROLE)
+    claim_case_lock(other, user=other_scheduler, context=LOCK_CONTEXT, role=SCHEDULER_ROLE)
+    login_user(scheduler, SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    free_card = _lock_card_block(body, free.case_id)
+    assert 'class="btn btn-sm btn-primary stretched-link mt-2"' in free_card
+    assert ">Agendar</a>" in free_card
+
+    mine_card = _lock_card_block(body, mine.case_id)
+    assert "stretched-link" in mine_card
+    assert "Continuar" in mine_card
+
+    other_card = _lock_card_block(body, "Paciente CTA Outro")
+    assert "Reservado" in other_card
+    assert other_scheduler.display_name in other_card
+    assert "stretched-link" not in other_card
+    assert f'href="{reverse("scheduler:case_detail", args=[other.case_id])}"' not in other_card
+
+
+@pytest.mark.django_db
+def test_queue_pending_card_shows_unit_label_when_defined(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """Revisão OLI-002 (R6): pendente exibe ``unit_label`` quando definida.
+
+    O ramo ``aguardando`` não pode perder o badge de unidade do partial
+    antigo — exibição compacta, sem filtro/diferenciação por unidade.
+    ``scheduled_unit`` é ajustado só como campo de exibição (mesmo padrão
+    dos campos de ``_apply_metadata``); o estado permanece pendente.
+    """
+    doctor = user_factory("medico-oli-unidade", (DOCTOR_ROLE,))
+    with_unit = _awaiting_scheduling_case(nir_user, doctor, (ANGIO_TYPE,))
+    _apply_metadata(with_unit, patient_name="Paciente Com Unidade", agency_record_number="OLI-U1")
+    Case.objects.filter(pk=with_unit.pk).update(scheduled_unit=2)
+    with_unit.refresh_from_db()
+    without_unit = _awaiting_scheduling_case(nir_user, doctor, (CARDIO_TYPE,))
+    _apply_metadata(
+        without_unit, patient_name="Paciente Sem Unidade", agency_record_number="OLI-U0"
+    )
+    login_user(user_factory("agendador-oli-unidade", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue")).content.decode()
+
+    unit_card = _card_slice(body, with_unit.case_id)
+    assert "Unidade 2" in unit_card
+    plain_card = _card_slice(body, without_unit.case_id)
+    assert "Unidade " not in plain_card
+
+
+@pytest.mark.django_db
+def test_queue_processed_card_preserves_received_label_and_unit(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-002 R5/R6: processados preservado fora do ramo pendente."""
+    doctor = user_factory("medico-oli-proc-preservado", (DOCTOR_ROLE,))
+    scheduler = user_factory("agendador-oli-proc-preservado", (SCHEDULER_ROLE,))
+    case = _confirmed_case(2, created_by=nir_user, decided_by=doctor, scheduled_by=scheduler)
+    _apply_metadata(case, patient_name="Processado Preservado", patient_age=65, days_on_screen=3)
+    login_user(user_factory("agendador-oli-processado-view", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+
+    body = client.get(reverse("scheduler:queue"), {"tab": "processados"}).content.decode()
+
+    card = _card_slice(body, case.case_id)
+    assert "Processado Preservado · 65 a" in card
+    assert "Recebido há" in card
+    assert "Aguardando há" not in card
+    assert "3 d em tela" in card
+    assert "Unidade 2" in card
+    assert "status-badge" in card
 
 
 # ── R3: detalhe (identificação + one-liner + decisões + sem artefatos) ─────
@@ -1462,19 +1833,18 @@ def test_pdf_forbidden_for_non_scheduler_role(
 
 
 def _card_slice(body: str, case_id: object) -> str:
-    """Fatia o HTML do card do caso (do ``list-group-item`` ao item seguinte).
+    """Fatia o HTML do card do caso pelo wrapper ``data-scheduler-queue-card``.
 
-    O escopo por card evita assert global de uid: o ``href`` de «Abrir caso»
-    carrega o uid (chave técnica) e o card é localizado por ele. A abertura
-    é ``<a …>`` (card clicável) ou ``<div …>`` (reservado por outro).
+    OLI-002 R3: pendentes sem ``list-group-item`` — o fatiamento usa o
+    wrapper (nome também aparece no atributo, antes da abertura interna).
+    Card processado usa o mesmo wrapper (markup preservado).
     """
-    openings = ('<a class="list-group-item', '<div class="list-group-item')
     anchor = body.index(str(case_id))
-    starts = [i for i in (body.rfind(m, 0, anchor) for m in openings) if i != -1]
-    ends = [i for i in (body.find(m, anchor) for m in openings) if i != -1]
-    start = max(starts)
-    end = min([i for i in ends if i > start], default=-1)
-    return body[start:] if end == -1 else body[start:end]
+    wrapper = body.rindex("data-scheduler-queue-card", 0, anchor)
+    start = body.rindex("<div", 0, wrapper)
+    nxt = body.find("data-scheduler-queue-card", anchor)
+    end = body.rfind("<div", 0, nxt) if nxt != -1 else len(body)
+    return body[start:end]
 
 
 def _card_visible_text(card: str) -> str:
@@ -1503,7 +1873,7 @@ def test_queue_card_does_not_show_case_uid(
     assert "Paciente Sem Uid" in card
     assert "Nº de ocorrência" in card
     assert "5040778" in card
-    # A rota «Abrir caso» segue técnica (uid no href).
+    # A rota «Agendar» segue técnica (uid no href).
     assert str(case.case_id) in body
 
 
@@ -1531,9 +1901,9 @@ def test_queue_card_without_occurrence_has_no_uid(
 
 # ── case-work-lock slice 004: reserva do caso no agendamento (R1–R8) ──────
 
-# Aberturas possíveis do item de lista (card do HMD é sempre ``div``; o bloco
-# aceita as duas formas para evoluir sem quebrar o fatiamento por card).
-_LOCK_CARD_OPENINGS = ('<a class="list-group-item', '<div class="list-group-item')
+# Aberturas possíveis do item de lista (OLI-002 R3: pendentes sem
+# ``list-group-item``; o fatiamento usa o wrapper, não a abertura).
+_LOCK_CARD_OPENINGS = ("data-scheduler-queue-card",)
 
 
 def _extract_lock_token(body: str) -> str:
@@ -1914,7 +2284,8 @@ def test_queue_cards_reflect_lock_state(
     body = client.get(reverse("scheduler:queue")).content.decode()
 
     free_card = _lock_card_block(body, free.case_id)
-    assert "Abrir caso" in free_card
+    assert "Agendar" in free_card
+    assert "Abrir caso" not in free_card
     assert f'href="{reverse("scheduler:case_detail", args=[free.case_id])}"' in free_card
 
     mine_card = _lock_card_block(body, mine.case_id)
@@ -1948,7 +2319,7 @@ def test_queue_expires_stale_lock_before_rendering(
     body = client.get(reverse("scheduler:queue")).content.decode()
 
     card = _lock_card_block(body, case.case_id)
-    assert "Abrir caso" in card
+    assert "Agendar" in card
     assert "Reservado" not in card
     case.refresh_from_db()
     assert case.lock_token is None

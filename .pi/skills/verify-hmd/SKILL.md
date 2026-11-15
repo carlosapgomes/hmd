@@ -113,10 +113,10 @@ point (it would bypass doctor):
 
 It performs the proven journey end to end in isolated browser contexts:
 real-form login as `verify-doctor` → home is the medical queue (`/doctor/`,
-heading *Fila médica*, synthetic card `VERIFY-001` visible) → opens the case
+heading *Casos aguardando decisão*, synthetic card `VERIFY-001` visible) → opens the case
 work page (`/doctor/case/<id>/decide/`, read-only — no decision is submitted)
 → real-form logins as `verify-nir` (`/intake/`, *Envio de relatório de
-regulação*), `verify-scheduler` (`/scheduler/`, *Fila de agendamento*),
+regulação*), `verify-scheduler` (`/scheduler/`, *Solicitações de agendamento aguardando confirmação*),
 `verify-manager` and `verify-admin` (`/dashboard/`, *Painel gerencial*).
 
 Selectors come from real snapshots: `getByLabel('Usuário')`,

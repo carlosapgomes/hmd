@@ -12,7 +12,7 @@ redirect, not by navigating directly to the destination.
 - `doctor-home-queue`: `verify-doctor` → `/doctor/` with heading *Casos aguardando
   decisão* (see [fila-medica.md](fila-medica.md)).
 - `scheduler-home-queue`: `verify-scheduler` → `/scheduler/` with heading
-  *Fila de agendamento*.
+  *Solicitações de agendamento aguardando confirmação*.
 - `manager-home-panel`: `verify-manager` → `/dashboard/` with heading
   *Painel gerencial*.
 - `admin-home-panel`: `verify-admin` (superuser, role `admin`) →
@@ -25,7 +25,8 @@ redirect, not by navigating directly to the destination.
 - Log in (the login redirects to `/`, which dispatches to the role area), or
   open `/` while authenticated.
 - Each role's header nav links to its own area (*Enviar relatório*,
-  *Casos aguardando decisão*, *Fila de agendamento*, *Painel*).
+  *Casos aguardando decisão*, *Solicitações de agendamento aguardando
+  confirmação*, *Painel*).
 
 ## Driving it with Playwright
 

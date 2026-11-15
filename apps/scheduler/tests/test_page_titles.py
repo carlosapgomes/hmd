@@ -64,7 +64,9 @@ def test_scheduler_queue_page_title(
     login_user(scheduler, "scheduler")
     response = client.get(reverse("scheduler:queue"))
     assert response.status_code == 200
-    _assert_page_title(response.content.decode(), "Fila de agendamento")
+    _assert_page_title(
+        response.content.decode(), "Solicitações de agendamento aguardando confirmação"
+    )
 
 
 @pytest.mark.django_db

@@ -13,10 +13,10 @@ Contract: `slices/slice-001-doctor-pending-page-parity.md`
 
 Contract: `slices/slice-002-scheduler-pending-page-parity.md`
 
-- [ ] 2.1 Escrever RED de container/título/alerta, filtro server-side `procedure_type`, estrutura 8/4, espera única, decisões por procedimento e ações de reserva; registrar as falhas antes da implementação.
-- [ ] 2.2 Implementar filtro validado antes da paginação, propagação ao partial/paginação, projeção das decisões e novo card/página com CSS escopado; verificar valor inválido, fora-da-página, locks, queries e aba processada preservada.
-- [ ] 2.3 Atualizar a jornada `fila-agendamento-busca-refresh`; comprovar 1280/390 px, medidas, decisões, filtro + busca + polling, locks e ausência de overflow com PNG/snapshot/JSON.
-- [ ] 2.4 Rodar o quality gate, produzir `/tmp/hmd-slice-oli-002-report.md` e submeter o slice à revisão independente e humana antes de avançar.
+- [x] 2.1 Escrever RED de container/título/alerta, filtro server-side `procedure_type`, estrutura 8/4, espera única, decisões por procedimento e ações de reserva; registrar as falhas antes da implementação.
+- [x] 2.2 Implementar filtro validado antes da paginação, propagação ao partial/paginação, projeção das decisões e novo card/página com CSS escopado; verificar valor inválido, fora-da-página, locks, queries e aba processada preservada.
+- [x] 2.3 Atualizar a jornada `fila-agendamento-busca-refresh`; comprovar 1280/390 px, medidas, decisões, filtro + busca + polling, locks e ausência de overflow com PNG/snapshot/JSON.
+- [x] 2.4 Rodar o quality gate, produzir `/tmp/hmd-slice-oli-002-report.md` e submeter o slice à revisão independente e humana antes de avançar.
 
 ## 3. Slice 003 — Decididos do médico
 

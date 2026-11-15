@@ -187,8 +187,8 @@ try {
       check('scheduler-case-found', false, 'caseId não encontrado');
     } else {
       const { context, page } = await loginAs(browser, 'verify-scheduler', 'scheduler-detalhe');
-      check('scheduler-queue-heading', (await page.getByRole('heading', { name: 'Fila de agendamento' }).count()) >= 1);
-      const schedHref = await page.locator('[data-agency-record-number="VERIFY-001"] a.list-group-item-action').getAttribute('href').catch(() => null);
+      check('scheduler-queue-heading', (await page.getByRole('heading', { name: 'Solicitações de agendamento aguardando confirmação' }).count()) >= 1);
+      const schedHref = await page.locator('[data-agency-record-number="VERIFY-001"] a.stretched-link').getAttribute('href').catch(() => null);
       check('scheduler-case-found-in-queue', !!schedHref && schedHref.includes(caseId), schedHref || 'sem link');
       await page.goto(`${base}/scheduler/case/${caseId}/`, { waitUntil: 'domcontentloaded' });
       check('scheduler-detail-layout', (await page.locator('.detail-layout').count()) === 1);

@@ -13,10 +13,10 @@ Contract: `slices/slice-001-shared-viewer-infra.md`
 
 Contract: `slices/slice-002-nir-report-cards.md`
 
-- [ ] 2.1 Escrever RED da rota `intake:pdf_viewer` (guards/next/404), dos cards no detalhe e do isolamento de mídia da run; executar os testes focados e registrar as falhas esperadas.
-- [ ] 2.2 Implementar viewer, `pdf_items`, os dois cards (lazy + mobile link), a fixture VERIFY-101 via runVerifyPy e o MEDIA_ROOT por run; verificar testes focados verdes e a suíte intake sem regressão.
-- [ ] 2.3 Rodar `detalhe-papeis` sobre VERIFY-101 (runVerifyPy com media root do manifest validado): provar lazy isolado, resize, viewer e acesso sem JS; comprovar arquivo servido do root da run e cleanup seguro, com PNG/snapshot/JSON.
-- [ ] 2.4 Rodar o quality gate, produzir `/tmp/hmd-slice-pvp-002-report.md` e submeter o slice à revisão independente antes de avançar.
+- [x] 2.1 Escrever RED da rota `intake:pdf_viewer` (guards/next/404), dos cards no detalhe e do isolamento de mídia da run; executar os testes focados e registrar as falhas esperadas.
+- [x] 2.2 Implementar viewer, `pdf_items`, os dois cards (lazy + mobile link), a fixture VERIFY-101 via runVerifyPy e o MEDIA_ROOT por run; verificar testes focados verdes e a suíte intake sem regressão.
+- [x] 2.3 Rodar `detalhe-papeis` sobre VERIFY-101 (runVerifyPy com media root do manifest validado): provar lazy isolado, resize, viewer e acesso sem JS; comprovar arquivo servido do root da run e cleanup seguro, com PNG/snapshot/JSON.
+- [x] 2.4 Rodar o quality gate, produzir `/tmp/hmd-slice-pvp-002-report.md` e submeter o slice à revisão independente antes de avançar.
 
 ## 3. Slice 003 — Médico: viewer + dois cards no partial
 

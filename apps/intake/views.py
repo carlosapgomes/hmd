@@ -46,7 +46,7 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
-from django.http import FileResponse, HttpRequest, HttpResponse
+from django.http import FileResponse, Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -66,6 +66,7 @@ from apps.cases.models import (
     DetectionStatus,
     DoctorDisposition,
 )
+from apps.cases.navigation import resolve_safe_next_url
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.units import unit_label
 
@@ -518,10 +519,26 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     # original (reverso ``corrected_by``), ordenados por criação.
     corrections = list(case.corrected_by.order_by("created_at", "pk"))
 
+    # Cards do relatório (slice PVP-002, R2/D1): a view monta pdf_items
+    # (position/filename/size/serve/viewer) com reverse; o template itera.
+    detail_path = reverse("intake:case_detail", args=[case.case_id])
+    pdf_items = [
+        {
+            "position": document.position,
+            "filename": document.original_filename,
+            "size": document.size_bytes,
+            "serve_url": reverse("intake:serve_document", args=[case.case_id, document.pk]),
+            "viewer_url": reverse("intake:pdf_viewer", args=[case.case_id, document.pk]),
+        }
+        for document in documents
+    ]
+
     context = {
         "case": case,
         "status_label": case.get_status_display(),
         "documents": documents,
+        "pdf_items": pdf_items,
+        "detail_url": detail_path,
         "attachments": attachments,
         "communications": communications,
         "procedure_rows": procedure_rows,
@@ -660,6 +677,47 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         request,
         "intake/corrected_resubmission.html",
         {"form": form, "case": case},
+    )
+
+
+@role_required("nir")
+def pdf_viewer(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    document_id: int,
+) -> HttpResponse:
+    """Viewer mobile do PDF original do caso do próprio NIR (slice PVP-002, R1).
+
+    Mesmo guard fail-closed de ``serve_document``: queryset por criador —
+    caso alheio, documento de outro caso ou inexistente → 404. O ``?next=``
+    passa por ``resolve_safe_next_url`` (fallback ao detalhe); o template
+    ``pdf_viewer/mobile_pdf_viewer.html`` recebe título, URLs do PDF e volta.
+    """
+    user = _require_user(request)
+    case = get_object_or_404(
+        Case.objects.only("case_id", "created_by"),
+        case_id=case_id,
+        created_by=user,
+    )
+    document = get_object_or_404(
+        CaseDocument.objects.only("pk", "case_id", "file"),
+        case=case,
+        pk=document_id,
+    )
+    if not document.file:
+        raise Http404
+    detail_url = reverse("intake:case_detail", args=[case.case_id])
+    serve_url = reverse("intake:serve_document", args=[case.case_id, document_id])
+    back_url = resolve_safe_next_url(request, detail_url)
+    return render(
+        request,
+        "pdf_viewer/mobile_pdf_viewer.html",
+        {
+            "viewer_title": "PDF Original",
+            "pdf_url": serve_url,
+            "fallback_pdf_url": serve_url,
+            "back_url": back_url,
+        },
     )
 
 

@@ -1,15 +1,57 @@
-// Drive Playwright pinado do verify-hmd — ui-parity-intake-detail slice 003.
-// Jornada detalhe-papeis: médico decide (aprova) o VERIFY-001 sintético na
-// página de trabalho no novo layout ats-web → agendador confirma unit 1 no
-// detalhe no novo layout (reserva/heartbeat intactos) → NIR confirma o
-// recebimento no detalhe (CLEANED). Tudo pela UI real (login pelo form,
-// selects/inputs/botões do browser), sem mutação direta de banco nem
-// mudança de seed/backend. Evidência em <run>/artifacts/.
+// Drive Playwright pinado do verify-hmd — detalhe-papeis (R3+R5) + PVP-002 (R3+R5).
+// Jornada ORIGINAL (slice 003, §7 — passos preservados sobre VERIFY-001):
+// médico decide (aprova) o VERIFY-001 sintético na página de trabalho no novo
+// layout ats-web → agendador confirma unit 1 no detalhe no novo layout
+// (reserva/heartbeat intactos) → NIR confirma o recebimento no detalhe
+// (CLEANED). Tudo pela UI real (login pelo form, selects/inputs/botões do
+// browser), sem mutação direta de banco nem mudança de seed/backend.
+// Jornada NOVA (slice PVP-002, fix-1): detalhe NIR sobre VERIFY-101 (fixture
+// criada NO DRIVE via runVerifyPy: 2 CaseDocuments com PDFs VÁLIDOS gerados
+// por PyMuPDF com texto "VERIFY-101 doc N" + extracted_text populado +
+// AWAITING_DOCTOR + declarados + criador verify-nir; IDs/nomes fora de
+// VERIFY-001/002 e das faixas de outros drives; seed compartilhado intocado).
+// Prova de rede distinguível do embed (R3): verificações diretas usam
+// `?probe=1` e NÃO contam como prova; o drive conta no server.log as entradas
+// da URL de serve SEM o marcador entre marcos de fase. Renderização provada:
+// o embed renderiza no Chromium headless com PDF válido (o plugin de PDF do
+// headless shell não renderiza — o drive usa Chromium headed sob Xvfb, modo
+// registrado em observed-state.json). Evidência em <run>/artifacts/.
 // Exit: 0 PASS · 1 falha observada · 2 infra/driver.
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
+
+// Guarda de mídia por run (slice PVP-002 fix-1, P1-1; endurecida no fix-2,
+// P1-b): exige descendente ESTRITO do diretório da run após resolver o
+// caminho real (cobre symlinks e `..`). Igualdade (`candidate === run`) é
+// recusada, e candidatos INEXISTENTES são recusados de plano — a variante
+// mais simples e segura: um caminho inexistente não carrega evidência de
+// contenção (qualquer recomposição textual, ex. subir até um ancestral
+// existente e reanexar o resto, pode passar `<run>/link-externo/novo` onde
+// `link-externo` é um symlink pendente para fora da run). Todos os pontos
+// de chamada do drive validam paths que já existem (mediaRoot criado no
+// launch; fixtures listadas do disco), então recusar o inexistente nunca
+// rejeita uso legítimo. Prefixo textual NÃO basta: `<run>/../../../media`
+// passa no startsWith mas resolve fora da run. Espelha `media_path_ok` do
+// control-hmd (testada em apps/accounts/tests/test_verify_media_isolation.py).
+function isMediaUnderRun(candidate, runDir) {
+  if (!candidate || !runDir) return false;
+  let runReal;
+  try {
+    runReal = realpathSync(runDir);
+  } catch {
+    return false;
+  }
+  let candidateReal;
+  try {
+    candidateReal = realpathSync(candidate);
+  } catch {
+    return false;
+  }
+  return candidateReal !== runReal && candidateReal.startsWith(runReal + path.sep);
+}
 
 import { chromium } from 'playwright';
 
@@ -23,6 +65,7 @@ const manifest = JSON.parse(readFileSync(path.join(runDir, 'manifest.json'), 'ut
 const base = manifest.url;
 const artifacts = path.join(runDir, 'artifacts');
 const PASSWORD = manifest.seedPassword;
+const MEDIA_ROOT = manifest.mediaRoot;
 
 if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(base) || Number(new URL(base).port) !== manifest.port) {
   console.error(`infra: manifest.url=${base} não é a origem loopback verificada (porta ${manifest.port}).`);
@@ -30,6 +73,13 @@ if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(base) || Number(new URL(base).port) !== 
 }
 if (!existsSync(artifacts)) {
   console.error(`infra: diretório de artefatos ausente em ${artifacts}.`);
+  process.exit(2);
+}
+// R5: mediaRoot validado ANTES de qualquer subprocesso/servidor: descendente
+// estrito da run pelo caminho real (P1-1); subprocesso e servidor usam
+// este mesmo root.
+if (!isMediaUnderRun(MEDIA_ROOT, runDir)) {
+  console.error(`infra: mediaRoot inválido ou fora da run: ${MEDIA_ROOT} — recuso dirigir.`);
   process.exit(2);
 }
 
@@ -55,6 +105,7 @@ function assertOwnedInstance() {
   if (!manifest.staticRoot) refuseOwned('staticRoot ausente');
   if (!String(manifest.staticRoot).startsWith(`${runDir}/`)) refuseOwned('staticRoot fora da run');
   if (!environ.includes(`HMD_VERIFY_STATIC_ROOT=${manifest.staticRoot}`)) refuseOwned('staticRoot divergente');
+  if (!environ.includes(`HMD_VERIFY_MEDIA_ROOT=${MEDIA_ROOT}`)) refuseOwned('mediaRoot divergente do servidor');
   const cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf8').replaceAll('\0', ' ');
   if (!cmdline.includes('config.settings.verify') || !cmdline.includes(`127.0.0.1:${manifest.port}`)) refuseOwned('cmdline sem verify/loopback');
   const portHex = Number(manifest.port).toString(16).toUpperCase().padStart(4, '0');
@@ -95,7 +146,24 @@ function check(id, ok, detail) {
   if (!ok) failures.push(id);
   console.log(`${ok ? 'PASS' : 'FAIL'} ${id} ${detail ?? ''}`);
 }
+async function waitShell(page) {
+  await page.waitForFunction(
+    () => {
+      const shell = document.querySelector('.app-shell');
+      return shell !== null && Number(getComputedStyle(shell).opacity) >= 0.99;
+    },
+    { timeout: 15000 },
+  );
+}
+async function snapNoJs(page, name) {
+  const file = path.join(artifacts, `${name}.txt`);
+  let text;
+  try { text = await page.locator('body').ariaSnapshot(); } catch { text = await page.locator('body').innerText(); }
+  writeFileSync(file, `${page.url()}\n${text}\n`);
+  await page.screenshot({ path: path.join(artifacts, `${name}.png`), fullPage: true });
+}
 async function snap(page, name) {
+  await waitShell(page);
   const file = path.join(artifacts, `${name}.txt`);
   let text;
   try { text = await page.locator('body').ariaSnapshot(); } catch { text = await page.locator('body').innerText(); }
@@ -114,22 +182,104 @@ async function loginAs(browser, username, label, opts = {}) {
   await page.getByLabel('Usuário').fill(username);
   await page.getByLabel('Senha', { exact: true }).fill(PASSWORD);
   await page.getByRole('button', { name: 'Entrar' }).click();
-  await page.waitForURL((url) => !url.pathname.endsWith('/login/'), { timeout: 15000 });
+  await page.waitForFunction(() => !location.pathname.endsWith('/login/'), { timeout: 15000 });
   return { context, page };
 }
 
+// runVerifyPy com HMD_VERIFY_MEDIA_ROOT=mediaRoot VALIDADO sob a run
+// (slice PVP-002, R5): o subprocesso grava no mesmo root do servidor; path
+// fora da run é recusado antes de qualquer execução.
+const runVerifyPy = (code) => {
+  if (!isMediaUnderRun(MEDIA_ROOT, runDir)) {
+    throw new Error(`infra: mediaRoot fora da run, recuso executar: ${MEDIA_ROOT}`);
+  }
+  const py = existsSync('.venv/bin/python') ? '.venv/bin/python' : 'uv run python';
+  return execSync(`${py} manage.py shell --settings=config.settings.verify -c "${code.replace(/"/g, '\\"')}"`, {
+    env: {
+      ...process.env,
+      DJANGO_SETTINGS_MODULE: 'config.settings.verify',
+      VERIFY_DB_HOST: manifest.dbHost || '127.0.0.1',
+      VERIFY_DB_PORT: String(manifest.dbPort || process.env.TEST_DB_PORT || '55435'),
+      VERIFY_DB_NAME: manifest.database,
+      VERIFY_DB_USER: process.env.VERIFY_DB_USER || 'hmd',
+      VERIFY_DB_PASSWORD: process.env.VERIFY_DB_PASSWORD || 'hmd_dev',
+      HMD_VERIFY_MEDIA_ROOT: MEDIA_ROOT,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf8',
+  });
+};
+
+// Contagem de requisições na URL de serve (P1-2): o server.log do runserver
+// registra cada GET com `"GET <path> HTTP/1.1" 200`. Verificações diretas de
+// sanidade usam `?probe=1` e são EXCLUÍDAS da contagem — só entram linhas SEM
+// o marcador. EVIDÊNCIA FORTE (harness headed sob Xvfb): o plugin de PDF
+// do Chromium pinado (1.64.0/chromium-1248) BUSCA o <embed> cujo `src` foi
+// atribuído via JS — o server.log registra GET sem marcador após cada
+// expansão (retificação do fix-2: o fix-1 afirmava o contrário com um
+// contador quebrado — off-by-one + path que nunca casava). A contagem prova
+// a AUSÊNCIA (0 fetch fechado/mobile/card-aberto = lazy) E a presença
+// target-only (expansão ⇒ ≥1 GET sem marcador SÓ no documento-alvo); a
+// prova de RENDERIZAÇÃO segue sendo a da decisão C (PDF.js canvas não-branco).
+// `markPhase()` retorna a posição da próxima linha nova do server.log
+// (sem off-by-one); `countEmbedFetches` conta as linhas novas desde o marco
+// para o caminho REAL `servePath` sem `probe=1`; falha de leitura do log
+// lança (fail-loud) em vez de retornar zero silencioso.
+function readServerLogLines(logFile) {
+  return readFileSync(logFile, 'utf8').split('\n');
+}
+function serverLogPath() {
+  return path.join(artifacts, 'server.log');
+}
+function markPhase() {
+  return readServerLogLines(serverLogPath()).length - 1;
+}
+function countEmbedFetchesFromFile(logFile, since, servePath) {
+  let count = 0;
+  for (const line of readServerLogLines(logFile).slice(since)) {
+    if (line.includes(`GET ${servePath}`) && line.includes(' 200') && !line.includes('probe=1')) {
+      count += 1;
+    }
+  }
+  return count;
+}
+function countEmbedFetches(since, servePath) {
+  return countEmbedFetchesFromFile(serverLogPath(), since, servePath);
+}
+// Verificação direta (NÃO é prova do embed — usa ?probe=1, excluído da
+// contagem acima): confirma que a URL de serve responde 200 application/pdf.
+async function probeServesPdf(page, servePath) {
+  const response = await page.request.get(`${base}${servePath}?probe=1`);
+  const contentType = String(response.headers()['content-type'] || '');
+  const ok = response.status() === 200 && contentType.includes('application/pdf');
+  check('probe-serve-pdf', ok, `${response.status()} ${contentType} ${servePath}?probe=1`);
+  return ok;
+}
+
+// O plugin de PDF do Chromium headless (headless shell) NÃO busca nem renderiza
+// <embed type="application/pdf"> (prova P1-2: 0 GET no server.log mesmo com src
+// atribuído). Evidência de rede/render do embed exige o Chromium headed — sob
+// Xvfb quando houver DISPLAY (CI/harness), senão BLOCKED honesto (exit 2).
 let browser;
 try {
-  browser = await chromium.launch({ headless: true });
+  if (!process.env.DISPLAY) {
+    console.error('infra BLOCKED: sem DISPLAY — o plugin de PDF do headless não busca/renderiza <embed>; rode sob Xvfb (DISPLAY=:99) para prova de rede/render do embed. Nenhum motor substituto foi usado.');
+    process.exit(2);
+  }
+  browser = await chromium.launch({ headless: false, args: ['--no-sandbox'] });
 } catch (err) {
   console.error(`infra BLOCKED: Chromium pinado do Playwright indisponível (${err.message}) — nenhum motor substituto foi usado.`);
   process.exit(2);
 }
 
 const observed = { runId: manifest.runId, base, database: manifest.database, steps: [] };
+// Modo de render do plugin registrado: Chromium headed sob Xvfb (DISPLAY) —
+// o único modo em que o plugin de PDF busca e renderiza <embed>.
+observed.pdfPluginMode = `headed-xvfb (DISPLAY=${process.env.DISPLAY})`;
 let caseId = null;
 
 try {
+  // ══ PARTE A — jornada ORIGINAL sobre VERIFY-001 (§7: passos preservados) ══
   // 1) Médico: fila → página de trabalho (novo layout) → aprova tudo.
   {
     const { context, page } = await loginAs(browser, 'verify-doctor', 'doctor-detalhe');
@@ -248,6 +398,265 @@ try {
       observed.steps.push({ step: 'nir-detalhe-cleaned', url: page.url() });
       await context.close();
     }
+  }
+
+  // ══ PARTE B — jornada NOVA PVP-002 sobre VERIFY-101 (nir-pvp002) ══
+  // Setup VERIFY-101 via runVerifyPy (NÃO toca o seed compartilhado):
+  // criador verify-nir, AWAITING_DOCTOR, 2 documentos com PDFs VÁLIDOS
+  // (PyMuPDF, 1 página com texto "VERIFY-101 doc N" — renderizáveis no
+  // plugin) gravados no storage da run + extracted_text populado.
+  runVerifyPy(
+    "from django.conf import settings\n" +
+    "assert str(settings.MEDIA_ROOT).startswith('" + runDir + "'), settings.MEDIA_ROOT\n" +
+    "import pymupdf\n" +
+    "from django.contrib.auth import get_user_model\n" +
+    "from apps.cases.models import Case, CaseDocument, CaseProcedure\n" +
+    "from django.core.files.base import ContentFile\n" +
+    "u = get_user_model().objects.get(username='verify-nir')\n" +
+    "c, _ = Case.objects.get_or_create(created_by=u, agency_record_number='VERIFY-101', defaults={'patient_name': 'Paciente Sintetico Cento e Um', 'patient_age': 57})\n" +
+    "Case.objects.filter(pk=c.pk).update(patient_name='Paciente Sintetico Cento e Um', patient_age=57, extracted_text='TEXTO SINTETICO VERIFY-101 PARTE 1.\\nTEXTO SINTETICO VERIFY-101 PARTE 2.')\n" +
+    "c.refresh_from_db()\n" +
+    "CaseProcedure.objects.get_or_create(case=c, procedure_type='art_perif', defaults={'declared_by_nir': True})\n" +
+    "CaseProcedure.objects.get_or_create(case=c, procedure_type='cat_cardiaco', defaults={'declared_by_nir': True})\n" +
+    "c.start_pdf_extraction(user=None, role='system')\n" +
+    "c.complete_pdf_extraction(user=None, role='system')\n" +
+    "c.complete_anonymization(user=None, role='system')\n" +
+    "c.complete_llm_extraction(user=None, role='system')\n" +
+    "c.complete_llm_summarization(user=None, role='system')\n" +
+    "Case.objects.filter(pk=c.pk).update(status='AWAITING_DOCTOR')\n" +
+    "c.refresh_from_db()\n" +
+    "existing = {d.position: d for d in c.documents.all()}\n" +
+    "for pos, name in ((1, 'relatorio-verify101-parte1.pdf'), (2, 'relatorio-verify101-parte2.pdf')):\n" +
+    "    if pos in existing:\n" +
+    "        continue\n" +
+    "    doc = pymupdf.open()\n" +
+    "    pg = doc.new_page()\n" +
+    "    pg.insert_text((72, 720), 'VERIFY-101 doc %d' % pos, fontsize=24)\n" +
+    "    pdf = bytes(doc.tobytes())\n" +
+    "    doc.close()\n" +
+    "    d = CaseDocument(case=c, position=pos, original_filename=name, content_type='application/pdf', size_bytes=len(pdf), uploaded_by=u)\n" +
+    "    d.file.save(name, ContentFile(pdf), save=False)\n" +
+    "    d.save()\n" +
+    "print('VERIFY-101 ok', str(c.case_id), c.documents.count())",
+  );
+  const out = runVerifyPy(
+    "from apps.cases.models import Case\n" +
+    "c = Case.objects.get(agency_record_number='VERIFY-101')\n" +
+    "from apps.cases.models import CaseDocument\n" +
+    "print(str(c.case_id))\n" +
+    "print(','.join(str(d.pk) + ':' + str(d.position) for d in c.documents.order_by('position')))",
+  );
+  const outLines = String(out).trim().split('\n');
+  const caseId101 = outLines[outLines.length - 2].trim();
+  const docMap = Object.fromEntries(
+    outLines[outLines.length - 1].trim().split(',').map((pair) => {
+      const [pk, pos] = pair.split(':');
+      return [pos, pk];
+    }),
+  );
+  const doc1ServePath = `/intake/cases/${caseId101}/documents/${docMap['1']}/`;
+  const doc2ServePath = `/intake/cases/${caseId101}/documents/${docMap['2']}/`;
+  check('verify101-fixture', /^[0-9a-f-]{36}$/.test(caseId101) && !!docMap['1'] && !!docMap['2'], `caseId=${caseId101} docs=${JSON.stringify(docMap)}`);
+  // R5: os PDFs da fixture estão no root da run (mediaRoot do manifest).
+  const fixtureFiles = execSync(`find ${JSON.stringify(MEDIA_ROOT)} -type f -name '*.pdf' | sort`, { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+  check('verify101-media-in-run-root', fixtureFiles.length >= 2 && fixtureFiles.every((f) => isMediaUnderRun(f, runDir)), `${fixtureFiles.length} pdf(s) sob ${MEDIA_ROOT}`);
+  // PDFs válidos: magic %PDF + /Type /Page (PyMuPDF) — o plugin os renderiza.
+  const pdfMagic = execSync(
+    `python3 -c "import sys; data=open(sys.argv[1],'rb').read(); print(data[:5] == b'%PDF-' and b'/Type' in data and b'/Page' in data)" ${JSON.stringify(fixtureFiles[0])}`,
+    { encoding: 'utf8' },
+  ).trim();
+  check('verify101-pdf-valid', pdfMagic === 'True', String(fixtureFiles[0]));
+  observed.verify101 = { caseId: caseId101, docMap, fixtureFiles };
+
+  // 4) Desktop 1280: detalhe — cards fechados, 0 fetch do embed.
+  {
+    const { context, page } = await loginAs(browser, 'verify-nir', 'nir-101', { viewport: { width: 1280, height: 900 } });
+    await page.goto(`${base}/intake/cases/${caseId101}/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    check('nir101-detail-layout', (await page.locator('.detail-layout').count()) === 1);
+    const body = await page.locator('body').innerText();
+    // O <pre> vive no collapse fechado (fora do innerText): ler o textContent.
+    const preText = await page.locator('#text-collapse pre').evaluate((el) => el.textContent);
+    check('nir101-text-card', body.includes('Texto Extraído do PDF') && preText.includes('TEXTO SINTETICO VERIFY-101 PARTE 1'), preText.slice(0, 60));
+    check('nir101-pdf-card', body.includes('Visualizar PDF Original'));
+    check('nir101-collapses-closed', (await page.locator('.collapse.show').count()) === 0, `${await page.locator('.collapse.show').count()} abertos`);
+    const embedCount = await page.locator('embed.pdf-lazy-embed').count();
+    const srcCount = await page.locator('embed.pdf-lazy-embed[src]').count();
+    const dataSrcCount = await page.locator('embed.pdf-lazy-embed[data-src]').count();
+    check('nir101-embeds-lazy', embedCount === 2 && srcCount === 0 && dataSrcCount === 2, `embeds=${embedCount} src=${srcCount} data-src=${dataSrcCount}`);
+    check('nir101-doc-collapse-attr', (await page.locator('[data-pdf-doc-collapse]').count()) === 2);
+    check('nir101-mobile-links', (await page.locator('a.d-md-none[href*="/viewer/"]').count()) === 2);
+    check('nir101-new-tab-links', (await page.locator('a[target="_blank"]').count()) >= 2);
+    check('nir101-lazy-script', (await page.locator('script[src*="pdf-lazy-embed.js"]').count()) >= 1);
+    // Prova de rede do estado fechado: nenhum GET de serve SEM ?probe=1
+    // (caminho REAL da requisição — `GET /intake/cases/.../documents/...`).
+    const markClosed = markPhase();
+    await page.waitForTimeout(800);
+    const closedFetches = countEmbedFetches(markClosed, '/intake/cases/');
+    check('nir101-zero-fetch-closed', closedFetches === 0, `${closedFetches} fetch(es) de embed`);
+    await snap(page, 'nir-101-detalhe-1280-fechado');
+    observed.steps.push({ step: 'nir-101-detalhe-1280-fechado', url: page.url(), embedFetches: closedFetches });
+
+    // Abrir o card externo: continua 0 fetch do embed (lazy é por sub-collapse).
+    const markCard = markPhase();
+    await page.getByRole('button', { name: /Visualizar PDF Original/ }).click();
+    await page.waitForTimeout(800);
+    const cardFetches = countEmbedFetches(markCard, '/intake/cases/');
+    check('nir101-zero-fetch-card-open', cardFetches === 0, `${cardFetches} fetch(es) de embed`);
+    await snap(page, 'nir-101-card-externo-aberto');
+
+    // Expandir o sub-collapse do doc 1: o EMBED busca só o alvo, 1 única vez.
+    // Prova distinguível: contagem no server.log das entradas da URL de serve
+    // do doc 1 SEM ?probe=1 entre marcos (verificações diretas usam ?probe=1
+    // e são excluídas). O drive FALHA se a prova faltar.
+    const markDoc1 = markPhase();
+    await page.locator('button[data-bs-target="#pdf-collapse-1"]').click();
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#pdf-collapse-1 embed.pdf-lazy-embed');
+      return el && el.getAttribute('src');
+    }, { timeout: 10000 });
+    await page.waitForTimeout(2500);
+    const doc1Src = await page.locator('#pdf-collapse-1 embed.pdf-lazy-embed').getAttribute('src');
+    const doc2Src = await page.locator('#pdf-collapse-2 embed.pdf-lazy-embed').getAttribute('src');
+    check('nir101-doc1-loaded', !!doc1Src && doc1Src === doc1ServePath, String(doc1Src));
+    check('nir101-doc2-still-lazy', !doc2Src, String(doc2Src));
+    const doc1EmbedFetches = countEmbedFetches(markDoc1, doc1ServePath);
+    check('nir101-embed-fetch-doc1', doc1EmbedFetches >= 1, `${doc1EmbedFetches} GET(s) sem marcador em ${doc1ServePath} (o plugin busca o embed no headed-Xvfb)`);
+    const doc2EmbedFetches = countEmbedFetches(markDoc1, doc2ServePath);
+    check('nir101-no-embed-fetch-doc2', doc2EmbedFetches === 0, `${doc2EmbedFetches} GET(s) de embed em ${doc2ServePath}`);
+    // Verificação direta (marcada, não conta como prova): URL serve o PDF.
+    await probeServesPdf(page, doc1ServePath);
+    const srcCountAfter = await page.locator('embed.pdf-lazy-embed[src]').count();
+    check('nir101-only-target-has-src', srcCountAfter === 1, `${srcCountAfter} embed(s) com src`);
+    // Mecanismo D2 (src só no alvo, 1×) + URL válida (probe) + fetch do
+    // plugin registrado no server.log + ausência do erro de plugin que o
+    // PDF inválido anterior causava. A prova de RENDERIZAÇÃO segue a
+    // decisão C: viewer PDF.js (etapa 5: canvas com o PDF).
+    await snap(page, 'nir-101-doc1-expandido');
+    const expandedText = await page.locator('body').innerText();
+    check('nir101-no-plugin-error', !expandedText.includes("Couldn't load plugin"), expandedText.slice(0, 120));
+    observed.steps.push({ step: 'nir-101-doc1-expandido', url: page.url(), unmarkedGetsDoc1: doc1EmbedFetches, unmarkedGetsDoc2: doc2EmbedFetches });
+    await context.close();
+  }
+
+  // 5) Mobile 390: só link, 0 fetch de embed; viewer com Voltar topo/rodapé.
+  {
+    const { context, page } = await loginAs(browser, 'verify-nir', 'nir-101-mobile', { viewport: { width: 390, height: 844 } });
+    await page.goto(`${base}/intake/cases/${caseId101}/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const markMobile = markPhase();
+    await page.getByRole('button', { name: /Visualizar PDF Original/ }).click();
+    await page.waitForTimeout(800);
+    await page.locator('button[data-bs-target="#pdf-collapse-1"]').click().catch(() => {});
+    await page.waitForTimeout(800);
+    const mobileSrcs = await page.locator('embed.pdf-lazy-embed[src]').count();
+    const mobileFetches = countEmbedFetches(markMobile, '/intake/cases/');
+    check('nir101-mobile-zero-embed-fetch', mobileFetches === 0 && mobileSrcs === 0, `fetches=${mobileFetches} srcs=${mobileSrcs}`);
+    await snap(page, 'nir-101-detalhe-390');
+    observed.steps.push({ step: 'nir-101-detalhe-390', url: page.url(), embedFetches: mobileFetches });
+    // Viewer dedicado do doc 1: PDF.js baixa o PDF pela MESMA rota de serve
+    // e RENDERIZA em <canvas> — prova real de bytes válidos + renderização.
+    // Fail-loud: o drive falha se o canvas não aparecer ou ficar em branco.
+    const viewerHref = await page.locator('a.d-md-none[href*="/viewer/"]').first().getAttribute('href');
+    check('nir101-mobile-viewer-link', !!viewerHref && viewerHref.includes('/viewer/'), viewerHref);
+    await page.goto(`${base}${viewerHref}`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const viewerBackLinks = await page.locator('a:has-text("← Voltar")').count();
+    check('nir101-viewer-voltar-topo-rodape', viewerBackLinks >= 2, `${viewerBackLinks} links Voltar`);
+    const viewerBody = await page.locator('body').innerText();
+    check('nir101-viewer-title', viewerBody.includes('PDF Original') || (await page.title()).includes('PDF Original'), await page.title());
+    await page.waitForFunction(() => document.querySelectorAll('#pdf-pages canvas').length >= 1, { timeout: 20000 });
+    const canvasCount = await page.locator('#pdf-pages canvas').count();
+    check('nir101-viewer-pdfjs-rendered', canvasCount >= 1, `${canvasCount} canvas(es) PDF.js`);
+    // Canvas não-branco: o texto PyMuPDF é preto fino anti-aliased sobre
+    // branco — conta pixels ESTRITAMENTE não-brancos (qualquer canal < 250)
+    // numa miniatura 64×64 (fail-loud se o canvas estiver em branco).
+    const canvasPixels = await page.locator('#pdf-pages canvas').first().evaluate((el) => {
+      const thumb = document.createElement('canvas');
+      thumb.width = 64; thumb.height = 64;
+      thumb.getContext('2d').drawImage(el, 0, 0, 64, 64);
+      const d = thumb.getContext('2d').getImageData(0, 0, 64, 64).data;
+      let nonwhite = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] < 250 || d[i + 1] < 250 || d[i + 2] < 250) nonwhite += 1;
+      }
+      return { w: el.width, h: el.height, nonwhite64: nonwhite };
+    });
+    check('nir101-viewer-canvas-nonblank', canvasPixels.nonwhite64 > 0, JSON.stringify(canvasPixels));
+    await snap(page, 'nir-101-viewer-mobile');
+    observed.steps.push({ step: 'nir-101-viewer-mobile', url: page.url() });
+    // ?next= inseguro cai no detalhe.
+    const detailUrl = `${base}/intake/cases/${caseId101}/`;
+    await page.goto(`${base}${viewerHref.split('?')[0]}?next=https://evil.example/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const evilBack = await page.locator('a:has-text("← Voltar")').first().getAttribute('href');
+    check('nir101-viewer-next-inseguro-fallback', !!evilBack && !String(evilBack).includes('evil.example') && String(evilBack).includes(`/intake/cases/${caseId101}/`), evilBack);
+    await context.close();
+  }
+
+  // 6) Resize 390→1280 com sub-collapse aberto carrega o alvo (via embed).
+  {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    page.on('response', (res) => {
+      if (res.url().includes('/static/') && res.status() >= 400) failedAssets.push(`${res.status()} ${res.url()}`);
+    });
+    await page.goto(`${base}/login/`, { waitUntil: 'domcontentloaded' });
+    await page.getByLabel('Usuário').fill('verify-nir');
+    await page.getByLabel('Senha', { exact: true }).fill(PASSWORD);
+    await page.getByRole('button', { name: 'Entrar' }).click();
+    await page.waitForFunction(() => !location.pathname.endsWith('/login/'), { timeout: 15000 });
+    await page.goto(`${base}/intake/cases/${caseId101}/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    await page.getByRole('button', { name: /Visualizar PDF Original/ }).click();
+    await page.waitForTimeout(500);
+    // Abrir o sub-collapse em mobile (embed permanece sem src por contrato).
+    await page.locator('#pdf-collapse-2').evaluate((el) => el.classList.add('show'));
+    await page.waitForTimeout(500);
+    const beforeResizeSrc = await page.locator('#pdf-collapse-2 embed.pdf-lazy-embed').getAttribute('src');
+    check('nir101-resize-before-no-src', !beforeResizeSrc, String(beforeResizeSrc));
+    const markResize = markPhase();
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#pdf-collapse-2 embed.pdf-lazy-embed');
+      return el && el.getAttribute('src');
+    }, { timeout: 10000 });
+    await page.waitForTimeout(2500);
+    const afterResizeSrc = await page.locator('#pdf-collapse-2 embed.pdf-lazy-embed').getAttribute('src');
+    check('nir101-resize-loads-target', !!afterResizeSrc && afterResizeSrc === doc2ServePath, String(afterResizeSrc));
+    const resizeFetches = countEmbedFetches(markResize, doc2ServePath);
+    check('nir101-resize-embed-fetch', resizeFetches >= 1, `${resizeFetches} GET(s) sem marcador em ${doc2ServePath} (o plugin busca o embed no headed-Xvfb)`);
+    await snap(page, 'nir-101-resize-1280-carregado');
+    observed.steps.push({ step: 'nir-101-resize-1280-carregado', url: page.url(), embedFetchesDoc2: resizeFetches });
+    await context.close();
+  }
+
+  // 7) Sem JS: bloco noscript visível e funcional.
+  {
+    const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 1280, height: 900 } });
+    const page = await context.newPage();
+    await page.goto(`${base}/login/`, { waitUntil: 'domcontentloaded' });
+    await page.getByLabel('Usuário').fill('verify-nir');
+    await page.getByLabel('Senha', { exact: true }).fill(PASSWORD);
+    await page.getByRole('button', { name: 'Entrar' }).click();
+    await page.waitForFunction(() => !location.pathname.endsWith('/login/'), { timeout: 15000 });
+    await page.goto(`${base}/intake/cases/${caseId101}/`, { waitUntil: 'domcontentloaded' });
+    const noscriptVisible = await page.locator('noscript').count();
+    const noscriptHtml = await page.content();
+    const directLinks = (noscriptHtml.match(/Abrir PDF relatorio-verify101-parte/g) || []).length;
+    check('nir101-noscript-visible', noscriptVisible >= 1 && directLinks >= 2, `noscript=${noscriptVisible} links=${directLinks}`);
+    // Link direto abre o PDF mesmo sem JS (serve_document responde 200).
+    const href = await page.evaluate(() => {
+      const html = document.documentElement.innerHTML;
+      const m = html.match(/\/intake\/cases\/[0-9a-f-]+\/documents\/\d+\//);
+      return m ? m[0] : null;
+    });
+    check('nir101-noscript-href', !!href, href);
+    const pdfResponse = await page.request.get(`${base}${href}?probe=1`);
+    check('nir101-noscript-serves-pdf', pdfResponse.status() === 200 && String(pdfResponse.headers()['content-type']).includes('application/pdf'), `${pdfResponse.status()} ${pdfResponse.headers()['content-type']}`);
+    await snapNoJs(page, 'nir-101-sem-js-noscript');
+    observed.steps.push({ step: 'nir-101-sem-js-noscript', url: page.url() });
+    await context.close();
   }
 } catch (err) {
   console.error(`infra/driver: ${err.message}`);

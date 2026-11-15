@@ -30,6 +30,13 @@ urlpatterns: list[URLPattern] = [
         views.serve_document,
         name="serve_document",
     ),
+    # Viewer mobile do PDF original (slice PVP-002, R1): mesmo guard de
+    # criador do serve_document; ?next= validado com resolve_safe_next_url.
+    path(
+        "cases/<uuid:case_id>/documents/<int:document_id>/viewer/",
+        views.pdf_viewer,
+        name="pdf_viewer",
+    ),
     # Ações do gate NIR (slice 005, D6/D7): apenas caso retido do próprio criador.
     path(
         "cases/<uuid:case_id>/gate/release/",

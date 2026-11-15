@@ -67,6 +67,16 @@ if _VERIFY_STATIC_ROOT:
     STATIC_ROOT = Path(_VERIFY_STATIC_ROOT)
 else:
     STATIC_ROOT = Path(tempfile.gettempdir()) / f"hmd-verify-static-{os.getpid()}"
+# MEDIA_ROOT por-run (slice PVP-002, R5): o harness exporta
+# HMD_VERIFY_MEDIA_ROOT=<run>/media no launch/servidor, então os PDFs
+# criados na jornada vivem na run e o cleanup remove só a mídia da run.
+# Sem launch, o fallback é um diretório por-processo em temp — NUNCA o
+# media/ do checkout (BASE_DIR/media é o default de dev de base.py).
+_VERIFY_MEDIA_ROOT = os.environ.get("HMD_VERIFY_MEDIA_ROOT", "")
+if _VERIFY_MEDIA_ROOT:
+    MEDIA_ROOT = Path(_VERIFY_MEDIA_ROOT)
+else:
+    MEDIA_ROOT = Path(tempfile.gettempdir()) / f"hmd-verify-media-{os.getpid()}"
 # Estáticos reais do app: o harness roda collectstatic para STATIC_ROOT e o
 # WhiteNoise (middleware do base) serve esses arquivos com DEBUG=False — os
 # mesmos assets de static/ que a aplicação serve em produção, sem depender

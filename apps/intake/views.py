@@ -51,6 +51,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import escape
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 
 from apps.accounts.decorators import role_required
@@ -663,6 +664,7 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
 
 
 @role_required("nir")
+@xframe_options_sameorigin
 def serve_document(
     request: HttpRequest,
     case_id: uuid.UUID,

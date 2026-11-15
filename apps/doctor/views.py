@@ -65,6 +65,7 @@ from django.db.models import F, QuerySet
 from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 from django_fsm import TransitionNotAllowed
 
@@ -420,6 +421,7 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
 
 
 @role_required("doctor", "admin")
+@xframe_options_sameorigin
 def case_pdf(
     request: HttpRequest,
     case_id: uuid.UUID,

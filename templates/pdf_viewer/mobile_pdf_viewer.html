@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ viewer_title }} · {{ app_display_name }}{% endblock %}
+
+{% block page_title %}<h1 class="page-title">{{ viewer_title }}</h1>{% endblock %}
+
+{% block content %}
+
+<nav class="pdf-viewer-nav bg-white border-bottom py-2 px-3 d-flex align-items-center gap-2 sticky-top" style="z-index: 1030;">
+  <a href="{{ back_url }}" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1">
+    ← Voltar
+  </a>
+</nav>
+
+<div class="pdf-viewer-container"
+     data-pdf-url="{{ pdf_url }}"
+     data-fallback-pdf-url="{{ fallback_pdf_url }}"
+     style="max-width: 100%; overflow-x: hidden;">
+
+  <!-- Loading indicator -->
+  <div id="pdf-loading" class="text-center py-5">
+    <div class="spinner-border text-primary mb-3" role="status">
+      <span class="visually-hidden">Carregando PDF...</span>
+    </div>
+    <p class="text-muted">Carregando PDF...</p>
+  </div>
+
+  <!-- Error alert (hidden by default) -->
+  <div id="pdf-error" class="alert alert-warning d-none mx-3 mt-3" role="alert">
+    <strong>Não foi possível renderizar este PDF no visualizador interno.</strong>
+    <p class="mb-0 mt-1">
+      Você pode tentar
+      <a href="{{ fallback_pdf_url }}" class="alert-link" target="_blank" rel="noopener">
+        abrir o PDF original
+      </a>.
+    </p>
+  </div>
+
+  <!-- PDF pages container -->
+  <div id="pdf-pages" class="pdf-pages-container">
+    <!-- Pages will be injected by pdf-viewer.js -->
+  </div>
+
+  <!-- Bottom back button -->
+  <div class="text-center py-4">
+    <a href="{{ back_url }}" class="btn btn-outline-secondary d-inline-flex align-items-center gap-1">
+      ← Voltar
+    </a>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script type="module">
+  const container = document.querySelector('.pdf-viewer-container');
+  if (container) {
+    const pdfUrl = container.dataset.pdfUrl;
+    const fallbackUrl = container.dataset.fallbackPdfUrl;
+
+    const workerSrc = "{% static 'vendor/pdfjs/pdf.worker.mjs' %}";
+    const pdfjsUrl = "{% static 'vendor/pdfjs/pdf.mjs' %}";
+    // Dynamically import the PDF.js library and the viewer module in the
+    // same promise chain handled by the catch below: a failed load of
+    // either module shows the error block with the direct-PDF fallback
+    // link instead of leaving the loading spinner forever.
+    const moduleUrl = "{% static 'js/pdf-viewer.js' %}";
+    Promise.all([import(pdfjsUrl), import(moduleUrl)]).then(([pdfjsLib, mod]) => {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
+      mod.initPdfViewer({
+        pdfjsLib,
+        pdfUrl,
+        fallbackUrl,
+        container: document.getElementById('pdf-pages'),
+        statusEl: document.getElementById('pdf-loading'),
+        errorEl: document.getElementById('pdf-error'),
+        scale: 1.5,
+      });
+    }).catch(err => {
+      console.error('Failed to load pdf-viewer.js module:', err);
+      // Show error fallback
+      const loading = document.getElementById('pdf-loading');
+      const error = document.getElementById('pdf-error');
+      if (loading) loading.classList.add('d-none');
+      if (error) {
+        error.classList.remove('d-none');
+        error.querySelector('.alert-link').href = fallbackUrl;
+      }
+    });
+  }
+</script>
+{% endblock %}

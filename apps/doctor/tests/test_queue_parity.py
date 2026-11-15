@@ -25,6 +25,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.cases.locks import claim_case_lock
 from apps.cases.models import Case, CaseProcedure, CaseStatus
+from apps.cases.procedures import record_doctor_procedure_decisions
 
 ANGIO_TYPE = "art_perif"
 CARDIO_TYPE = "cat_cardiaco"
@@ -342,32 +343,124 @@ def test_operational_list_css_scope_and_search_js_without_exam_filter() -> None:
     assert "data-doctor-queue-search" in js
 
 
+def _make_decided_case(
+    created_by: User,
+    decided_by: User,
+    procedure_types: Sequence[str],
+    *,
+    dispositions: dict[str, str],
+    patient_name: str = "",
+    agency_record_number: str = "",
+) -> Case:
+    """Caso decidido pelo serviço (disposições + horários nas rows, OLI-003)."""
+    case = Case.objects.create(created_by=created_by)
+    for procedure_type in procedure_types:
+        CaseProcedure.objects.create(case=case, procedure_type=procedure_type, declared_by_nir=True)
+    case.start_pdf_extraction(user=None, role=SYSTEM_ROLE)
+    case.complete_pdf_extraction(user=None, role=SYSTEM_ROLE)
+    case.complete_anonymization(user=None, role=SYSTEM_ROLE)
+    case.complete_llm_extraction(user=None, role=SYSTEM_ROLE)
+    case.complete_llm_summarization(user=None, role=SYSTEM_ROLE)
+    Case.objects.filter(pk=case.pk).update(
+        patient_name=patient_name, agency_record_number=agency_record_number, patient_age=60
+    )
+    record_doctor_procedure_decisions(
+        case,
+        {procedure_type: (dispositions[procedure_type], "") for procedure_type in procedure_types},
+        user=decided_by,
+        role=DOCTOR_ROLE,
+    )
+    case.refresh_from_db()
+    return case
+
+
 @pytest.mark.django_db
-def test_queue_decided_card_keeps_status_badge(
+def test_queue_decided_card_shows_per_procedure_result(
     client: Client,
     nir_user: User,
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """Revisão OLI-001 pontual: só os pendentes perdem o badge genérico.
+    """OLI-003 R2/R3: decididos sem badge genérico; disposição por procedimento.
 
-    A apresentação temporária de decididos (OLI-003) mantém ``status-badge``
-    com a disposição/estado — este teste impede remoção acidental em massa.
+    Substitui a guarda temporária de OLI-001 (``status-done``): o card
+    orientado ao resultado exibe ``Negado``/``Aprovado`` por row com o
+    horário de ``doctor_decided_at``, sem espera e sem estado agregado.
     """
     doctor = user_factory("medico-paridade-dec", (DOCTOR_ROLE,))
-    decided = Case.objects.create(created_by=nir_user)
-    CaseProcedure.objects.create(case=decided, procedure_type=ANGIO_TYPE, declared_by_nir=True)
-    decided.start_pdf_extraction(user=None, role=SYSTEM_ROLE)
-    decided.complete_pdf_extraction(user=None, role=SYSTEM_ROLE)
-    decided.complete_anonymization(user=None, role=SYSTEM_ROLE)
-    decided.complete_llm_extraction(user=None, role=SYSTEM_ROLE)
-    decided.complete_llm_summarization(user=None, role=SYSTEM_ROLE)
-    decided.record_doctor_decision(accepted=False, user=doctor, role=DOCTOR_ROLE)
-    decided.refresh_from_db()
+    decided = _make_decided_case(
+        nir_user,
+        doctor,
+        (ANGIO_TYPE,),
+        dispositions={ANGIO_TYPE: "denied"},
+        patient_name="Paciente Decidido Paridade",
+        agency_record_number="888003",
+    )
+    row = decided.procedures.get(procedure_type=ANGIO_TYPE)
+    assert row.doctor_decided_at is not None
+    expected_time = timezone.localtime(row.doctor_decided_at).strftime("%d/%m/%Y %H:%M")
     login_user(user_factory("geral-paridade-dec", (DOCTOR_ROLE,)), DOCTOR_ROLE)
 
     body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
 
     card = _card_wrapper(body, decided.case_id)
-    assert "status-badge" in card
-    assert "Negado pelo médico" in card
+    assert "status-badge" not in card
+    assert "status-done" not in card
+    assert "Negado pelo médico" not in card
+    assert "Negado" in card
+    assert "text-bg-danger" in card
+    assert f"Decidido em {expected_time}" in card
+    assert "Recebido há" not in card
+    assert "waiting-time" not in card
+    assert "Ver detalhes" in card
+
+
+@pytest.mark.django_db
+def test_queue_decided_render_query_count_bounded_independent_of_card_count(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-003 R6: decididos sem N+1 — disposição/horário das rows pré-carregadas.
+
+    Página cheia e partial com 1 ou 5 cards decididos executam o MESMO
+    número de queries (disposição e ``doctor_decided_at`` vêm do
+    ``prefetch_related("procedures")``, nunca de query/event por card).
+    """
+    doctor = user_factory("medico-queries-dec", (DOCTOR_ROLE,))
+    login_user(user_factory("geral-queries-dec", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+    queue_url = reverse("doctor:queue")
+    partial_url = reverse("doctor:queue_partial")
+
+    def _query_count(url: str, params: dict[str, str]) -> int:
+        with CaptureQueriesContext(connection) as captured:
+            response = client.get(url, params)
+        assert response.status_code == 200
+        return len(captured.captured_queries)
+
+    _make_decided_case(
+        nir_user,
+        doctor,
+        (ANGIO_TYPE, CARDIO_TYPE),
+        dispositions={ANGIO_TYPE: "approved", CARDIO_TYPE: "denied"},
+        patient_name="Paciente Decidido Query Um",
+    )
+    page_count_few = _query_count(queue_url, {"tab": "decididos"})
+    partial_count_few = _query_count(partial_url, {"tab": "decididos"})
+
+    for index in range(4):
+        _make_decided_case(
+            nir_user,
+            doctor,
+            (ANGIO_TYPE, CARDIO_TYPE),
+            dispositions={ANGIO_TYPE: "approved", CARDIO_TYPE: "denied"},
+            patient_name=f"Paciente Decidido Query Extra {index}",
+        )
+    page_count_many = _query_count(queue_url, {"tab": "decididos"})
+    partial_count_many = _query_count(partial_url, {"tab": "decididos"})
+
+    assert page_count_many == page_count_few
+    assert partial_count_many == partial_count_few
+    assert page_count_many <= 20
+    assert partial_count_many <= 20

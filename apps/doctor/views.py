@@ -80,7 +80,7 @@ from apps.cases.locks import (
     release_case_lock,
     renew_case_lock,
 )
-from apps.cases.models import Case, CaseDocument, CaseStatus
+from apps.cases.models import Case, CaseDocument, CaseStatus, DoctorDisposition
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES, VALID_DOCTOR_SUBTYPES
 from apps.cases.procedures import get_declared_procedure_types, record_doctor_procedure_decisions
 
@@ -144,6 +144,9 @@ CASE_LEAVE_MESSAGE = "Reserva liberada — o caso voltou a ficar disponível na 
 
 # Perfil do catálogo por tipo (ordem/rotulo/subtipo dos cards da fila).
 _PROFILE_BY_TYPE = {profile.procedure_type: profile for profile in PROCEDURE_PROFILES}
+# Rótulo legível da disposição médica atual da row (DoctorDisposition) —
+# OLI-003 D8: projetada das rows já pré-carregadas, sem consultar events.
+_DISPOSITION_LABELS = dict(DoctorDisposition.choices)
 # Ordem canônica de exibição dos tipos declarados (registro do catálogo).
 _CATALOG_INDEX: dict[str, int] = {
     profile.procedure_type: index for index, profile in enumerate(PROCEDURE_PROFILES)
@@ -272,8 +275,12 @@ def _queue_item(case: Case, *, user: User) -> dict[str, object]:
 
     Os tipos saem das rows já pré-carregadas (``prefetch_related``),
     declaradas pelo NIR, na ordem canônica do catálogo; cada tipo leva o label
-    e o ``doctor_subtipo`` (badge no template). O estado de reserva (D2) entra
-    em ``lock`` para o card escolher a ação (Avaliar/Continuar/Reservado).
+    e o ``doctor_subtipo`` (badge no template). OLI-003 D8: cada tipo leva
+    também a disposição (``doctor_disposition`` + rótulo) e o instante da
+    decisão (``doctor_decided_at``) da própria row — sem consultar
+    ``decision_event``/trilha/presenter por card, sem N+1. O estado de
+    reserva (D2) entra em ``lock`` para o card escolher a ação
+    (Avaliar/Continuar/Reservado).
     """
     rows = [row for row in case.procedures.all() if row.declared_by_nir]
     rows.sort(key=lambda row: _CATALOG_INDEX[row.procedure_type])
@@ -292,6 +299,11 @@ def _queue_item(case: Case, *, user: User) -> dict[str, object]:
             {
                 "label": _PROFILE_BY_TYPE[row.procedure_type].label,
                 "subtype": _PROFILE_BY_TYPE[row.procedure_type].doctor_subtipo,
+                "disposition": row.doctor_disposition,
+                "disposition_label": _DISPOSITION_LABELS.get(
+                    row.doctor_disposition, row.doctor_disposition
+                ),
+                "decided_at": row.doctor_decided_at,
             }
             for row in rows
         ],

@@ -1,11 +1,13 @@
 {% comment %}
-Fragmento compartilhado da fila médica (OLI-001): página cheia inclui este
-arquivo dentro do container htmx e ``doctor:queue_partial`` renderiza SÓ este
-arquivo — server == partial. Card operacional compacto (D3): uma única
-superfície ``.case-card > .row`` com conteúdo ``col-lg-8`` e tempo/ação
-``col-lg-4``; CTA real com ``stretched-link`` quando a ação é permitida.
-A aba decididos mantém temporariamente sua apresentação anterior (OLI-003
-entrega o card orientado ao resultado) dentro da mesma estrutura 8/4.
+Fragmento compartilhado da fila médica (OLI-001/OLI-003): página cheia
+inclui este arquivo dentro do container htmx e ``doctor:queue_partial``
+renderiza SÓ este arquivo — server == partial. Card operacional compacto
+(D3): uma única superfície ``.case-card > .row`` com conteúdo ``col-lg-8``
+e tempo/ação ``col-lg-4``; CTA real com ``stretched-link`` quando a ação é
+permitida. Pendentes: espera única + ação de reserva. Decididos (OLI-003):
+card orientado ao resultado — disposição e horário de ``doctor_decided_at``
+por procedimento (lidos das rows pré-carregadas, D8), sem espera e sem
+badge genérico de estado do caso.
 Contexto: ``tab``, ``items``, ``page_obj``, ``filter_qs``. Atributos
 ``data-doctor-queue-card``/``data-patient-name``/
 ``data-agency-record-number``/``data-exam-type`` alimentam a busca client-side
@@ -31,11 +33,6 @@ escopo server de ``?subtype=``.
       {% endif %}
       <div class="row">
         <div class="col-lg-8">
-          {% if tab == 'decididos' %}
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="status-badge status-done">{{ item.status_label }}</span>
-          </div>
-          {% endif %}
           <div class="fw-semibold patient-name">{{ item.patient_name }}</div>
           <div class="small text-muted case-meta">
             Nº de ocorrência: {{ item.agency_record_number }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}{% if item.patient_gender %} · {{ item.patient_gender }}{% endif %}{% if item.origin_unit %} · 🏥 {{ item.origin_unit }}{% endif %}
@@ -46,12 +43,31 @@ escopo server de ``?subtype=``.
                 <div class="summary-label">Procedimentos</div>
                 <div class="summary-value">
                   {% if item.procedures %}
+                  {% if tab == 'decididos' %}
+                  <span class="d-flex flex-column gap-1">
+                    {% for procedure in item.procedures %}
+                    <span class="d-flex flex-wrap align-items-center gap-2">
+                      <span class="small">{{ procedure.label }}</span>
+                      <span class="badge rounded-pill text-bg-light border text-muted">{{ procedure.subtype }}</span>
+                      {% if procedure.disposition == 'approved' %}
+                      <span class="badge rounded-pill text-bg-success">Aprovado</span>
+                      {% elif procedure.disposition == 'denied' %}
+                      <span class="badge rounded-pill text-bg-danger">Negado</span>
+                      {% else %}
+                      <span class="badge rounded-pill text-bg-light border text-muted">{{ procedure.disposition_label }}</span>
+                      {% endif %}
+                      {% if procedure.decided_at %}<span class="small text-muted">Decidido em {{ procedure.decided_at|date:"d/m/Y H:i" }}</span>{% endif %}
+                    </span>
+                    {% endfor %}
+                  </span>
+                  {% else %}
                   <span class="d-flex flex-wrap align-items-center gap-2">
                     {% for procedure in item.procedures %}
                     <span class="small">{{ procedure.label }}</span>
                     <span class="badge rounded-pill text-bg-light border text-muted">{{ procedure.subtype }}</span>
                     {% endfor %}
                   </span>
+                  {% endif %}
                   {% else %}
                   —
                   {% endif %}
@@ -78,10 +94,7 @@ escopo server de ``?subtype=``.
           <a href="{{ card_url }}" class="btn btn-sm btn-primary stretched-link mt-2">Avaliar</a>
           {% endif %}
           {% else %}
-          <div class="waiting-time">
-            Recebido há {{ item.created_at|timesince }}
-          </div>
-          <a href="{{ card_url }}" class="btn btn-sm btn-outline-primary stretched-link mt-2">Abrir caso →</a>
+          <a href="{{ card_url }}" class="btn btn-sm btn-outline-primary stretched-link mt-2">Ver detalhes</a>
           {% endif %}
         </div>
       </div>

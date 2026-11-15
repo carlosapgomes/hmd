@@ -22,10 +22,10 @@ Contract: `slices/slice-002-scheduler-pending-page-parity.md`
 
 Contract: `slices/slice-003-doctor-decided-page-parity.md`
 
-- [ ] 3.1 Escrever RED do título/filtro, card 8/4 orientado ao resultado, disposição e data/hora por procedimento, ausência de espera e CTA «Ver detalhes»; incluir caso misto aprovado + negado e registrar as falhas.
-- [ ] 3.2 Implementar a projeção das rows sem query por card e o card/estado vazio/mobile, mantendo a aba pendente do slice 001 e todos os guards/partials; verificar decisões mistas, demografia, queries e navegação read-only.
-- [ ] 3.3 Criar a jornada `fila-medica-decididos` e seu driver; comprovar resultado misto, horários, medidas 1280/390 px, CTA, ausência de espera e overflow com PNG/snapshot/JSON.
-- [ ] 3.4 Rodar o quality gate, produzir `/tmp/hmd-slice-oli-003-report.md` e submeter o slice à revisão independente e humana antes de avançar.
+- [x] 3.1 Escrever RED do título/filtro, card 8/4 orientado ao resultado, disposição e data/hora por procedimento, ausência de espera e CTA «Ver detalhes»; incluir caso misto aprovado + negado e registrar as falhas.
+- [x] 3.2 Implementar a projeção das rows sem query por card e o card/estado vazio/mobile, mantendo a aba pendente do slice 001 e todos os guards/partials; verificar decisões mistas, demografia, queries e navegação read-only.
+- [x] 3.3 Criar a jornada `fila-medica-decididos` e seu driver; comprovar resultado misto, horários, medidas 1280/390 px, CTA, ausência de espera e overflow com PNG/snapshot/JSON.
+- [x] 3.4 Rodar o quality gate, produzir `/tmp/hmd-slice-oli-003-report.md` e submeter o slice à revisão independente e humana antes de avançar.
 
 ## 4. Slice 004 — Meus casos do NIR
 

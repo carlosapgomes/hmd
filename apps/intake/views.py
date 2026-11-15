@@ -408,6 +408,8 @@ def _build_my_cases_context(request: HttpRequest) -> dict[str, object]:
                 "status_label": case.get_status_display(),
                 "patient_name": case.patient_name,
                 "patient_age": case.patient_age,
+                "patient_gender": case.patient_gender or "",
+                "origin_unit": case.origin_unit or "",
                 "procedure_labels": _procedure_labels(_declared_types_from_rows(case)),
                 "agency_record_number": case.agency_record_number or "—",
                 # Sufixo só para nº duplicado E preenchido; senão "" (card

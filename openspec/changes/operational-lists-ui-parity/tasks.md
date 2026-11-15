@@ -31,10 +31,10 @@ Contract: `slices/slice-003-doctor-decided-page-parity.md`
 
 Contract: `slices/slice-004-nir-my-cases-page-parity.md`
 
-- [ ] 4.1 Escrever RED de container/título, navegação sem duplicação com filtros preservados, cabeçalho neutro, card 4/3/3/2 sem resumo/espera, exceções e estado vazio; registrar as falhas antes da implementação.
-- [ ] 4.2 Implementar página/lista/cards, links do header com `filter_qs`, CSS escopado e CTA «Ver detalhes», preservando escopo, filtros AND, partial, sufixo, retenção e encerramento administrativo; verificar testes focados e regressões do detalhe.
-- [ ] 4.3 Atualizar a jornada `meus-casos-filtros`; comprovar troca de abas pelo header, filtros + polling, quatro regiões em 1280 px, empilhamento/CTA full-width em 390 px, exceções e ausência de overflow com PNG/snapshot/JSON.
-- [ ] 4.4 Rodar o quality gate, produzir `/tmp/hmd-slice-oli-004-report.md` e submeter o slice à revisão independente e humana antes de avançar.
+- [x] 4.1 Escrever RED de container/título, navegação sem duplicação com filtros preservados, cabeçalho neutro, card 4/3/3/2 sem resumo/espera, exceções e estado vazio; registrar as falhas antes da implementação.
+- [x] 4.2 Implementar página/lista/cards, links do header com `filter_qs`, CSS escopado e CTA «Ver detalhes», preservando escopo, filtros AND, partial, sufixo, retenção e encerramento administrativo; verificar testes focados e regressões do detalhe.
+- [x] 4.3 Atualizar a jornada `meus-casos-filtros`; comprovar troca de abas pelo header, filtros + polling, quatro regiões em 1280 px, empilhamento/CTA full-width em 390 px, exceções e ausência de overflow com PNG/snapshot/JSON.
+- [x] 4.4 Rodar o quality gate, produzir `/tmp/hmd-slice-oli-004-report.md` e submeter o slice à revisão independente e humana antes de avançar.
 
 ## 5. Slice 005 — Navegação operacional e integração
 

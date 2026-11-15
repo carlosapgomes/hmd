@@ -1,10 +1,10 @@
 """Testes de filtros server-side, cards e partial de "meus casos"
 (ui-parity-queues, slice 003, R1–R3).
 
-R1: cards ``case-card`` com nome+idade, nº de ocorrência, status,
-procedimentos e retenção (quando houver); pills ``Ativos``/``Encerrados``
-com contadores REESTILIZADAS mas NÃO removidas (navegação das abas —
-o ``_nav`` é a navegação da seção, sem duplicação).
+R1: cards ``case-card`` compactos (OLI-004) com nome, nº de ocorrência,
+status, procedimentos e retenção (quando houver); a navegação das abas
+é só o header (``Meus Casos``/``Casos Encerrados`` com contadores) —
+sem pills internas duplicadas.
 R2: filtros server-side ``q`` (nº de ocorrência, ≥3 chars; mais curtos
 ignorados, nunca zerando por erro), ``status`` e ``procedure_type``
 (valores do catálogo de 13 tipos do ``IntakeUploadForm``) compostos por
@@ -72,13 +72,19 @@ def _create_case(
 
 
 def _card_slice(body: str, case_id: object) -> str:
-    """Fatia o HTML do card do caso (do href até o ``</a>`` que fecha o link)."""
-    start = body.index(str(case_id))
-    end = body.index("</a>", start)
-    return body[start:end]
+    """Fatia o HTML do card do caso pelo marcador ``data-my-cases-card``.
+
+    No padrão OLI-004 o href é o CTA final (``stretched-link``), não um
+    ``<a>`` que envolve o card — o marcador do container é a fronteira.
+    """
+    chunks = body.split("data-my-cases-card")
+    for chunk in chunks:
+        if str(case_id) in chunk:
+            return chunk
+    raise AssertionError(f"card do caso {case_id} ausente no corpo")
 
 
-# ── R1: cards + pills com contadores ────────────────────────────────────
+# ── R1: cards compactos + navegação única no header ────────────────────
 
 
 @pytest.mark.django_db
@@ -87,7 +93,7 @@ def test_cards_have_parity_markers(
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R1: cards com ``case-card + summary-box + waiting-time + status-badge``."""
+    """R1/R4 (OLI-004): cards compactos 4/3/3/2 sem summary-box/waiting-time."""
     case = _create_case(
         nir_user,
         pdf_factory,
@@ -100,14 +106,19 @@ def test_cards_have_parity_markers(
     body = client.get(reverse("intake:my_cases")).content.decode()
 
     card = _card_slice(body, case.case_id)
-    # Marcadores de estrutura na página (o ``case-card`` envolve o link do
-    # card, antes do ``href`` onde o slice começa).
     assert "case-card" in body
-    assert "summary-box" in card
-    assert "waiting-time" in card
+    assert "summary-box" not in card
+    assert "waiting-time" not in card
+    assert "list-group-item" not in card
     assert "status-badge" in card
-    assert "Paciente Cartao · 64 a" in card
+    assert "patient-name" in card
+    assert "Paciente Cartao" in card
+    assert "64 a" in card
     assert "5040778" in card
+    assert "Ver detalhes" in card
+    assert "col-md-4" in card
+    assert "col-md-3" in card
+    assert "col-md-2" in card
 
 
 @pytest.mark.django_db
@@ -116,10 +127,11 @@ def test_pills_with_counters_stay(
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R1/D6: pills ``Ativos``/``Encerrados`` com contadores permanecem.
+    """R1 (OLI-004/D9): navegação única no header, sem pills internas.
 
-    2 casos ativos + 1 encerrado (``CLEANED``) → contadores 2 e 1; as pills
-    são links ``?tab=active``/``?tab=closed`` (navegação das abas).
+    2 casos ativos + 1 encerrado (``CLEANED``) → contadores 2 e 1 no
+    header (Meus Casos/Casos Encerrados); nenhuma pill Ativos/Encerrados
+    no corpo da página.
     """
     _create_case(nir_user, pdf_factory, record_number="5040778")
     _create_case(nir_user, pdf_factory, record_number="5040779")
@@ -128,8 +140,10 @@ def test_pills_with_counters_stay(
     client.force_login(nir_user)
     body = client.get(reverse("intake:my_cases")).content.decode()
 
-    assert "Ativos" in body
-    assert "Encerrados" in body
+    assert "Meus Casos" in body
+    assert "Casos Encerrados" in body
+    assert ">Ativos<" not in body
+    assert 'aria-label="Filtro pela situação do caso"' not in body
     assert 'href="/intake/cases/?tab=active"' in body
     assert 'href="/intake/cases/?tab=closed"' in body
     assert ">2</span>" in body
@@ -341,7 +355,8 @@ def test_filters_apply_before_disambiguation_suffix(
 
     card = _card_slice(body, kept.case_id)
     assert "Nº de ocorrência: <strong>5040778</strong>" in card
-    assert kept.short_id not in card[card.index(">") + 1 :]
+    visible = re.sub(r'href="[^"]*"', "", card)
+    assert kept.short_id not in visible
     assert str(filtered_out.case_id) not in body
 
 
@@ -400,10 +415,13 @@ def test_partial_renders_same_fragment(
 
     assert response.status_code == 200
     assert str(case.case_id) in body
-    assert "Paciente Parcial · 71 a" in body
+    assert "Paciente Parcial" in body
+    assert "71 a" in body
     assert "case-card" in body
-    # Fragmento apenas: sem cabeçalho da página, form de filtros ou título.
-    assert "Meus casos" not in body
+    # Fragmento apenas (OLI-004): inclui o cabeçalho neutro da lista, mas
+    # sem o título da página, o form de filtros ou o CTA do topo.
+    assert "Meus Casos" in body
+    assert "Todos os seus encaminhamentos" not in body
     assert 'name="q"' not in body
     assert "Enviar relatório" not in body
 

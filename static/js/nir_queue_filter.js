@@ -7,6 +7,9 @@
  * swap do auto-refresh de 20 s — o contador de cards exibidos
  * (``[data-my-cases-status]``, com ``aria-live="polite"``) é recalculado
  * sobre o fragmento novo, em vez de ficar com o total da página cheia.
+ * OLI-004: esse live region é visualmente oculto (``visually-hidden``)
+ * — a única contagem visual é o badge do cabeçalho da lista — e segue
+ * atualizado após cada swap.
  *
  * Sem dependências, sem persistência (URL/storage/cookie/sessão).
  */

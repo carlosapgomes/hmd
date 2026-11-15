@@ -1,8 +1,10 @@
 // Driver Playwright pinado do verify-hmd — meus casos filtros+refresh.
 // Login REAL pelo form (sem addCookies): "meus casos" do NIR
-// (ui-parity-queues slice 003): filtros server-side (q/status/tipo,
-// AND), pills Ativos/Encerrados com contadores, escopo por criador e
-// partial htmx 20 s com reaplicação do contador pós-swap.
+// (OLI-004): filtros server-side (q/status/tipo, AND), navegação
+// única no header com filter_qs, escopo por criador, cabeçalho neutro
+// com uma contagem, cards compactos 4/3/3/2, exceções/vazios e partial
+// htmx 20 s com reaplicação do live region oculto pós-swap. Medidas
+// computadas em 1280px (4 regiões) e 390px (empilhamento/CTA).
 // Evidência em <run>/artifacts/.
 // Exit: 0 PASS · 1 falha observada · 2 infra/driver.
 import { execSync } from 'node:child_process';
@@ -116,7 +118,19 @@ function check(id, ok, detail) {
   if (!ok) failures.push(id);
   console.log(`${ok ? 'PASS' : 'FAIL'} ${id} ${detail ?? ''}`);
 }
+// Fade-in do shell (.app-shell, 220ms): nenhuma captura antes de a
+// opacidade computada estabilizar — sem sleep fixo (OLI-004).
+async function waitShell(page) {
+  await page.waitForFunction(
+    () => {
+      const shell = document.querySelector('.app-shell');
+      return shell !== null && Number(getComputedStyle(shell).opacity) >= 0.99;
+    },
+    { timeout: 15000 },
+  );
+}
 async function snap(page, name) {
+  await waitShell(page);
   const file = path.join(artifacts, `${name}.txt`);
   let text;
   try {
@@ -175,38 +189,95 @@ try {
   // Setup (via verify settings): o seed já cria VERIFY-001/VERIFY-002
   // (verify-nir, AWAITING_DOCTOR). Aqui: VERIFY-M01 (próprio, FAILED),
   // VERIFY-M02 (próprio, CLEANED, aba encerrados), VERIFY-M03 (próprio,
-  // cat_cardiaco) e VERIFY-X01 (OUTRO NIR, casa com os filtros).
+  // cat_cardiaco), VERIFY-M04 (próprio, encerramento administrativo real
+  // via serviço, aba encerrados), VERIFY-M05 (próprio, retido p/ revisão),
+  // VERIFY-X01 (OUTRO NIR, casa com os filtros). O outro NIR ganha a
+  // senha sintética do seed para provar o vazio sem filtros pelo form.
   runVerifyPy2(
     "from django.contrib.auth import get_user_model\n" +
     "from apps.accounts.models import Role\n" +
     "from apps.cases.models import Case, CaseProcedure\n" +
+    "from apps.cases.closure import administratively_close_case\n" +
     "u = get_user_model().objects.get(username='verify-nir')\n" +
+    "manager = get_user_model().objects.get(username='verify-manager')\n" +
     "other, _ = get_user_model().objects.get_or_create(username='verify-nir-outro', defaults={'first_name': 'Verificação', 'last_name': 'Sintético nir', 'is_active': True, 'account_status': 'active'})\n" +
     "role, _ = Role.objects.get_or_create(name='nir')\n" +
     "other.roles.add(role)\n" +
+    "other.is_active = True\n" +
+    "other.account_status = 'active'\n" +
+    "other.set_password('" + PASSWORD + "')\n" +
+    "other.save()\n" +
+    "empty_user, _ = get_user_model().objects.get_or_create(username='verify-nir-vazio', defaults={'first_name': 'Verificação', 'last_name': 'Sintético vazio', 'is_active': True, 'account_status': 'active'})\n" +
+    "empty_user.roles.add(role)\n" +
+    "empty_user.is_active = True\n" +
+    "empty_user.account_status = 'active'\n" +
+    "empty_user.set_password('" + PASSWORD + "')\n" +
+    "empty_user.save()\n" +
     "def make(creator, rec, name, types, status):\n" +
     "    c = Case.objects.create(created_by=creator)\n" +
     "    for t in types:\n" +
     "        CaseProcedure.objects.create(case=c, procedure_type=t, declared_by_nir=True)\n" +
     "    Case.objects.filter(pk=c.pk).update(agency_record_number=rec, patient_name=name, patient_age=55, status=status)\n" +
+    "    c.refresh_from_db()\n" +
     "    return c\n" +
     "make(u, 'VERIFY-M01', 'Paciente Sintético Meus Casos Falha', ('art_perif',), 'FAILED')\n" +
     "make(u, 'VERIFY-M02', 'Paciente Sintético Meus Casos Encerrado', ('art_perif',), 'CLEANED')\n" +
     "make(u, 'VERIFY-M03', 'Paciente Sintético Meus Casos Cardio', ('cat_cardiaco',), 'AWAITING_DOCTOR')\n" +
+    "admin_case = make(u, 'VERIFY-M04', 'Paciente Sintético Meus Casos Admin', ('art_perif',), 'AWAITING_DOCTOR')\n" +
+    "administratively_close_case(case=admin_case, user=manager, active_role='manager', reason_code='stuck_lock', reason_text='motivo sintetico de verificacao')\n" +
+    "retained = make(u, 'VERIFY-M05', 'Paciente Sintético Meus Casos Retido', ('art_perif',), 'PDF_EXTRACTING')\n" +
+    "Case.objects.filter(pk=retained.pk).update(manual_review_required=True, manual_review_reason='documento fora do padrao SESAB (motivo: missing_header)')\n" +
     "make(other, 'VERIFY-X01', 'Paciente Sintético Alheio', ('art_perif',), 'FAILED')\n" +
     "print('fixtures ok')",
   );
-  const { context, page } = await loginAs(browser, 'verify-nir', 'nir-meus-casos-filtros');
+  const { context, page } = await loginAs(browser, 'verify-nir', 'nir-meus-casos-filtros', { width: 1280, height: 900 });
   await page.goto(`${base}/intake/cases/`, { waitUntil: 'domcontentloaded' });
+  await waitShell(page);
   check('nir-my-cases-url', page.url().includes('/intake/cases/'), page.url());
-  check('my-cases-heading', (await page.getByRole('heading', { name: 'Meus casos' }).count()) === 1, 'h1 Meus casos');
+  check('my-cases-heading', (await page.getByRole('heading', { name: 'Todos os seus encaminhamentos' }).count()) === 1, 'h1 Todos os seus encaminhamentos');
   const html = await page.content();
-  check('my-cases-pills', (await page.locator('ul[role="tablist"] a[href*="tab=active"]').innerText()).includes('Ativos') && (await page.locator('ul[role="tablist"] a[href*="tab=closed"]').innerText()).includes('Encerrados'), 'pills Ativos/Encerrados');
-  check('my-cases-pills-counters', html.includes('?tab=active') && html.includes('?tab=closed'), 'pills com contadores e tab');
-  check('my-cases-case-card', (await page.locator('.case-card').count()) >= 2, `case-card=${await page.locator('.case-card').count()}`);
-  check('my-cases-summary-box', (await page.locator('.summary-box').count()) >= 2, 'summary-box');
-  check('my-cases-waiting-time', (await page.locator('.waiting-time').count()) >= 2, 'waiting-time');
+  check('my-cases-no-top-cta', !html.includes('Enviar relatório'), 'sem CTA Enviar relatório no topo');
+  check('my-cases-no-internal-pills', (await page.locator('ul[role="tablist"]').count()) === 0 && !html.includes('>Ativos<'), 'sem pills internas');
+  check('my-cases-header-nav', html.includes('?tab=active') && html.includes('?tab=closed') && html.includes('Meus Casos') && html.includes('Casos Encerrados'), 'header Meus Casos/Casos Encerrados');
+  check('my-cases-operational-page', html.includes('operational-list-page') && !html.includes('col-12 col-lg-10'), 'container integral operational-list-page');
+  check('my-cases-neutral-header', html.includes('Meus Casos') && html.includes('Atualizado automaticamente') && (await page.locator('.alert-warning').count()) === 0, 'cabeçalho neutro sem alert-warning');
+  check('my-cases-single-visual-count', (await page.locator('[data-my-cases-status]').evaluate((el) => el.className)).includes('visually-hidden'), 'live region visualmente oculto');
+  check('my-cases-case-card-row', (await page.locator('.case-card > .row').count()) >= 2, `case-card > row=${await page.locator('.case-card > .row').count()}`);
+  check('my-cases-no-summary-waiting-listgroup', (await page.locator('.summary-box').count()) === 0 && (await page.locator('.waiting-time').count()) === 0 && (await page.locator('.list-group-item').count()) === 0, 'sem summary-box/waiting-time/list-group-item');
+  check('my-cases-patient-name', (await page.locator('.patient-name').count()) >= 2, 'patient-name');
+  check('my-cases-cta-ver-detalhes', (await page.getByRole('link', { name: 'Ver detalhes' }).count()) >= 2, 'CTA Ver detalhes');
   check('my-cases-status-badge', (await page.locator('.status-badge').count()) >= 2, 'status-badge');
+  check('my-cases-exceptions-visible', html.includes('Falha de processamento') && html.includes('Retido para revisão'), 'falha + retenção visíveis');
+  const desktopMeasures = await page.evaluate(() => {
+    const shell = document.querySelector('.app-shell').getBoundingClientRect();
+    const headerBox = document.querySelector('.app-header .container').getBoundingClientRect();
+    const listCard = document.querySelector('#my-cases-content .card').getBoundingClientRect();
+    const firstCard = document.querySelector('.case-card');
+    const regions = [...firstCard.querySelectorAll('.row > div')].map((el) => {
+      const r = el.getBoundingClientRect();
+      return { cls: el.className, left: r.left, top: r.top, width: r.width, height: r.height };
+    });
+    const cta = firstCard.querySelector('.col-md-2 .btn');
+    const ctaRect = cta.getBoundingClientRect();
+    return {
+      shell: { left: shell.left, width: shell.width },
+      header: { left: headerBox.left, width: headerBox.width },
+      listCard: { left: listCard.left, width: listCard.width },
+      regions,
+      cta: { width: ctaRect.width, height: ctaRect.height },
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+      liveRegionText: document.querySelector('[data-my-cases-status]').textContent,
+    };
+  });
+  filtrosJourney.desktopMeasures = desktopMeasures;
+  check('my-cases-desktop-container-aligned', Math.abs(desktopMeasures.shell.left - desktopMeasures.header.left) <= 2 && Math.abs(desktopMeasures.shell.width - desktopMeasures.header.width) <= 2, JSON.stringify(desktopMeasures.shell) + ' vs ' + JSON.stringify(desktopMeasures.header));
+  check('my-cases-live-region-updated', /Mostrando \d+ casos\./.test(desktopMeasures.liveRegionText), desktopMeasures.liveRegionText);
+  const regionTops = desktopMeasures.regions.map((r) => r.top);
+  const regionLefts = desktopMeasures.regions.map((r) => r.left);
+  check('my-cases-desktop-four-regions-same-row', desktopMeasures.regions.length === 4 && Math.max(...regionTops) - Math.min(...regionTops) <= 6 && regionLefts.every((v, i, a) => i === 0 || v > a[i - 1]), JSON.stringify(desktopMeasures.regions));
+  check('my-cases-desktop-cta-target', desktopMeasures.cta.height >= 44, `cta h=${desktopMeasures.cta.height}`);
+  check('my-cases-desktop-no-overflow', desktopMeasures.scrollWidth <= desktopMeasures.clientWidth, `${desktopMeasures.scrollWidth} <= ${desktopMeasures.clientWidth}`);
   check('my-cases-sees-VERIFY-001', html.includes('VERIFY-001') && html.includes('Paciente Sintético Um') && html.includes('64 a'), 'seed VERIFY-001');
   check('my-cases-no-foreign', !html.includes('VERIFY-X01') && !html.includes('Paciente Sintético Alheio'), 'caso alheio ausente');
   check('my-cases-filter-form', (await page.locator('input[name="q"]').count()) === 1 && (await page.locator('select[name="status"]').count()) === 1 && (await page.locator('select[name="procedure_type"]').count()) === 1, 'form q/status/procedure_type');
@@ -255,7 +326,31 @@ try {
 
   // Aba encerrados: CLEANED aparece, ativos não.
   await page.goto(`${base}/intake/cases/?tab=closed`, { waitUntil: 'domcontentloaded' });
+  await waitShell(page);
   check('closed-tab', (await page.locator('body').innerText()).includes('VERIFY-M02') && !(await page.locator('body').innerText()).includes('VERIFY-001'), 'aba encerrados');
+  check('closed-admin-closure', (await page.locator('body').innerText()).includes('VERIFY-M04') && (await page.locator('body').innerText()).includes('Encerrado administrativamente') && (await page.locator('body').innerText()).includes('motivo sintetico de verificacao') && (await page.locator('.summary-box').count()) === 0, 'encerramento administrativo com motivo, sem summary-box');
+  await snap(page, 'nir-meus-casos-encerrados');
+  observed.steps.push({ step: 'nir-meus-casos-encerrados', url: page.url() });
+
+  // Ida e volta pelas abas do header preservando filtros (q + tipo).
+  await page.goto(`${base}/intake/cases/?q=VERIFY-M&procedure_type=art_perif`, { waitUntil: 'domcontentloaded' });
+  await waitShell(page);
+  check('header-tabs-start-active', (await page.locator('body').innerText()).includes('VERIFY-M01'), 'ativos com filtros');
+  await page.getByRole('link', { name: /Casos Encerrados/ }).click();
+  await page.waitForURL(/tab=closed.*q=VERIFY-M.*procedure_type=art_perif|tab=closed/, { timeout: 15000 });
+  await waitShell(page);
+  check('header-tabs-to-closed-preserves-filters', page.url().includes('tab=closed') && page.url().includes('q=VERIFY-M') && page.url().includes('procedure_type=art_perif') && (await page.locator('body').innerText()).includes('VERIFY-M02'), page.url());
+  await page.getByRole('link', { name: /Meus Casos/ }).click();
+  await page.waitForURL(/tab=active/, { timeout: 15000 });
+  await waitShell(page);
+  check('header-tabs-back-to-active-preserves-filters', page.url().includes('tab=active') && page.url().includes('q=VERIFY-M') && page.url().includes('procedure_type=art_perif') && (await page.locator('body').innerText()).includes('VERIFY-M01'), page.url());
+
+  // Vazio com filtros: Limpar filtros.
+  await page.goto(`${base}/intake/cases/?q=VERIFY-ZZZ`, { waitUntil: 'domcontentloaded' });
+  await waitShell(page);
+  check('empty-with-filters', (await page.locator('body').innerText()).includes('Nenhum caso encontrado para os filtros aplicados.') && (await page.getByRole('link', { name: 'Limpar filtros' }).count()) === 1, 'vazio com filtros + Limpar filtros');
+  await snap(page, 'nir-meus-casos-vazio-filtros');
+  observed.steps.push({ step: 'nir-meus-casos-vazio-filtros', url: page.url() });
 
   // Auto-refresh com filtros ATIVOS (review-1 P1): o caso compatível
   // deve aparecer com os filtros preservados e as asserções só rodam
@@ -328,6 +423,60 @@ try {
   check('refresh-off-filter-filters-applied', (await page.locator('#my-cases-status-select').inputValue()) === 'FAILED' && (await page.locator('#my-cases-procedure-type-select').inputValue()) === 'art_perif', 'filtros FAILED+art_perif após o swap');
   await snap(page, 'nir-meus-casos-fora-do-filtro');
   observed.steps.push({ step: 'nir-meus-casos-fora-do-filtro', url: page.url() });
+  // Vazio sem filtros (NIR sem nenhum caso): orienta a aba + Novo.
+  const emptyLogin = await loginAs(browser, 'verify-nir-vazio', 'nir-meus-casos-vazio', { width: 1280, height: 900 });
+  const emptyPage = emptyLogin.page;
+  await emptyPage.goto(`${base}/intake/cases/`, { waitUntil: 'domcontentloaded' });
+  await waitShell(emptyPage);
+  check('empty-without-filters-active', (await emptyPage.locator('body').innerText()).includes('Nenhum caso ativo no momento.') && (await emptyPage.locator('#my-cases-content').getByRole('link', { name: 'Novo Encaminhamento' }).count()) === 1, 'vazio ativo + Novo Encaminhamento no fragmento');
+  await snap(emptyPage, 'nir-meus-casos-vazio-ativo');
+  observed.steps.push({ step: 'nir-meus-casos-vazio-ativo', url: emptyPage.url() });
+  await emptyPage.goto(`${base}/intake/cases/?tab=closed`, { waitUntil: 'domcontentloaded' });
+  await waitShell(emptyPage);
+  check('empty-without-filters-closed', (await emptyPage.locator('body').innerText()).includes('Nenhum caso encerrado até agora.') && (await emptyPage.locator('#my-cases-content').getByRole('link', { name: 'Novo Encaminhamento' }).count()) === 1, 'vazio encerrados + Novo Encaminhamento no fragmento');
+  await snap(emptyPage, 'nir-meus-casos-vazio-encerrados');
+  observed.steps.push({ step: 'nir-meus-casos-vazio-encerrados', url: emptyPage.url() });
+  await emptyLogin.context.close();
+
+  // Mobile 390px: regiões empilham, CTA full-width >=44px, sem overflow.
+  const mobileLogin = await loginAs(browser, 'verify-nir', 'nir-meus-casos-mobile', { width: 390, height: 844 });
+  const mobilePage = mobileLogin.page;
+  await mobilePage.goto(`${base}/intake/cases/`, { waitUntil: 'domcontentloaded' });
+  await waitShell(mobilePage);
+  const mobileMeasures = await mobilePage.evaluate(async () => {
+    const firstCard = document.querySelector('.case-card');
+    const regions = [...firstCard.querySelectorAll('.row > div')].map((el) => {
+      const r = el.getBoundingClientRect();
+      return { cls: el.className, left: r.left, top: r.top, width: r.width, height: r.height };
+    });
+    const cta = firstCard.querySelector('.col-md-2 .btn');
+    const ctaRect = cta.getBoundingClientRect();
+    const ctaColumn = firstCard.querySelector('.col-md-2').getBoundingClientRect();
+    const badges = [...firstCard.querySelectorAll('.badge')].map((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }));
+    const firstRect = () => firstCard.getBoundingClientRect().height;
+    const heightBefore = firstRect();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const heightAfter = firstRect();
+    return {
+      regions,
+      cta: { width: ctaRect.width, height: ctaRect.height, columnWidth: ctaColumn.width },
+      badges,
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+      stableHeight: heightBefore === heightAfter,
+    };
+  });
+  filtrosJourney.mobileMeasures = mobileMeasures;
+  const mobileTops = mobileMeasures.regions.map((r) => r.top);
+  check('mobile-regions-stack', mobileMeasures.regions.length === 4 && mobileTops.every((v, i, a) => i === 0 || v >= a[i - 1] - 1), JSON.stringify(mobileMeasures.regions));
+  // CTA full-width = largura de conteúdo da coluna (border-box menos
+  // o gutter de 12px de cada lado do grid).
+  check('mobile-cta-full-width-target', Math.abs(mobileMeasures.cta.width - (mobileMeasures.cta.columnWidth - 24)) <= 2 && mobileMeasures.cta.height >= 44, JSON.stringify(mobileMeasures.cta));
+  check('mobile-badges-wrap-no-overflow', mobileMeasures.scrollWidth <= mobileMeasures.clientWidth && mobileMeasures.badges.every((b) => b.scrollWidth <= b.clientWidth + 2), `${mobileMeasures.scrollWidth} <= ${mobileMeasures.clientWidth}`);
+  check('mobile-layout-stable', mobileMeasures.stableHeight === true, 'altura estável após opacity >=0.99 (duplo rAF)');
+  await snap(mobilePage, 'nir-meus-casos-mobile');
+  observed.steps.push({ step: 'nir-meus-casos-mobile', url: mobilePage.url() });
+  await mobileLogin.context.close();
   filtrosJourney.filters = true;
   filtrosJourney.refresh = true;
   filtrosJourney.creatorScope = true;

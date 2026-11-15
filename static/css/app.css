@@ -727,3 +727,25 @@ body.hospital-shell h6 {
     width: 100%;
   }
 }
+
+/* ---------- Meus casos do NIR: card compacto 4/3/3/2 (OLI-004 D9) ---------- */
+/* Escopo exclusivo da lista do NIR: ``#my-cases-content`` é o container
+   htmx compartilhado pela página cheia e pelo partial — restringe as
+   regras a ele para não alcançar os cards das filas médico/agendador
+   (OLI-001–003), que também usam ``.operational-list-page``/``.case-card``
+   sob outros containers. Badges quebram linha sem overflow; em mobile
+   (<=767.98px, onde as regiões empilham) o CTA «Ver detalhes» ocupa a
+   largura da região com alvo >=44px (herdado de ``.btn``). */
+
+#my-cases-content .case-card .badge {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+@media (max-width: 767.98px) {
+  #my-cases-content .case-card .col-md-2 .btn {
+    width: 100%;
+  }
+}

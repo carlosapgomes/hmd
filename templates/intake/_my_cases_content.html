@@ -1,106 +1,91 @@
 {% comment %}
-Fragmento compartilhado de "meus casos" (ui-parity-queues D1): a página cheia
+Fragmento compartilhado de "meus casos" (OLI-004 R3/R4): a página cheia
 (``my_cases.html``) inclui este arquivo no server-side dentro do container
 htmx e o endpoint ``intake:my_cases_partial`` renderiza SÓ este arquivo —
-server == partial. Contém os cards ``case-card + summary-box + waiting-time +
-status-badge`` (padrão visual das filas, slices 001–002), o estado vazio e a
-nota de atualização automática. Sem paginação nesta view (D2: a lista segue
-materializada).
+server == partial. Cabeçalho neutro em card ``p-4`` («Meus Casos» + badge
+do total filtrado + nota de atualização), sem ``alert-warning`` de contagem
+e sem segunda contagem visual. Cada card é uma única superfície
+``.case-card > .row`` em quatro regiões desktop 4/3/3/2 (identidade/
+procedimentos | recebimento | status/alertas | CTA «Ver detalhes»),
+sem ``summary-box``, ``waiting-time`` ou ``list-group-item``. Sem
+paginação nesta view (a lista segue materializada).
 {% endcomment %}
-{% if items %}
-<div class="alert alert-warning d-flex align-items-center gap-2 mb-3" role="alert">
-  <span class="pulse-dot"></span>
-  <strong>{{ items|length }} caso{% if items|length != 1 %}s{% endif %}{% if current_tab == 'closed' %} encerrado{% if items|length != 1 %}s{% endif %}{% endif %}.</strong>
-</div>
-
-<div class="row g-3">
-  {% for item in items %}
-  <div class="col-12" data-my-cases-card>
-    <div class="case-card card p-3">
-      <a href="{% url 'intake:case_detail' item.case.case_id %}"
-         class="list-group-item list-group-item-action py-3">
-        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-          {% if item.case.status == 'FAILED' %}
-          <span class="status-badge badge rounded-pill text-bg-danger">{{ item.status_label }}</span>
-          {% elif item.case.status == 'LLM_EXTRACTING' and item.case.manual_review_required %}
-          <span class="status-badge badge rounded-pill text-bg-info">{{ item.status_label }}</span>
-          {% elif item.case.manual_review_required %}
-          <span class="status-badge badge rounded-pill text-bg-warning">{{ item.status_label }}</span>
-          {% else %}
-          <span class="status-badge badge rounded-pill text-bg-secondary">{{ item.status_label }}</span>
-          {% endif %}
-          {% if item.case.manual_review_required %}
-            {% if item.case.status == 'LLM_EXTRACTING' and item.case.manual_review_reason == 'procedure_divergence' %}
-            <span class="badge rounded-pill text-bg-info border"
-                  title="Divergência entre os procedimentos declarados e os detectados na extração">
-              Retido por divergência de procedimentos
-            </span>
-            {% else %}
-            <span class="badge rounded-pill text-bg-warning border" title="{{ item.case.manual_review_reason }}">
-              Retido para revisão
-            </span>
-            {% endif %}
-          {% endif %}
-          <span class="ms-auto small text-nowrap">Abrir caso →</span>
-        </div>
-        <!-- Identificação do paciente (queue-cards-wait-time, R1/D3): o NIR é o
-             criador do caso e manuseia o relatório físico; nome/idade vêm do
-             cabeçalho SESAB (— / idade omitida quando ausentes; «0 a» exibe). -->
-        <div class="fw-semibold">{{ item.patient_name|default:"—" }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}</div>
-        <div class="small text-muted case-meta">
-          <!-- Sufixo curto de desambiguação (case-detail-human-reference,
-               slice 004, R1/D3): a view marca `reference_suffix` apenas
-               quando o nº se repete na página; o template só renderiza. -->
-          Nº de ocorrência: <strong>{{ item.agency_record_number }}{{ item.reference_suffix }}</strong>
-          <span class="mx-2">·</span>
-          {% if item.procedure_labels %}
-          Procedimentos: {{ item.procedure_labels|join:" · " }}
-          {% else %}
-          Procedimentos: —
-          {% endif %}
-        </div>
-        <div class="summary-box mt-2">
-          <div class="row">
-            <div class="col-sm-6 mb-2">
-              <div class="summary-label">Status</div>
-              <div class="summary-value">{{ item.status_label }}</div>
+<div class="card p-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <h2 class="mb-0">Meus Casos</h2>
+    <span class="badge-hospital-primary status-badge">{{ items|length }} caso{% if items|length != 1 %}s{% endif %}</span>
+  </div>
+  <p class="text-muted small mb-3">Atualizado automaticamente.</p>
+  {% if items %}
+  <div class="row g-3">
+    {% for item in items %}
+    <div class="col-12" data-my-cases-card>
+      <div class="case-card card p-3">
+        <div class="row">
+          <div class="col-md-4">
+            <div class="patient-name">{{ item.patient_name|default:"—" }}</div>
+            <div class="small text-muted case-meta">
+              Nº de ocorrência: <strong>{{ item.agency_record_number }}{{ item.reference_suffix }}</strong>{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}{% if item.patient_gender %} · {{ item.patient_gender }}{% endif %}{% if item.origin_unit %} · 🏥 {{ item.origin_unit }}{% endif %}
             </div>
-            <div class="col-sm-6 mb-2">
-              <div class="summary-label">Recebido em</div>
-              <div class="summary-value">{{ item.case.created_at|date:"d/m/Y H:i" }}</div>
+            <div class="small text-muted case-meta">
+              {% if item.procedure_labels %}Procedimentos: {{ item.procedure_labels|join:" · " }}{% else %}Procedimentos: —{% endif %}
             </div>
           </div>
+          <div class="col-md-3">
+            <div class="case-meta">Recebido em {{ item.case.created_at|date:"d/m/Y H:i" }}</div>
+          </div>
+          <div class="col-md-3">
+            {% if item.case.status == 'FAILED' %}
+            <span class="status-badge badge rounded-pill text-bg-danger">{{ item.status_label }}</span>
+            {% elif item.case.status == 'LLM_EXTRACTING' and item.case.manual_review_required %}
+            <span class="status-badge badge rounded-pill text-bg-info">{{ item.status_label }}</span>
+            {% elif item.case.manual_review_required %}
+            <span class="status-badge badge rounded-pill text-bg-warning">{{ item.status_label }}</span>
+            {% else %}
+            <span class="status-badge badge rounded-pill text-bg-secondary">{{ item.status_label }}</span>
+            {% endif %}
+            {% if item.case.manual_review_required %}
+              {% if item.case.status == 'LLM_EXTRACTING' and item.case.manual_review_reason == 'procedure_divergence' %}
+              <span class="badge rounded-pill text-bg-info border badge-wrap"
+                    title="Divergência entre os procedimentos declarados e os detectados na extração">
+                Retido por divergência de procedimentos
+              </span>
+              {% else %}
+              <span class="badge rounded-pill text-bg-warning border badge-wrap" title="{{ item.case.manual_review_reason }}">
+                Retido para revisão
+              </span>
+              {% endif %}
+            {% endif %}
+            {% if item.admin_closure_result %}
+            <div class="small mt-1">
+              <span class="badge rounded-pill text-bg-secondary badge-wrap">{{ item.admin_closure_result }}</span>
+              {% if item.admin_closure_reason %}
+              <span class="text-muted ms-1">{{ item.admin_closure_reason }}</span>
+              {% endif %}
+            </div>
+            {% endif %}
+          </div>
+          <div class="col-md-2 text-md-end mt-2 mt-md-0">
+            <a href="{% url 'intake:case_detail' item.case.case_id %}"
+               class="btn btn-sm btn-outline-primary stretched-link">Ver detalhes</a>
+          </div>
         </div>
-        <div class="waiting-time mt-2">⏱ Aguardando há {{ item.case.created_at|timesince }}</div>
-        {% if item.admin_closure_result %}
-        <!-- Resultado do encerramento administrativo (painel-lista-encerramento,
-             slice 003, R3/D4): só o CRIADOR vê o caso (escopo por criador); o
-             texto do motivo foi escrito pelo supervisor e não traz PHI. -->
-        <div class="small mt-1">
-          <span class="badge rounded-pill text-bg-secondary">{{ item.admin_closure_result }}</span>
-          {% if item.admin_closure_reason %}
-          <span class="text-muted ms-1">{{ item.admin_closure_reason }}</span>
-          {% endif %}
-        </div>
-        {% endif %}
-      </a>
+      </div>
     </div>
+    {% endfor %}
   </div>
-  {% endfor %}
-</div>
-{% else %}
-<div class="card shadow-sm">
-  <div class="card-body text-muted">
+  {% else %}
+  <div class="text-center py-5">
     {% if search or status_filter or procedure_type_filter %}
-    Nenhum caso encontrado para os filtros aplicados.
+    <p class="text-muted mb-3 fs-5">Nenhum caso encontrado para os filtros aplicados.</p>
+    <a href="{% url 'intake:my_cases' %}?tab={{ current_tab }}" class="btn btn-outline-primary">Limpar filtros</a>
     {% elif current_tab == 'closed' %}
-    Nenhum caso encerrado até agora.
+    <p class="text-muted mb-3 fs-5">Nenhum caso encerrado até agora.</p>
+    <a href="{% url 'intake:home' %}" class="btn btn-primary">Novo Encaminhamento</a>
     {% else %}
-    Nenhum caso ativo no momento.
+    <p class="text-muted mb-3 fs-5">Nenhum caso ativo no momento.</p>
+    <a href="{% url 'intake:home' %}" class="btn btn-primary">Novo Encaminhamento</a>
     {% endif %}
-    <a href="{% url 'intake:home' %}">Envie o primeiro relatório</a>.
   </div>
+  {% endif %}
 </div>
-{% endif %}
-
-<p class="text-muted small mt-3 mb-0">Atualizado automaticamente.</p>

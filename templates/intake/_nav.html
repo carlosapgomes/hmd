@@ -9,6 +9,9 @@ Contexto:
   ativa se ausente — página transversal fora da área do NIR).
   active_count / closed_count: int (opcionais, das views existentes;
   badges visíveis só quando a view os calcula — sem query nova).
+  filter_qs: str (opcional; só em meus casos — os links Meus Casos/
+  Casos Encerrados preservam os filtros ativos; demais páginas não
+  herdam querystring vazia/legada — OLI-004 R1/R2/D9).
 
 Uso:
   {% include "intake/_nav.html" with active_tab="home" %}
@@ -21,10 +24,10 @@ Uso:
          href="{% url 'intake:home' %}">Novo Encaminhamento</a>
     </li>
     <li class="nav-item">
-      {% if active_count is not None %}<a class="nav-link text-white {% if active_tab == 'my_cases' %}active{% endif %}" {% if active_tab == 'my_cases' %}aria-current="page"{% endif %} data-count="{{ active_count }}" {% if active_count %}style="position:relative;"{% endif %} href="{% url 'intake:my_cases' %}?tab=active">Meus Casos{% if active_count %} <span class="badge rounded-pill text-bg-light text-dark">{{ active_count }}</span>{% endif %}</a>{% else %}<a class="nav-link text-white {% if active_tab == 'my_cases' %}active{% endif %}" {% if active_tab == 'my_cases' %}aria-current="page"{% endif %} href="{% url 'intake:my_cases' %}?tab=active">Meus Casos</a>{% endif %}
+      {% if active_count is not None %}<a class="nav-link text-white {% if active_tab == 'my_cases' %}active{% endif %}" {% if active_tab == 'my_cases' %}aria-current="page"{% endif %} data-count="{{ active_count }}" {% if active_count %}style="position:relative;"{% endif %} href="{% url 'intake:my_cases' %}?tab=active{% if filter_qs %}&{{ filter_qs }}{% endif %}">Meus Casos{% if active_count %} <span class="badge rounded-pill text-bg-light text-dark">{{ active_count }}</span>{% endif %}</a>{% else %}<a class="nav-link text-white {% if active_tab == 'my_cases' %}active{% endif %}" {% if active_tab == 'my_cases' %}aria-current="page"{% endif %} href="{% url 'intake:my_cases' %}?tab=active{% if filter_qs %}&{{ filter_qs }}{% endif %}">Meus Casos</a>{% endif %}
     </li>
     <li class="nav-item">
-      {% if closed_count is not None %}<a class="nav-link text-white {% if active_tab == 'closed' %}active{% endif %}" {% if active_tab == 'closed' %}aria-current="page"{% endif %} data-count="{{ closed_count }}" {% if closed_count %}style="position:relative;"{% endif %} href="{% url 'intake:my_cases' %}?tab=closed">Casos Encerrados{% if closed_count %} <span class="badge rounded-pill text-bg-light text-dark">{{ closed_count }}</span>{% endif %}</a>{% else %}<a class="nav-link text-white {% if active_tab == 'closed' %}active{% endif %}" {% if active_tab == 'closed' %}aria-current="page"{% endif %} href="{% url 'intake:my_cases' %}?tab=closed">Casos Encerrados</a>{% endif %}
+      {% if closed_count is not None %}<a class="nav-link text-white {% if active_tab == 'closed' %}active{% endif %}" {% if active_tab == 'closed' %}aria-current="page"{% endif %} data-count="{{ closed_count }}" {% if closed_count %}style="position:relative;"{% endif %} href="{% url 'intake:my_cases' %}?tab=closed{% if filter_qs %}&{{ filter_qs }}{% endif %}">Casos Encerrados{% if closed_count %} <span class="badge rounded-pill text-bg-light text-dark">{{ closed_count }}</span>{% endif %}</a>{% else %}<a class="nav-link text-white {% if active_tab == 'closed' %}active{% endif %}" {% if active_tab == 'closed' %}aria-current="page"{% endif %} href="{% url 'intake:my_cases' %}?tab=closed{% if filter_qs %}&{{ filter_qs }}{% endif %}">Casos Encerrados</a>{% endif %}
     </li>
   </ul>
 </nav>

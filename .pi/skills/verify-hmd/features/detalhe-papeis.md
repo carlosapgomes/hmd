@@ -137,5 +137,40 @@ reserva e volta à fila).
 
 ```bash
 .pi/skills/verify-hmd/scripts/control-hmd doctor --run <tmp/verification/hmd-verify-...>
-node .pi/skills/verify-hmd/scripts/browser/drive-detalhe-papeis.mjs --run <tmp/verification/hmd-verify-...>
+DISPLAY=:99 node .pi/skills/verify-hmd/scripts/browser/drive-detalhe-papeis.mjs --run <tmp/verification/hmd-verify-...>
 ```
+
+## PVP-004 — viewer + dois cards do agendador (VERIFY-102 + VERIFY-101)
+
+Prova dos cards `Texto Extraído do PDF` (OMITIDO quando vazio — padrão NIR,
+NÃO placeholder) e `Visualizar PDF Original` (lazy no desktop, viewer
+` scheduler:pdf_viewer` no mobile) no detalhe do agendador
+(pdf-original-viewer-parity, slice PVP-004), sem substituir passos existentes
+(Parte A + Parte B + seção médica seguem intactas).
+
+- Fixture criada NO DRIVE via runVerifyPy (nunca no seed compartilhado):
+  `VERIFY-102` com `scheduled_by=verify-scheduler` e status pós-decisão
+  (transições pelos métodos/serviços EXISTENTES — decisão médica +
+  `confirm_case_scheduling`), 1 PDF real via PyMuPDF com texto
+  "VERIFY-102 doc 1" + `extracted_text` populado, criador `verify-nir`;
+  IDs fora de `VERIFY-001`/`VERIFY-002` e das faixas de outros drives.
+  Justificativa registrada no drive: VERIFY-001 pós-confirmação da Parte A
+  já estaria dentro do gate — a prova usa o VERIFY-102 dedicado para não
+  acoplar a seção nova ao estado mutável da Parte A.
+- Dentro do gate (detalhe `scheduler:case_detail` do VERIFY-102): os DOIS
+  cards sob o `{% if can_view_pdf %}` (D7; texto é a ÚNICA adição à visão
+  limitada); link mobile `d-md-none` identificando o documento
+  ("PDF 1 — relatorio-verify102-parte1.pdf", padrão P1 do PVP-003);
+  rede por URL EXATA de serve desde ANTES do goto — detalhe fechado = 0,
+  card externo aberto = 0, expansão ⇒ ≥1 GET sem marcador SÓ no alvo;
+  mobile 390 = 0 fetch e 0 `src`.
+- Viewer mobile (`scheduler:pdf_viewer`) aberto JÁ no viewport 390 com
+  `← Voltar` no topo (sticky) e no rodapé; `?next=` inseguro cai no
+  detalhe do agendador.
+- Fora do gate (VERIFY-101, caso AWAITING_DOCTOR sem `scheduled_by` — não
+  aparece na fila do agendador, então rota DIRETA do detalhe/serve):
+  ausência TOTAL dos dois cards no detalhe + 404 no serve e no viewer.
+- Evidência: `scheduler-102-detalhe-1280-fechado`,
+  `scheduler-102-card-externo-aberto`, `scheduler-102-doc1-expandido`,
+  `scheduler-102-detalhe-390`, `scheduler-102-viewer-mobile`,
+  `scheduler-101-fora-do-gate` (+ `report.json`/`observed-state.json`).

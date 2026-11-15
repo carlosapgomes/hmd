@@ -1785,7 +1785,11 @@ def test_detail_pdf_links_only_when_condition_holds(
     login_user: Callable[[User, str], None],
 ) -> None:
     """R7: no detalhe, links de PDF aparecem só para o próprio agendador
-    pós-decisão; outro agendador (detalhe permitido) não vê nenhum link."""
+    pós-decisão; outro agendador (detalhe permitido) não vê nenhum link.
+
+    Ajuste citando R2 (slice PVP-004): a tabela "Documentos" foi substituída
+    pelos dois cards do relatório no mesmo ponto do gate — a asserção de
+    presença passa ao card "Visualizar PDF Original"."""
     doctor = user_factory("medico-pdf-links", (DOCTOR_ROLE,))
     owner = user_factory("agendador-pdf-links-owner", (SCHEDULER_ROLE,))
     case = _confirmed_case(1, created_by=nir_user, decided_by=doctor, scheduled_by=owner)
@@ -1798,7 +1802,7 @@ def test_detail_pdf_links_only_when_condition_holds(
     own_body = own.content.decode()
     assert reverse("scheduler:case_pdf", args=[case.case_id, 1]) in own_body
     assert reverse("scheduler:case_pdf", args=[case.case_id, 2]) in own_body
-    assert "Documentos" in own_body
+    assert "Visualizar PDF Original" in own_body
 
     other = user_factory("agendador-pdf-links-outro", (SCHEDULER_ROLE,))
     login_user(other, SCHEDULER_ROLE)

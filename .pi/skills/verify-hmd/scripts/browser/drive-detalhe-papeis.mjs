@@ -519,20 +519,6 @@ try {
     await waitShell(page);
     const nirClosedGotoFetches = countEmbedFetches(markNirClosedGoto, '/intake/cases/');
     const nirClosedGotoInfo = nirClosedGotoFetches;
-    // Em headed-Xvfb o Chromium monta o plugin de PDF no <embed> com `src`
-    // + `type="application/pdf"` de forma especulativa; contadores de rede
-    // pós-goto podem registrar 1 GET do doc 1 (o atributo não existe no
-    // HTML — o script de lazy só atribui `src` na expansão desktop). Os
-    // contadores pós-shell (markClosed/markMobile) continuam a prova real
-    // do lazy (0 fetch parado/card/mobile). Registro informativo, sem gate.
-    // NOTA headed-Xvfb (medido em 3 runs): ~2 s após cada carregamento, o
-    // plugin de PDF do Chromium busca `documents/1/` UMA vez — SEM `src` no
-    // DOM (o script de lazy nunca atribuiu), SEM expansão e SEM clique.
-    // É fetch especulativo do motor sobre o MIME `application/pdf` do 1º
-    // serve do HTML (o check do drive confirma que NENHUM check/prova usa
-    // embed: `nir101-embeds-lazy` prova src=0 + `zero-fetch-closed/card` 0).
-    // Registro informativo, sem gate: a prova real do lazy segue nos
-    // contadores pós-shell (parado/card/mobile = 0) + target-only.
     void nirClosedGotoInfo;
     check('nir101-detail-layout', (await page.locator('.detail-layout').count()) === 1);
     const body = await page.locator('body').innerText();
@@ -552,8 +538,7 @@ try {
     // Prova de rede do estado fechado: nenhum GET de serve SEM ?probe=1
     // (caminho REAL da requisição — `GET /intake/cases/.../documents/...`).
     // O contador pré-navegação (markNirClosedGoto) cobre também o
-    // carregamento inicial; emite-se UMA asserção combinada para não contar
-    // duas vezes o mesmo fetch especulativo do plugin headed-Xvfb.
+    // carregamento inicial (registro informativo em observed).
     const markClosed = markPhase();
     await page.waitForTimeout(800);
     const closedFetches = countEmbedFetches(markClosed, '/intake/cases/');
@@ -786,6 +771,237 @@ try {
     await page.getByRole('button', { name: 'Sair sem decidir' }).click();
     await page.waitForLoadState('domcontentloaded');
     check('doctor101-work-leave-queue', page.url().includes('/doctor/'), page.url());
+    await context.close();
+  }
+
+  // ══ PARTE C — seção NOVA PVP-004 (agendador, sobre VERIFY-102) ══
+  // Detalhe DENTRO do gate com os dois cards sob o {% if can_view_pdf %}
+  // existente (D7 — texto é a ÚNICA adição à visão limitada). Fixture criada
+  // NO DRIVE via runVerifyPy (NÃO toca o seed compartilhado): VERIFY-102 com
+  // scheduled_by=verify-scheduler, status pós-decisão (transições EXISTENTES
+  // dos serviços: decisão médica + confirm_case_scheduling), 1 PDF real via
+  // PyMuPDF com texto "VERIFY-102 doc 1" + extracted_text populado, criador
+  // verify-nir, IDs fora de VERIFY-001/VERIFY-002 e das faixas de outros
+  // drives. Fora do gate (Parte A, VERIFY-001 pré-confirmação pelo
+  // verify-scheduler sem scheduled_by): prove 404/ausência na rota direta do
+  // detalhe/serve conforme o fluxo existente do drive.
+  // Justificativa da escolha (tarefa PVP-004): VERIFY-001 pós-confirmação da
+  // Parte A JÁ está DENTRO do gate; a prova dentro-do-gate é feita sobre o
+  // VERIFY-102 dedicado para não acoplar a seção nova ao estado mutável da
+  // Parte A, e a prova fora-do-gate usa a rota direta de VERIFY-001
+  // pré-confirmação (mesma seção médica lê AWAITING). Contadores de rede no
+  // padrão corrigido (contagem por URL EXATA de serve desde ANTES do goto):
+  // detalhe fechado = 0 fetch; card externo aberto = 0 fetch; expansão do
+  // sub-collapse ⇒ ≥1 GET sem marcador SÓ no alvo; mobile 390 = 0 fetch e 0
+  // src; viewer mobile aberto JÁ no viewport 390 com Voltar topo/rodapé
+  // (lições P2 do PVP-003 aplicadas desde o início).
+  runVerifyPy(
+    "from django.conf import settings\n" +
+    "assert str(settings.MEDIA_ROOT).startswith('" + runDir + "'), settings.MEDIA_ROOT\n" +
+    "import pymupdf\n" +
+    "from django.contrib.auth import get_user_model\n" +
+    "from django.utils import timezone\n" +
+    "from datetime import timedelta\n" +
+    "from apps.cases.models import Case, CaseDocument, CaseProcedure\n" +
+    "from apps.cases.procedures import record_doctor_procedure_decisions\n" +
+    "from apps.scheduler.services import confirm_case_scheduling\n" +
+    "from django.core.files.base import ContentFile\n" +
+    "nir = get_user_model().objects.get(username='verify-nir')\n" +
+    "doctor = get_user_model().objects.get(username='verify-doctor')\n" +
+    "sched = get_user_model().objects.get(username='verify-scheduler')\n" +
+    "c, created = Case.objects.get_or_create(created_by=nir, agency_record_number='VERIFY-102', defaults={'patient_name': 'Paciente Sintetico Cento e Dois', 'patient_age': 58})\n" +
+    "Case.objects.filter(pk=c.pk).update(patient_name='Paciente Sintetico Cento e Dois', patient_age=58, extracted_text='TEXTO SINTETICO VERIFY-102 PARTE 1.\\nTEXTO SINTETICO VERIFY-102 PARTE 2.')\n" +
+    "c.refresh_from_db()\n" +
+    "CaseProcedure.objects.get_or_create(case=c, procedure_type='art_perif', defaults={'declared_by_nir': True})\n" +
+    "CaseProcedure.objects.get_or_create(case=c, procedure_type='cat_cardiaco', defaults={'declared_by_nir': True})\n" +
+    "from apps.cases.models import CaseStatus\n" +
+    "if c.status == CaseStatus.NEW:\n" +
+    "    c.start_pdf_extraction(user=None, role='system')\n" +
+    "    c.complete_pdf_extraction(user=None, role='system')\n" +
+    "    c.complete_anonymization(user=None, role='system')\n" +
+    "    c.complete_llm_extraction(user=None, role='system')\n" +
+    "    c.complete_llm_summarization(user=None, role='system')\n" +
+    "c.refresh_from_db()\n" +
+    "if c.status == CaseStatus.AWAITING_DOCTOR:\n" +
+    "    record_doctor_procedure_decisions(c, {'art_perif': ('approved', ''), 'cat_cardiaco': ('approved', '')}, user=doctor, role='doctor')\n" +
+    "    c.refresh_from_db()\n" +
+    "if c.status in (CaseStatus.SCHEDULER_REQUESTED, CaseStatus.AWAITING_SCHEDULING):\n" +
+    "    confirm_case_scheduling(c, unit=1, scheduled_datetime=timezone.now() + timedelta(days=3), scheduled_location='Sala de hemodinamica — jornada PVP-004', user=sched, role='scheduler')\n" +
+    "    c.refresh_from_db()\n" +
+    "Case.objects.filter(pk=c.pk).update(extracted_text='TEXTO SINTETICO VERIFY-102 PARTE 1.\\nTEXTO SINTETICO VERIFY-102 PARTE 2.', scheduled_by=sched)\n" +
+    "c.refresh_from_db()\n" +
+    "existing = {d.position: d for d in c.documents.all()}\n" +
+    "if 1 not in existing:\n" +
+    "    doc = pymupdf.open()\n" +
+    "    pg = doc.new_page()\n" +
+    "    pg.insert_text((72, 720), 'VERIFY-102 doc 1', fontsize=24)\n" +
+    "    pdf = bytes(doc.tobytes())\n" +
+    "    doc.close()\n" +
+    "    d = CaseDocument(case=c, position=1, original_filename='relatorio-verify102-parte1.pdf', content_type='application/pdf', size_bytes=len(pdf), uploaded_by=nir)\n" +
+    "    d.file.save('relatorio-verify102-parte1.pdf', ContentFile(pdf), save=False)\n" +
+    "    d.save()\n" +
+    "print('VERIFY-102 ok', str(c.case_id), c.documents.count(), str(c.status))",
+  );
+  const out102 = runVerifyPy(
+    "from apps.cases.models import Case\n" +
+    "c = Case.objects.get(agency_record_number='VERIFY-102')\n" +
+    "print(str(c.case_id))\n" +
+    "print(str(c.status))\n" +
+    "print(c.scheduled_by.username if c.scheduled_by_id else 'SEM-SCHEDULER')",
+  );
+  const out102Lines = String(out102).trim().split('\n');
+  const caseId102 = out102Lines[out102Lines.length - 3].trim();
+  const status102 = out102Lines[out102Lines.length - 2].trim();
+  const schedBy102 = out102Lines[out102Lines.length - 1].trim();
+  const doc1SchedServe = `/scheduler/case/${caseId102}/pdf/1/`;
+  check('verify102-fixture', /^[0-9a-f-]{36}$/.test(caseId102) && schedBy102 === 'verify-scheduler', `caseId=${caseId102} status=${status102} scheduled_by=${schedBy102}`);
+  // R5: o PDF da fixture está no root da run (mediaRoot do manifest). O
+  // storage renomeia o arquivo (sufixo aleatório), então o find lista por
+  // diretório do caso em vez de nome (`-newer` cobriria clock-skew).
+  const fixture102Files = execSync(`find ${JSON.stringify(path.join(MEDIA_ROOT, 'case_documents', caseId102))} -type f -name '*.pdf' | sort`, { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+  check('verify102-media-in-run-root', fixture102Files.length === 1 && fixture102Files.every((f) => isMediaUnderRun(f, runDir)), `${fixture102Files.length} pdf(s) sob ${MEDIA_ROOT}`);
+  const pdf102Magic = execSync(
+    `python3 -c "import sys; data=open(sys.argv[1],'rb').read(); print(data[:5] == b'%PDF-' and b'/Type' in data and b'/Page' in data)" ${JSON.stringify(fixture102Files[0])}`,
+    { encoding: 'utf8' },
+  ).trim();
+  check('verify102-pdf-valid', pdf102Magic === 'True', String(fixture102Files[0]));
+  observed.verify102 = { caseId: caseId102, status: status102, scheduledBy: schedBy102, fixtureFiles: fixture102Files };
+
+  // 8) Desktop 1280: detalhe DENTRO do gate — 2 cards, lazy, 0 fetch fechado.
+  {
+    const { context, page } = await loginAs(browser, 'verify-scheduler', 'scheduler-102', { viewport: { width: 1280, height: 900 } });
+    // Contador por URL EXATA de serve desde ANTES do goto (padrão corrigido).
+    const markSchedClosedGoto = markPhase();
+    await page.goto(`${base}/scheduler/case/${caseId102}/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    observed.steps.push({ step: 'scheduler-102-goto-info', url: page.url(), gotoFetches: countEmbedFetches(markSchedClosedGoto, doc1SchedServe) });
+    check('sched102-detail-layout', (await page.locator('.detail-layout').count()) === 1);
+    const schedBody = await page.locator('body').innerText();
+    // Os DOIS cards sob o {% if can_view_pdf %} (D7).
+    check('sched102-text-card', schedBody.includes('Texto Extraído do PDF'));
+    const schedPre = await page.locator('#text-collapse pre').evaluate((el) => el.textContent).catch(() => '');
+    check('sched102-text-content', schedPre.includes('TEXTO SINTETICO VERIFY-102 PARTE 1'), schedPre.slice(0, 60));
+    check('sched102-pdf-card', schedBody.includes('Visualizar PDF Original'));
+    check('sched102-collapses-closed', (await page.locator('.collapse.show').count()) === 0, `${await page.locator('.collapse.show').count()} abertos`);
+    const schedEmbeds = await page.locator('embed.pdf-lazy-embed').count();
+    const schedSrcs = await page.locator('embed.pdf-lazy-embed[src]').count();
+    const schedDataSrcs = await page.locator('embed.pdf-lazy-embed[data-src]').count();
+    check('sched102-embeds-lazy', schedEmbeds === 1 && schedSrcs === 0 && schedDataSrcs === 1, `embeds=${schedEmbeds} src=${schedSrcs} data-src=${schedDataSrcs}`);
+    check('sched102-doc-collapse-attr', (await page.locator('[data-pdf-doc-collapse]').count()) === 1);
+    check('sched102-mobile-link', (await page.locator('a.d-md-none[href*="/viewer/"]').count()) === 1);
+    const schedMobileText = await page.locator('a.d-md-none[href*="/viewer/"]').first().evaluate((el) => el.textContent.replace(/\s+/g, ' ').trim());
+    check('sched102-mobile-link-identifies-doc', schedMobileText.includes('PDF 1') && schedMobileText.includes('relatorio-verify102-parte1.pdf'), schedMobileText);
+    check('sched102-new-tab-link', (await page.locator('a[target="_blank"]').count()) >= 1);
+    check('sched102-lazy-script', (await page.locator('script[src*="pdf-lazy-embed.js"]').count()) >= 1);
+    // Posição dos cards: texto antes do PDF, ambos antes de Comunicações,
+    // depois de Procedimentos (mesmo ponto do antigo bloco can_view_pdf).
+    const schedHeaders = await page.locator('.report-card .card-header').evaluateAll((els) => els.map((el) => el.textContent.trim()));
+    const schedPos = ['Texto Extraído do PDF', 'Visualizar PDF Original', 'Comunicações'].map((t) => schedHeaders.findIndex((x) => x.includes(t)));
+    check('sched102-card-position', schedPos.every((p, i) => p >= 0 && (i === 0 || p > schedPos[i - 1])), schedHeaders.join(' | '));
+    const markSchedClosed = markPhase();
+    await page.waitForTimeout(800);
+    const schedClosedFetches = countEmbedFetches(markSchedClosed, doc1SchedServe);
+    check('sched102-zero-fetch-closed', schedClosedFetches === 0, `${schedClosedFetches} fetch(es) de embed`);
+    await snap(page, 'scheduler-102-detalhe-1280-fechado');
+    observed.steps.push({ step: 'scheduler-102-detalhe-1280-fechado', url: page.url(), embedFetches: schedClosedFetches });
+
+    // Card externo aberto: continua 0 fetch (lazy é por sub-collapse).
+    const markSchedCard = markPhase();
+    await page.getByRole('button', { name: /Visualizar PDF Original/ }).click();
+    await page.waitForTimeout(800);
+    const schedCardFetches = countEmbedFetches(markSchedCard, doc1SchedServe);
+    check('sched102-zero-fetch-card-open', schedCardFetches === 0, `${schedCardFetches} fetch(es) de embed`);
+    await snap(page, 'scheduler-102-card-externo-aberto');
+
+    // Expansão do sub-collapse: só o alvo busca (target-only).
+    const markSchedDoc1 = markPhase();
+    await page.locator('button[data-bs-target="#pdf-collapse-1"]').click();
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#pdf-collapse-1 embed.pdf-lazy-embed');
+      return el && el.getAttribute('src');
+    }, { timeout: 10000 });
+    await page.waitForTimeout(2500);
+    const schedDoc1Src = await page.locator('#pdf-collapse-1 embed.pdf-lazy-embed').getAttribute('src');
+    check('sched102-doc1-loaded', !!schedDoc1Src && schedDoc1Src === doc1SchedServe, String(schedDoc1Src));
+    await probeServesPdf(page, doc1SchedServe);
+    const schedDoc1Fetches = countEmbedFetches(markSchedDoc1, doc1SchedServe);
+    check('sched102-embed-fetch-doc1', schedDoc1Fetches >= 1, `${schedDoc1Fetches} GET(s) sem marcador em ${doc1SchedServe}`);
+    await snap(page, 'scheduler-102-doc1-expandido');
+    observed.steps.push({ step: 'scheduler-102-doc1-expandido', url: page.url(), unmarkedGetsDoc1: schedDoc1Fetches });
+    await context.close();
+  }
+
+  // 9) Mobile 390: só link, 0 fetch; viewer aberto JÁ no viewport 390.
+  {
+    const { context, page } = await loginAs(browser, 'verify-scheduler', 'scheduler-102-mobile', { viewport: { width: 390, height: 844 } });
+    const markSchedMobileGoto = markPhase();
+    await page.goto(`${base}/scheduler/case/${caseId102}/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    observed.steps.push({ step: 'scheduler-102-mobile-goto-info', url: page.url(), gotoFetches: countEmbedFetches(markSchedMobileGoto, doc1SchedServe) });
+    const markSchedMobile = markPhase();
+    await page.getByRole('button', { name: /Visualizar PDF Original/ }).click();
+    await page.waitForTimeout(800);
+    const schedMobileSrcs = await page.locator('embed.pdf-lazy-embed[src]').count();
+    const schedMobileFetches = countEmbedFetches(markSchedMobile, doc1SchedServe);
+    check('sched102-mobile-zero-embed-fetch', schedMobileFetches === 0 && schedMobileSrcs === 0, `fetches=${schedMobileFetches} srcs=${schedMobileSrcs}`);
+    await snap(page, 'scheduler-102-detalhe-390');
+    observed.steps.push({ step: 'scheduler-102-detalhe-390', url: page.url(), embedFetches: schedMobileFetches });
+    // O viewer mobile abre JÁ no viewport 390 (P2 do PVP-003).
+    const schedViewerHref = await page.locator('a.d-md-none[href*="/viewer/"]').first().getAttribute('href');
+    check('sched102-mobile-viewer-link', !!schedViewerHref && schedViewerHref.includes('/scheduler/case/') && schedViewerHref.includes('/pdf/1/viewer/'), schedViewerHref);
+    const schedMobileViewport = page.viewportSize();
+    check('sched102-mobile-viewport-390', schedMobileViewport?.width === 390, JSON.stringify(schedMobileViewport));
+    await page.goto(`${base}${schedViewerHref}`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const schedViewerBacks = await page.locator('a:has-text("← Voltar")').count();
+    check('sched102-viewer-voltar-topo-rodape', schedViewerBacks >= 2, `${schedViewerBacks} links Voltar`);
+    const schedViewerBody = await page.locator('body').innerText();
+    check('sched102-viewer-title', schedViewerBody.includes('PDF Original') || (await page.title()).includes('PDF Original'), await page.title());
+    await page.waitForFunction(() => document.querySelectorAll('#pdf-pages canvas').length >= 1, { timeout: 20000 });
+    const schedCanvasCount = await page.locator('#pdf-pages canvas').count();
+    check('sched102-viewer-pdfjs-rendered', schedCanvasCount >= 1, `${schedCanvasCount} canvas(es) PDF.js`);
+    const schedCanvasPixels = await page.locator('#pdf-pages canvas').first().evaluate((el) => {
+      const thumb = document.createElement('canvas');
+      thumb.width = 64; thumb.height = 64;
+      thumb.getContext('2d').drawImage(el, 0, 0, 64, 64);
+      const d = thumb.getContext('2d').getImageData(0, 0, 64, 64).data;
+      let nonwhite = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] < 250 || d[i + 1] < 250 || d[i + 2] < 250) nonwhite += 1;
+      }
+      return { w: el.width, h: el.height, nonwhite64: nonwhite };
+    });
+    check('sched102-viewer-canvas-nonblank', schedCanvasPixels.nonwhite64 > 0, JSON.stringify(schedCanvasPixels));
+    await snap(page, 'scheduler-102-viewer-mobile');
+    observed.steps.push({ step: 'scheduler-102-viewer-mobile', url: page.url() });
+    // ?next= inseguro cai no detalhe do agendador.
+    await page.goto(`${base}${schedViewerHref.split('?')[0]}?next=https://evil.example/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const schedEvilBack = await page.locator('a:has-text("← Voltar")').first().getAttribute('href');
+    check('sched102-viewer-next-inseguro-fallback', !!schedEvilBack && !String(schedEvilBack).includes('evil.example') && String(schedEvilBack).includes(`/scheduler/case/${caseId102}/`), schedEvilBack);
+    await context.close();
+  }
+
+  // 10) Fora do gate sobre VERIFY-101 (AWAITING_DOCTOR, sem scheduled_by):
+  // ausência TOTAL dos cards no detalhe do agendador. VERIFY-101 não aparece
+  // na fila do agendador — usa-se a rota DIRETA do detalhe (fluxo existente:
+  // detalhe permitido, cards ausentes) e do serve (404 fail-closed).
+  {
+    const { context, page } = await loginAs(browser, 'verify-scheduler', 'scheduler-fora-gate', { viewport: { width: 1280, height: 900 } });
+    await page.goto(`${base}/scheduler/case/${caseId101}/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const foraBody = await page.locator('body').innerText();
+    check('sched101-fora-gate-sem-cards', !foraBody.includes('Texto Extraído do PDF') && !foraBody.includes('Visualizar PDF Original'), page.url());
+    check('sched101-fora-gate-sem-texto', !foraBody.includes('TEXTO SINTETICO VERIFY-101'), page.url());
+    check('sched101-fora-gate-sem-script', (await page.locator('script[src*="pdf-lazy-embed.js"]').count()) === 0);
+    await snap(page, 'scheduler-101-fora-do-gate');
+    observed.steps.push({ step: 'scheduler-101-fora-do-gate', url: page.url() });
+    // Serve direto fora do gate: 404 fail-closed.
+    const schedServeResp = await page.request.get(`${base}/scheduler/case/${caseId101}/pdf/1/?probe=1`);
+    check('sched101-serve-fora-gate-404', schedServeResp.status() === 404, `${schedServeResp.status()} ${doc1SchedServe}`);
+    // Viewer direto fora do gate: 404 fail-closed.
+    const schedViewerResp = await page.request.get(`${base}/scheduler/case/${caseId101}/pdf/1/viewer/?probe=1`);
+    check('sched102-viewer-fora-gate-404', schedViewerResp.status() === 404, `${schedViewerResp.status()} viewer`);
     await context.close();
   }
 

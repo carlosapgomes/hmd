@@ -31,10 +31,10 @@ Contract: `slices/slice-003-doctor-report-cards.md`
 
 Contract: `slices/slice-004-scheduler-report-cards.md`
 
-- [ ] 4.1 Escrever RED da rota `scheduler:pdf_viewer` (gate fail-closed) e dos cards dentro/fora do gate; executar os testes focados e registrar as falhas esperadas.
-- [ ] 4.2 Implementar viewer e os dois cards sob `can_view_pdf`; verificar testes focados verdes e a suíte scheduler sem regressão.
-- [ ] 4.3 Estender/rodar a jornada `detalhe-papeis` (agendador, dentro/fora do gate) em 1280/390, com PNG/snapshot/JSON.
-- [ ] 4.4 Rodar o quality gate, produzir `/tmp/hmd-slice-pvp-004-report.md` e submeter o slice à revisão independente antes de avançar.
+- [x] 4.1 Escrever RED da rota `scheduler:pdf_viewer` (gate fail-closed) e dos cards dentro/fora do gate; executar os testes focados e registrar as falhas esperadas.
+- [x] 4.2 Implementar viewer e os dois cards sob `can_view_pdf`; verificar testes focados verdes e a suíte scheduler sem regressão.
+- [x] 4.3 Estender/rodar a jornada `detalhe-papeis` (agendador, dentro/fora do gate) em 1280/390, com PNG/snapshot/JSON.
+- [x] 4.4 Rodar o quality gate, produzir `/tmp/hmd-slice-pvp-004-report.md` e submeter o slice à revisão independente antes de avançar.
 
 ## 5. Slice 005 — Painel: serve + viewer + dois cards
 

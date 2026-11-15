@@ -10,10 +10,11 @@ Aplicação instalável como PWA com identidade HMD (ícone com as letras HMD) e
 
 O sistema SHALL servir um manifest web app com nome `SAR – HMD` e
 short_name `HMD`, ícones base e maskable (SVG e PNGs) exibindo a sigla
-HMD com marcador geométrico de família e variante de contraste, e um
-service worker registrado no layout base que faz cache de estáticos
-com estratégia network-first e nunca intercepta requisições de não-GET
-nem rotas de PDF do caso.
+HMD branca centralizada sobre o fundo plano da cor primária, com
+variante de contraste (fundo claro, sigla na primária) para superfícies
+escuras, e um service worker registrado no layout base que faz cache de
+estáticos com estratégia network-first e nunca intercepta requisições
+de não-GET nem rotas de PDF do caso.
 
 #### Scenario: Manifest e ícones HMD servidos
 

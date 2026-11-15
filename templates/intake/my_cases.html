@@ -1,47 +1,21 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}{{ app_display_name }} — Meus casos{% endblock %}
+{% block title %}{{ app_display_name }} — Todos os seus encaminhamentos{% endblock %}
 
-{% block nav %}{% if current_tab == 'closed' %}{% include "intake/_nav.html" with active_tab="closed" %}{% else %}{% include "intake/_nav.html" with active_tab="my_cases" %}{% endif %}{% endblock %}
+{% block page_title %}<h1 class="page-title">Todos os seus encaminhamentos</h1>{% endblock %}
+
+{% block nav %}{% if current_tab == 'closed' %}{% include "intake/_nav.html" with active_tab="closed" active_count=active_count closed_count=closed_count filter_qs=filter_qs %}{% else %}{% include "intake/_nav.html" with active_tab="my_cases" active_count=active_count closed_count=closed_count filter_qs=filter_qs %}{% endif %}{% endblock %}
 
 {% block content %}
-<div class="row justify-content-center mt-4">
-  <div class="col-12 col-lg-10">
-    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-      <h1 class="page-title">Meus casos</h1>
-      <a href="{% url 'intake:home' %}" class="btn btn-primary">Enviar relatório</a>
-    </div>
-
-    <!-- Abas ativos/encerrados (nir-result-closure, slice 003, R3): a aba
-         ativa (default, tudo exceto CLEANED) e a encerrados (apenas CLEANED).
-         As pills são a navegação das abas (ui-parity-queues slice 003, R1/D6:
-         reestilizadas, NÃO removidas — diferente das filas, aqui não há
-         duplicação com o `_nav`, que é a navegação da seção). Os links
-         preservam os filtros ativos; os contadores são os totais do criador
-         por aba (sem os filtros de busca). -->
-    <ul class="nav nav-pills gap-2 mb-3" role="tablist" aria-label="Filtro pela situação do caso">
-      <li class="nav-item" role="presentation">
-        <a href="{% url 'intake:my_cases' %}?tab=active{% if filter_qs %}&{{ filter_qs }}{% endif %}"
-           class="nav-link{% if current_tab == 'active' %} active{% endif %}"
-           {% if current_tab == 'active' %}aria-current="page"{% endif %}>
-          Ativos{% if active_count %} <span class="badge rounded-pill text-bg-secondary">{{ active_count }}</span>{% endif %}
-        </a>
-      </li>
-      <li class="nav-item" role="presentation">
-        <a href="{% url 'intake:my_cases' %}?tab=closed{% if filter_qs %}&{{ filter_qs }}{% endif %}"
-           class="nav-link{% if current_tab == 'closed' %} active{% endif %}"
-           {% if current_tab == 'closed' %}aria-current="page"{% endif %}>
-          Encerrados{% if closed_count %} <span class="badge rounded-pill text-bg-secondary">{{ closed_count }}</span>{% endif %}
-        </a>
-      </li>
-    </ul>
-
+<div class="operational-list-page">
     <!-- Filtros server-side (ui-parity-queues slice 003, R2/D4): `q` por nº de
          ocorrência (≥3 chars; mais curtos são ignorados pela view), `status`
          e `procedure_type` (catálogo de 13 tipos) compõem por AND e viajam na
          URL do partial. Fora do fragmento trocado pelo htmx: o refresh de
-         20 s nunca reseta o formulário. -->
+         20 s nunca reseta o formulário. A navegação entre abas é só o
+         header (OLI-004 R1/D9): Meus Casos/Casos Encerrados com
+         ``filter_qs`` — sem pills internas duplicadas. -->
     <div class="card p-4 mb-4">
       <form method="get" class="row g-3 align-items-end">
         <input type="hidden" name="tab" value="{{ current_tab }}">
@@ -72,7 +46,10 @@
           <a href="{% url 'intake:my_cases' %}?tab={{ current_tab }}" class="btn btn-outline-secondary">Limpar</a>
         </div>
       </form>
-      <div data-my-cases-status class="mt-2 text-muted small" aria-live="polite"></div>
+      <!-- Live region do contador (OLI-004 R3): visualmente oculta — a
+           única contagem visual é o badge do cabeçalho da lista. O JS
+           (``nir_queue_filter.js``) segue atualizando o texto após o swap. -->
+      <div data-my-cases-status class="visually-hidden" aria-live="polite"></div>
     </div>
 
     <div
@@ -83,7 +60,6 @@
     >
       {% include "intake/_my_cases_content.html" %}
     </div>
-  </div>
 </div>
 {% endblock %}
 

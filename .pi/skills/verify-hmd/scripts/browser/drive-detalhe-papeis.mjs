@@ -133,10 +133,10 @@ try {
   // 1) Médico: fila → página de trabalho (novo layout) → aprova tudo.
   {
     const { context, page } = await loginAs(browser, 'verify-doctor', 'doctor-detalhe');
-    check('doctor-queue-heading', (await page.getByRole('heading', { name: 'Fila médica' }).count()) >= 1);
+    check('doctor-queue-heading', (await page.getByRole('heading', { name: 'Casos aguardando decisão' }).count()) >= 1);
     const doctorBody = await page.locator('body').innerText();
     check('doctor-sees-VERIFY-001', doctorBody.includes('VERIFY-001'));
-    const decideHref = await page.locator('[data-agency-record-number="VERIFY-001"] a.list-group-item-action').getAttribute('href').catch(() => null);
+    const decideHref = await page.locator('[data-agency-record-number="VERIFY-001"] a.stretched-link').getAttribute('href').catch(() => null);
     const decideMatch = (decideHref || '').match(/\/doctor\/case\/([0-9a-f-]+)\/decide\//);
     check('doctor-case-found-in-queue', !!decideMatch, decideHref || 'sem link');
     if (decideMatch) {
@@ -187,8 +187,8 @@ try {
       check('scheduler-case-found', false, 'caseId não encontrado');
     } else {
       const { context, page } = await loginAs(browser, 'verify-scheduler', 'scheduler-detalhe');
-      check('scheduler-queue-heading', (await page.getByRole('heading', { name: 'Fila de agendamento' }).count()) >= 1);
-      const schedHref = await page.locator('[data-agency-record-number="VERIFY-001"] a.list-group-item-action').getAttribute('href').catch(() => null);
+      check('scheduler-queue-heading', (await page.getByRole('heading', { name: 'Solicitações de agendamento aguardando confirmação' }).count()) >= 1);
+      const schedHref = await page.locator('[data-agency-record-number="VERIFY-001"] a.stretched-link').getAttribute('href').catch(() => null);
       check('scheduler-case-found-in-queue', !!schedHref && schedHref.includes(caseId), schedHref || 'sem link');
       await page.goto(`${base}/scheduler/case/${caseId}/`, { waitUntil: 'domcontentloaded' });
       check('scheduler-detail-layout', (await page.locator('.detail-layout').count()) === 1);

@@ -108,7 +108,19 @@ function check(id, ok, detail) {
   if (!ok) failures.push(id);
   console.log(`${ok ? 'PASS' : 'FAIL'} ${id} ${detail ?? ''}`);
 }
+// OLI-005: nenhuma captura antes de o shell terminar o fade-in —
+// aguarda `.app-shell` com computed opacity >= 0.99 (sem sleep fixo).
+async function waitShell(page) {
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('.app-shell');
+      return !!el && parseFloat(getComputedStyle(el).opacity) >= 0.99;
+    },
+    { timeout: 10000 },
+  );
+}
 async function snap(page, name) {
+  await waitShell(page);
   const file = path.join(artifacts, `${name}.txt`);
   let text;
   try {
@@ -161,6 +173,7 @@ try {
   process.exit(2);
 }
 const observed = { runId: manifest.runId, base, database: manifest.database, steps: [] };
+const oli005Nav = {};
 try {
   // Papéis do painel (1): NIR, médico, agendador, gerente.
   const jobs = [
@@ -196,6 +209,93 @@ try {
       check(`${label}-active`, (await active.count()) === 1, `ativas=${await active.count()}`);
       const activeText = await active.first().innerText().catch(() => '');
       check(`${label}-active-tab`, activeText.includes(tabA), activeText.trim());
+      // OLI-005 (R1/R2/R3/R4): pills/contadores no padrão HMD.
+      await waitShell(page);
+      const activeHref = await active.first().getAttribute('href');
+      const activeAria = await active.first().getAttribute('aria-current');
+      check(`oli005-${label}-active-aria`, activeAria === 'page', `aria-current=${activeAria}`);
+      const activeStyle = await active.first().evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return { backgroundColor: cs.backgroundColor, color: cs.color, minHeight: cs.minHeight };
+      });
+      check(`oli005-${label}-active-computed`, activeStyle.backgroundColor === 'rgb(255, 255, 255)' && activeStyle.color === 'rgb(13, 74, 138)', JSON.stringify(activeStyle));
+      const noInlineBadge = await page.evaluate(() => document.querySelectorAll('nav.app-nav a span.badge').length);
+      check(`oli005-${label}-no-inline-badge`, noInlineBadge === 0, `spans=${noInlineBadge}`);
+      const navLinks = await page.evaluate(() =>
+        [...document.querySelectorAll('nav.app-nav a.nav-link')].map((el) => ({
+          text: el.textContent.trim(),
+          count: el.getAttribute('data-count'),
+          href: el.getAttribute('href'),
+          cls: el.className,
+          aria: el.getAttribute('aria-current'),
+          afterDisplay: getComputedStyle(el, '::after').display,
+          afterContent: getComputedStyle(el, '::after').content,
+          afterBackground: getComputedStyle(el, '::after').backgroundColor,
+          height: el.getBoundingClientRect().height,
+          top: el.getBoundingClientRect().top,
+        })),
+      );
+      oli005Nav[label] = { url: page.url(), activeHref, activeStyle, navLinks };
+      const dupFree = navLinks.every((l) => !/[0-9]/.test(l.text));
+      check(`oli005-${label}-no-duplicate-count-dom`, dupFree, JSON.stringify(navLinks.map((l) => l.text)));
+      const targetsOk = navLinks.every((l) => l.height >= 44);
+      check(`oli005-${label}-target-44`, targetsOk, JSON.stringify(navLinks.map((l) => l.height)));
+      const sameRow = navLinks.length < 2 || navLinks.every((l) => Math.abs(l.top - navLinks[0].top) < 1);
+      check(`oli005-${label}-desktop-aligned`, sameRow, JSON.stringify(navLinks.map((l) => l.top)));
+      if (label === 'doctor') {
+        const pend = navLinks.find((l) => l.text === 'Pendentes');
+        const dec = navLinks.find((l) => l.text === 'Decididos');
+        check('oli005-doctor-pending-action', pend && pend.count === '2' && pend.afterContent === '"2"' && pend.afterDisplay !== 'none' && pend.afterBackground === 'rgb(181, 53, 53)' && pend.cls.includes('nav-count-badge--danger'), JSON.stringify(pend));
+        check('oli005-doctor-decided-zero-hidden', dec && dec.count === '0' && dec.afterDisplay === 'none' && dec.cls.includes('nav-count-badge--neutral'), JSON.stringify(dec));
+        check('oli005-doctor-active-href', activeHref === '/doctor/?tab=aguardando', String(activeHref));
+        // Hover no link inativo: fundo branco translúcido + texto branco.
+        // O Bootstrap transiciona background/color (150ms): aguarda o
+        // estado computado, sem sleep fixo.
+        await page.locator('nav.app-nav a.nav-link', { hasText: 'Decididos' }).hover();
+        await page.locator('nav.app-nav a.nav-link', { hasText: 'Decididos' }).evaluate((el) => el.matches(':hover'));
+        await page.waitForFunction(
+          () => {
+            const el = [...document.querySelectorAll('nav.app-nav a.nav-link')].find((a) => a.textContent.trim() === 'Decididos');
+            return !!el && getComputedStyle(el).backgroundColor === 'rgba(255, 255, 255, 0.12)';
+          },
+          { timeout: 5000 },
+        );
+        const hoverStyle = await page.locator('nav.app-nav a.nav-link', { hasText: 'Decididos' }).evaluate((el) => {
+          const cs = getComputedStyle(el);
+          return { backgroundColor: cs.backgroundColor, color: cs.color };
+        });
+        check('oli005-doctor-hover-computed', hoverStyle.backgroundColor === 'rgba(255, 255, 255, 0.12)' && hoverStyle.color === 'rgb(255, 255, 255)', JSON.stringify(hoverStyle));
+        oli005Nav.doctorHover = hoverStyle;
+        // Focus acessível via teclado (Tab) até um link da faixa.
+        let focusStyle = null;
+        for (let i = 0; i < 40; i++) {
+          await page.keyboard.press('Tab');
+          const onNav = await page.evaluate(() => {
+            const el = document.activeElement;
+            return !!el && el.classList && el.classList.contains('nav-link') && !!el.closest('nav.app-nav');
+          });
+          if (onNav) {
+            focusStyle = await page.evaluate(() => {
+              const cs = getComputedStyle(document.activeElement);
+              return { outlineStyle: cs.outlineStyle, outlineWidth: cs.outlineWidth, outlineColor: cs.outlineColor };
+            });
+            break;
+          }
+        }
+        check('oli005-doctor-focus-visible', !!focusStyle && focusStyle.outlineStyle !== 'none' && focusStyle.outlineWidth !== '0px' && focusStyle.outlineColor === 'rgb(212, 238, 243)', JSON.stringify(focusStyle));
+        oli005Nav.doctorFocus = focusStyle;
+      }
+      if (label === 'scheduler') {
+        const allZeroHidden = navLinks.every((l) => l.count === '0' && l.afterDisplay === 'none');
+        check('oli005-scheduler-zero-hidden', allZeroHidden, JSON.stringify(navLinks));
+        check('oli005-scheduler-active-href', activeHref === '/scheduler/?tab=aguardando', String(activeHref));
+      }
+      if (label === 'nir') {
+        // Home do NIR não tem contadores (caso sem data-count).
+        const noCounts = navLinks.every((l) => l.count === null);
+        check('oli005-nir-home-no-counts', noCounts, JSON.stringify(navLinks.map((l) => l.count)));
+        check('oli005-nir-active-href', activeHref === '/intake/', String(activeHref));
+      }
     }
     for (const asset of REQUIRED_ASSETS) {
       const status = await page.evaluate(async (u) => (await fetch(u, { cache: 'no-store' })).status, asset);
@@ -203,6 +303,37 @@ try {
     }
     await snap(page, `${label}-header`);
     observed.steps.push({ step: `${label}-header`, url: page.url() });
+    await context.close();
+  }
+
+  // OLI-005: NIR com contadores (meus casos) + filter_qs preservado.
+  {
+    const { context, page } = await loginAs(browser, 'verify-nir', 'nir-my-cases');
+    await page.goto(`${base}/intake/cases/?tab=active&q=VERIFY&status=FAILED`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const nirNav = await page.evaluate(() =>
+      [...document.querySelectorAll('nav.app-nav a.nav-link')].map((el) => ({
+        text: el.textContent.trim(),
+        count: el.getAttribute('data-count'),
+        href: el.getAttribute('href'),
+        cls: el.className,
+        aria: el.getAttribute('aria-current'),
+        afterDisplay: getComputedStyle(el, '::after').display,
+        afterContent: getComputedStyle(el, '::after').content,
+        afterBackground: getComputedStyle(el, '::after').backgroundColor,
+      })),
+    );
+    oli005Nav.nirMyCases = { url: page.url(), nirNav };
+    const myLink = nirNav.find((l) => l.text === 'Meus Casos');
+    const closedLink = nirNav.find((l) => l.text === 'Casos Encerrados');
+    check('oli005-nir-mycases-neutral-nonzero', !!myLink && myLink.count === '2' && myLink.afterContent === '"2"' && myLink.afterBackground === 'rgb(76, 102, 119)' && myLink.cls.includes('nav-count-badge--neutral'), JSON.stringify(myLink));
+    check('oli005-nir-closed-zero-hidden', !!closedLink && closedLink.count === '0' && closedLink.afterDisplay === 'none', JSON.stringify(closedLink));
+    check('oli005-nir-filter-qs-preserved', !!myLink && myLink.href.includes('q=VERIFY') && myLink.href.includes('status=FAILED') && !!closedLink && closedLink.href.includes('q=VERIFY') && closedLink.href.includes('status=FAILED'), JSON.stringify(nirNav.map((l) => l.href)));
+    check('oli005-nir-mycases-aria', !!myLink && myLink.aria === 'page', JSON.stringify(myLink));
+    const nirNoInline = await page.evaluate(() => document.querySelectorAll('nav.app-nav a span.badge').length);
+    check('oli005-nir-no-inline-badge', nirNoInline === 0, `spans=${nirNoInline}`);
+    await snap(page, 'nir-my-cases-header');
+    observed.steps.push({ step: 'nir-my-cases-header', url: page.url() });
     await context.close();
   }
 
@@ -229,12 +360,72 @@ try {
     const toggler = page.getByRole('button', { name: 'Menu da sessão' });
     check('mobile-toggler', (await toggler.count()) === 1, 'toggler');
     await toggler.click();
-    await page.waitForTimeout(500);
+    await page.waitForFunction(() => document.querySelector('#sessionMenu')?.classList.contains('show'), { timeout: 5000 });
     check('mobile-session-open', await page.locator('#sessionMenu').isVisible(), 'sessão aberta');
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     check('mobile-no-overflow', overflow <= 1, `overflow=${overflow}`);
+    // OLI-005 (R4): pills fazem wrap, alvo >=44px, zero oculto, sem overflow.
+    await waitShell(page);
+    const mobileNav = await page.evaluate(() => {
+      const links = [...document.querySelectorAll('nav.app-nav a.nav-link')].map((el) => ({
+        text: el.textContent.trim(),
+        height: el.getBoundingClientRect().height,
+        top: el.getBoundingClientRect().top,
+        count: el.getAttribute('data-count'),
+        afterDisplay: getComputedStyle(el, '::after').display,
+      }));
+      return {
+        links,
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: window.innerWidth,
+        navHeight: document.querySelector('nav.app-nav')?.getBoundingClientRect().height ?? 0,
+      };
+    });
+    oli005Nav.doctorMobile = mobileNav;
+    // Médico (2 rótulos curtos) cabe numa linha em 390px; o wrap é
+    // provado no NIR (3 rótulos longos), logo abaixo.
+    const flexWrap = await page.evaluate(() => getComputedStyle(document.querySelector('nav.app-nav .nav')).flexWrap);
+    check('oli005-mobile-nav-flexwrap', flexWrap === 'wrap', `flexWrap=${flexWrap}`);
+    check('oli005-mobile-target-44', mobileNav.links.every((l) => l.height >= 44), JSON.stringify(mobileNav.links.map((l) => l.height)));
+    check('oli005-mobile-no-overflow', mobileNav.scrollWidth <= mobileNav.clientWidth, `${mobileNav.scrollWidth}<=${mobileNav.clientWidth}`);
+    const decidedMobile = mobileNav.links.find((l) => l.text === 'Decididos');
+    check('oli005-mobile-zero-hidden', !!decidedMobile && decidedMobile.count === '0' && decidedMobile.afterDisplay === 'none', JSON.stringify(decidedMobile));
+    // Estabilidade mobile: altura estável em duplo rAF após opacity >=0.99.
+    const stable = await page.evaluate(async () => {
+      const h = () => document.querySelector('nav.app-nav')?.getBoundingClientRect().height ?? 0;
+      const a = h();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return Math.abs(h() - a) < 1;
+    });
+    check('oli005-mobile-layout-stable', stable, 'altura da faixa estável em duplo rAF');
     await snap(page, 'doctor-header-mobile');
     observed.steps.push({ step: 'doctor-header-mobile', url: page.url() });
+    await context.close();
+  }
+
+  // OLI-005 (R4): wrap real em 390px — NIR com 3 rótulos longos.
+  {
+    const { context, page } = await loginAs(browser, 'verify-nir', 'nir-mobile', {
+      width: 390,
+      height: 844,
+    });
+    await waitShell(page);
+    const nirMobile = await page.evaluate(() => ({
+      links: [...document.querySelectorAll('nav.app-nav a.nav-link')].map((el) => ({
+        text: el.textContent.trim(),
+        height: el.getBoundingClientRect().height,
+        top: el.getBoundingClientRect().top,
+      })),
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: window.innerWidth,
+    }));
+    oli005Nav.nirMobile = nirMobile;
+    const nirWrapped = new Set(nirMobile.links.map((l) => Math.round(l.top))).size > 1;
+    check('oli005-mobile-nir-nav-wrap', nirWrapped, JSON.stringify(nirMobile.links.map((l) => l.top)));
+    check('oli005-mobile-nir-target-44', nirMobile.links.every((l) => l.height >= 44), JSON.stringify(nirMobile.links.map((l) => l.height)));
+    check('oli005-mobile-nir-no-overflow', nirMobile.scrollWidth <= nirMobile.clientWidth, `${nirMobile.scrollWidth}<=${nirMobile.clientWidth}`);
+    await snap(page, 'nir-header-mobile');
+    observed.steps.push({ step: 'nir-header-mobile', url: page.url() });
     await context.close();
   }
 
@@ -426,8 +617,12 @@ try {
   process.exit(2);
 }
 check('no-failed-static-assets', failedAssets.length === 0, failedAssets.join('; ') || 'nenhum /static/* >= 400');
+writeFileSync(path.join(artifacts, 'oli005-nav.json'), JSON.stringify(oli005Nav, null, 2));
+// Relatório em nome exclusivo: `report.json` pertence ao drive genérico
+// (`drive.mjs`) — escrever aqui o mesmo nome sobrescrevia os 180 checks
+// do header quando os drives rodavam na mesma run (revisão OLI-005).
 writeFileSync(
-  path.join(artifacts, 'report.json'),
+  path.join(artifacts, 'report-header-nav-4-papeis.json'),
   JSON.stringify({ runId: manifest.runId, journey: 'header-nav-4-papeis', checks, failures, pass: failures.length === 0 }, null, 2),
 );
 writeFileSync(path.join(artifacts, 'observed-state.json'), JSON.stringify(observed, null, 2));

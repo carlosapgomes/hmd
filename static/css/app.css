@@ -106,6 +106,95 @@ body.hospital-shell h6 {
   text-decoration: none;
 }
 
+/* ---------- Navegação operacional: pills e contadores (OLI-005 D11) ---------- */
+/* Adaptado do molde ``.app-nav``/``.nav-count-badge`` do ats-web
+   (somente-leitura) para os tokens HMD: a primária ``#0d4a8a`` segue
+   reservada; ação usa ``--hospital-danger`` e neutro ``--hospital-muted``
+   (não as cores do molde). Um único mecanismo de contador: ``data-count``
+   + pseudo-elemento ``::after``; zero oculto por CSS. Alvo >=44px e wrap
+   sem overflow em 390px. */
+
+.app-header .app-nav {
+  order: 4;
+  flex: 0 0 100%;
+  width: 100%;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.app-nav .nav {
+  flex-wrap: wrap;
+}
+
+.app-nav .nav-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.86);
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 0.5rem 1rem;
+}
+
+.app-nav .nav-link:hover,
+.app-nav .nav-link:focus {
+  color: #ffffff;
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.app-nav .nav-link.active {
+  color: var(--hospital-primary);
+  background-color: #ffffff;
+}
+
+.app-nav .nav-link.active:hover,
+.app-nav .nav-link.active:focus {
+  color: var(--hospital-primary);
+  background-color: #ffffff;
+}
+
+.app-nav .nav-link:focus-visible {
+  outline: 3px solid var(--hospital-accent-light);
+  outline-offset: 2px;
+}
+
+.nav-count-badge {
+  position: relative;
+}
+
+.nav-count-badge::after {
+  content: attr(data-count);
+  position: absolute;
+  top: -6px;
+  right: -10px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  min-width: 18px;
+  height: 18px;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 999px;
+  padding: 0 4px;
+  z-index: 1;
+}
+
+.nav-count-badge--danger::after {
+  background: var(--hospital-danger);
+  color: #ffffff;
+}
+
+.nav-count-badge--neutral::after {
+  background: var(--hospital-muted);
+  color: #ffffff;
+}
+
+.nav-count-badge:not([data-count])::after,
+.nav-count-badge[data-count="0"]::after {
+  display: none;
+}
+
 /* ---------- Título de página ---------- */
 
 .page-title {
@@ -691,5 +780,61 @@ body.hospital-shell h6 {
 @media (max-width: 575.98px) {
   .app-header__title {
     font-size: 0.98rem;
+  }
+}
+
+/* ---------- Listas operacionais: página completa (OLI-001 D2/D3) ---------- */
+/* Escopo explícito: nenhuma regra global de ``.case-card``/``.summary-box``
+   é alterada. A região 8/4 vem do grid do Bootstrap; aqui só garantimos
+   wrap, alvo mínimo do CTA e ausência de overflow no card operacional. */
+
+.operational-list-page .case-card .badge-wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.operational-list-page .case-card .btn {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.operational-list-page .case-card {
+  overflow-wrap: anywhere;
+}
+
+/* OLI-002: o seletor server-side por procedimento tem rótulos longos
+   (catálogo de 13 tipos) — encolhe dentro da linha sem overflow em 390px. */
+.operational-list-page #procedure-type-filter {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 991.98px) {
+  .operational-list-page .case-card .col-lg-4 .btn {
+    width: 100%;
+  }
+}
+
+/* ---------- Meus casos do NIR: card compacto 4/3/3/2 (OLI-004 D9) ---------- */
+/* Escopo exclusivo da lista do NIR: ``#my-cases-content`` é o container
+   htmx compartilhado pela página cheia e pelo partial — restringe as
+   regras a ele para não alcançar os cards das filas médico/agendador
+   (OLI-001–003), que também usam ``.operational-list-page``/``.case-card``
+   sob outros containers. Badges quebram linha sem overflow; em mobile
+   (<=767.98px, onde as regiões empilham) o CTA «Ver detalhes» ocupa a
+   largura da região com alvo >=44px (herdado de ``.btn``). */
+
+#my-cases-content .case-card .badge {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+@media (max-width: 767.98px) {
+  #my-cases-content .case-card .col-md-2 .btn {
+    width: 100%;
   }
 }

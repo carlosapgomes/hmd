@@ -37,6 +37,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.cases.locks import claim_case_lock
 from apps.cases.models import Case, CaseProcedure, CaseStatus
+from apps.cases.procedures import record_doctor_procedure_decisions
 from apps.doctor.access import can_access_case
 
 DOCTOR_ROLE = "doctor"
@@ -81,6 +82,8 @@ def _apply_metadata(
     agency_record_number: str = "",
     patient_age: int | None = None,
     days_on_screen: int | None = None,
+    patient_gender: str = "",
+    origin_unit: str = "",
 ) -> None:
     """Ajusta campos de exibição do caso (``created_at`` inclusa)."""
     Case.objects.filter(pk=case.pk).update(
@@ -89,6 +92,8 @@ def _apply_metadata(
         agency_record_number=agency_record_number,
         patient_age=patient_age,
         days_on_screen=days_on_screen,
+        patient_gender=patient_gender,
+        origin_unit=origin_unit,
     )
     case.refresh_from_db()
 
@@ -102,6 +107,8 @@ def _make_awaiting_case(
     agency_record_number: str = "",
     patient_age: int | None = None,
     days_on_screen: int | None = None,
+    patient_gender: str = "",
+    origin_unit: str = "",
 ) -> Case:
     """Caso em ``AWAITING_DOCTOR`` com os tipos declarados e metadados."""
     case = _create_case_with_declared(created_by, procedure_types)
@@ -113,6 +120,8 @@ def _make_awaiting_case(
         agency_record_number=agency_record_number,
         patient_age=patient_age,
         days_on_screen=days_on_screen,
+        patient_gender=patient_gender,
+        origin_unit=origin_unit,
     )
     return case
 
@@ -137,6 +146,51 @@ def _make_decided_case(
         case.request_scheduling(user=None, role=SYSTEM_ROLE)
     case.refresh_from_db()
     return case
+
+
+def _make_decided_case_with_decisions(
+    created_by: User,
+    decided_by: User,
+    procedure_types: Sequence[str],
+    *,
+    decisions: dict[str, tuple[str, str]],
+    decided_at_by_type: dict[str, datetime] | None = None,
+    patient_name: str = "",
+    agency_record_number: str = "",
+    patient_age: int | None = None,
+    patient_gender: str = "",
+    origin_unit: str = "",
+) -> Case:
+    """Caso decidido pelo serviço (rows com disposição + ``doctor_decided_at``).
+
+    ``decisions`` é o mapa ``{tipo: (disposição, motivo)}`` do serviço
+    ``record_doctor_procedure_decisions`` (tudo negado → ``DOCTOR_DENIED``;
+    ≥1 aprovado → ``SCHEDULER_REQUESTED``). ``decided_at_by_type`` sobrescreve
+    o instante persistido por row para provas de horário por procedimento.
+    """
+    case = _make_awaiting_case(
+        created_by,
+        procedure_types,
+        patient_name=patient_name,
+        agency_record_number=agency_record_number,
+        patient_age=patient_age,
+        patient_gender=patient_gender,
+        origin_unit=origin_unit,
+    )
+    record_doctor_procedure_decisions(case, decisions, user=decided_by, role=DOCTOR_ROLE)
+    case.refresh_from_db()
+    if decided_at_by_type:
+        for procedure_type, decided_at in decided_at_by_type.items():
+            CaseProcedure.objects.filter(case=case, procedure_type=procedure_type).update(
+                doctor_decided_at=decided_at
+            )
+        case.refresh_from_db()
+    return case
+
+
+def _format_local_datetime(value: datetime) -> str:
+    """Data/hora como o template a renderiza (``d/m/Y H:i`` no fuso local)."""
+    return timezone.localtime(value).strftime("%d/%m/%Y %H:%M")
 
 
 # ── R2: guard por papel ativo ─────────────────────────────────────────────
@@ -328,12 +382,19 @@ def test_queue_decided_tab(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R3: aba ``decididos`` lista DOCTOR_DENIED|DOCTOR_ACCEPTED|SCHEDULER_REQUESTED."""
+    """R3: aba ``decididos`` lista DOCTOR_DENIED|DOCTOR_ACCEPTED|SCHEDULER_REQUESTED.
+
+    OLI-003: os casos do serviço carregam disposição por row — os badges de
+    resultado (``Aprovado``/``Negado``) substituem o rótulo de estado do caso.
+    """
     doctor = user_factory("medico-decidido", (DOCTOR_ROLE,))
-    denied = _make_decided_case(nir_user, doctor, (ANGIO_TYPE,), accepted=False)
+    denied = _make_decided_case_with_decisions(
+        nir_user, doctor, (ANGIO_TYPE,), decisions={ANGIO_TYPE: ("denied", "")}
+    )
+    # DOCTOR_ACCEPTED transitório (FSM direta) segue na aba decididos.
     accepted = _make_decided_case(nir_user, doctor, (CARDIO_TYPE,), accepted=True)
-    scheduled = _make_decided_case(
-        nir_user, doctor, (NEURO_TYPE,), accepted=True, chain_scheduling=True
+    scheduled = _make_decided_case_with_decisions(
+        nir_user, doctor, (NEURO_TYPE,), decisions={NEURO_TYPE: ("approved", "")}
     )
     awaiting = _make_awaiting_case(nir_user, (RADIO_TYPE,))
     login_user(user_factory("geral-decidido", (DOCTOR_ROLE,)), DOCTOR_ROLE)
@@ -346,8 +407,12 @@ def test_queue_decided_tab(
     assert str(accepted.case_id) in body
     assert str(scheduled.case_id) in body
     assert str(awaiting.case_id) not in body
-    assert "Negado pelo médico" in body
-    assert "Agendamento solicitado" in body
+    assert "Negado" in body
+    assert "Aprovado" in body
+    # Sem agregação case-level: nenhum badge genérico de estado do caso.
+    assert "Negado pelo médico" not in body
+    assert "status-done" not in body
+    assert "status-badge" not in body
 
 
 @pytest.mark.django_db
@@ -370,7 +435,11 @@ def test_queue_invalid_tab_falls_back_to_awaiting(
     assert str(awaiting.case_id) in body
     assert "Só Aguardando" in body
     assert str(decided.case_id) not in body
-    assert "Aguardando decisão médica" in body
+    # Revisão OLI-001: sem badge genérico de status nos pendentes.
+    assert "Aguardando decisão médica" not in body
+    assert "status-badge" not in body
+    assert "Casos aguardando decisão" in body
+    assert "Aguardando há" in body
     assert "Negado pelo médico" not in body
 
 
@@ -409,7 +478,8 @@ def test_queue_paginated_fifo(
     assert "Paciente 24" not in first_body
     assert "Página 1 de 2" in first_body
     # Contagem de pendentes do cabeçalho cobre o conjunto inteiro, não a página.
-    assert "angio: 25" in first_body
+    assert "angio (25)" in first_body
+    assert "Pendentes por subtipo" not in first_body
 
     second = client.get(reverse("doctor:queue"), {"page": "2"})
     assert second.status_code == 200
@@ -476,45 +546,182 @@ def test_queue_card_shows_age_days_and_waiting_label(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R2: card da aba ativa com idade, «⏱ Aguardando há» e «N d em tela»."""
+    """OLI-001 R3/R5: card pendente com idade, espera única e «Dias em tela: N»."""
     _make_awaiting_case(
         nir_user,
         (ANGIO_TYPE,),
         patient_name="Paciente Identificado",
         patient_age=84,
         days_on_screen=6,
+        patient_gender="Feminino",
+        origin_unit="Unidade 1",
     )
     login_user(user_factory("medico-card-tela", (DOCTOR_ROLE,)), DOCTOR_ROLE)
 
     body = client.get(reverse("doctor:queue")).content.decode()
 
-    assert "Paciente Identificado · 84 a" in body
-    assert "Aguardando há" in body
-    assert "6 d em tela" in body
-    # P1 da review: data absoluta pré-existente preservada junto ao rótulo relativo
-    assert "Recebido em " in body
-    # P2 da review: dias em tela como badge Bootstrap de fato
-    assert ">6 d em tela</span>" in body
+    assert "Paciente Identificado" in body
+    assert "84 a" in body
+    assert "Feminino" in body
+    assert "Unidade 1" in body
+    assert body.count("Aguardando há") == 1
+    assert "Dias em tela: 6" in body
+    assert "6 d em tela" not in body
+    assert "Recebido em " not in body
 
 
 @pytest.mark.django_db
-def test_queue_decided_tab_uses_received_label(
+def test_queue_decided_card_shows_result_without_waiting(
     client: Client,
     nir_user: User,
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R2: aba histórica usa «Recebido há» e NUNCA «Aguardando há»."""
+    """OLI-003 R2/R5: card decidido orientado ao resultado, sem espera."""
     doctor = user_factory("medico-label-aba", (DOCTOR_ROLE,))
-    decided = _make_decided_case(nir_user, doctor, (ANGIO_TYPE,), accepted=False)
-    _apply_metadata(decided, patient_name="Paciente Decidido", patient_age=84)
+    decided_at = timezone.localtime(timezone.now() - timedelta(hours=2))
+    decided = _make_decided_case_with_decisions(
+        nir_user,
+        doctor,
+        (ANGIO_TYPE,),
+        decisions={ANGIO_TYPE: ("approved", "")},
+        decided_at_by_type={ANGIO_TYPE: decided_at},
+        patient_name="Paciente Decidido",
+        patient_age=84,
+    )
     login_user(user_factory("geral-label-aba", (DOCTOR_ROLE,)), DOCTOR_ROLE)
 
     body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
 
-    assert "Paciente Decidido · 84 a" in body
-    assert "Recebido há" in body
-    assert "Aguardando há" not in body
+    card = _card_block(body, decided.case_id)
+    assert "Paciente Decidido" in card
+    assert "84 a" in card
+    assert "Arteriografia periférica" in card
+    assert "angio" in card
+    assert "Aprovado" in card
+    assert "text-bg-success" in card
+    assert f"Decidido em {_format_local_datetime(decided_at)}" in card
+    # R5: nenhuma temporalidade de espera/recebimento no card decidido.
+    assert "Aguardando há" not in card
+    assert "Recebido há" not in card
+    assert "Recebido em" not in card
+    assert "waiting-time" not in card
+    # R3: sem badge genérico de estado do caso.
+    assert "status-badge" not in card
+    assert "status-done" not in card
+    # R4: CTA outline real para o detalhe read-only.
+    assert "Ver detalhes" in card
+    assert "Abrir caso" not in card
+
+
+@pytest.mark.django_db
+def test_queue_decided_mixed_dispositions_per_procedure(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-003 R3: aprovado + negado no mesmo caso, sem agregação."""
+    doctor = user_factory("medico-misto", (DOCTOR_ROLE,))
+    approved_at = timezone.localtime(timezone.now() - timedelta(hours=3))
+    denied_at = timezone.localtime(timezone.now() - timedelta(hours=1))
+    mixed = _make_decided_case_with_decisions(
+        nir_user,
+        doctor,
+        (ANGIO_TYPE, CARDIO_TYPE),
+        decisions={ANGIO_TYPE: ("approved", ""), CARDIO_TYPE: ("denied", "motivo no detalhe")},
+        decided_at_by_type={ANGIO_TYPE: approved_at, CARDIO_TYPE: denied_at},
+        patient_name="Paciente Misto",
+        agency_record_number="555777",
+        patient_age=71,
+        patient_gender="Masculino",
+        origin_unit="Unidade 2",
+    )
+    login_user(user_factory("geral-misto", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
+
+    card = _card_block(body, mixed.case_id)
+    # Identidade/demografia do caso.
+    assert "Paciente Misto" in card
+    assert "555777" in card
+    assert "71 a" in card
+    assert "Masculino" in card
+    assert "Unidade 2" in card
+    # Cada procedimento com label, subtipo, disposição e horário próprios.
+    assert "Arteriografia periférica" in card
+    assert "Cateterismo cardíaco" in card
+    assert "Aprovado" in card
+    assert "Negado" in card
+    assert "text-bg-success" in card
+    assert "text-bg-danger" in card
+    assert f"Decidido em {_format_local_datetime(approved_at)}" in card
+    assert f"Decidido em {_format_local_datetime(denied_at)}" in card
+    # Motivo da negativa fica no detalhe, não no card (densidade).
+    assert "motivo no detalhe" not in card
+    # Sem resultado agregado case-level nem espera.
+    assert "status-badge" not in card
+    assert "status-done" not in card
+    assert "waiting-time" not in card
+    assert "Aguardando há" not in card
+    assert "Recebido há" not in card
+
+
+@pytest.mark.django_db
+def test_queue_decided_card_structure_and_cta(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-003 R4: ``.case-card > .row`` 8/4 e CTA «Ver detalhes» real."""
+    doctor = user_factory("medico-cta-dec", (DOCTOR_ROLE,))
+    decided = _make_decided_case_with_decisions(
+        nir_user,
+        doctor,
+        (ANGIO_TYPE,),
+        decisions={ANGIO_TYPE: ("denied", "")},
+        patient_name="Paciente Cta Decidido",
+        agency_record_number="OLI003",
+    )
+    login_user(user_factory("geral-cta-dec", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
+
+    card = _card_block(body, decided.case_id)
+    assert '<div class="case-card card p-3">' in card
+    assert '<div class="row">' in card
+    assert "col-lg-8" in card
+    assert "col-lg-4" in card
+    assert card.index("col-lg-8") < card.index("col-lg-4")
+    assert "list-group-item" not in card
+    detail_href = f'href="{reverse("doctor:case_detail", args=[decided.case_id])}"'
+    assert detail_href in card
+    assert "stretched-link" in card
+    assert "btn-outline-primary" in card
+    assert ">Ver detalhes</a>" in card
+    # O detalhe é read-only: o destino não é a página de trabalho.
+    decide_href = f'href="{reverse("doctor:case_decide", args=[decided.case_id])}"'
+    assert decide_href not in card
+
+
+@pytest.mark.django_db
+def test_queue_decided_empty_state_is_info_alert(
+    client: Client,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-003 R5/D10: vazio de decididos é um único ``alert-info``."""
+    login_user(user_factory("medico-oli003-vazio", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
+
+    assert "alert alert-info" in body
+    assert "Nenhum caso decidido" in body
+    assert "card shadow-sm" not in body
+    fragment = body.split('id="doctor-queue-content"', 1)[1]
+    assert fragment.count("alert alert-info") == 1
+    assert "data-doctor-queue-card" not in fragment
 
 
 @pytest.mark.django_db
@@ -536,8 +743,10 @@ def test_queue_card_zero_age_and_zero_days_on_screen(
 
     body = client.get(reverse("doctor:queue")).content.decode()
 
-    assert "Recem Nascido · 0 a" in body
-    assert "0 d em tela" in body
+    assert "Recem Nascido" in body
+    assert "0 a" in body
+    assert "Dias em tela: 0" in body
+    assert "0 d em tela" not in body
 
 
 @pytest.mark.django_db
@@ -559,7 +768,7 @@ def test_queue_card_absent_age_and_days_on_screen(
 
     assert "Paciente Sem Demografia" in body
     assert "Paciente Sem Demografia · " not in body
-    assert "d em tela" not in body
+    assert "Dias em tela" not in body
 
 
 # ── R4: filtro de subtipo (predicado D2) ─────────────────────────────────
@@ -585,9 +794,9 @@ def test_specialized_doctor_sees_only_his_subtypes(
     all_body = all_response.content.decode()
     assert str(angio_case.case_id) in all_body
     assert str(cardio_case.case_id) not in all_body
-    # Dropdown só com os subtipos do usuário.
-    assert '<option value="angio">angio</option>' in all_body
-    assert '<option value="cardio">cardio</option>' not in all_body
+    # Dropdown só com os subtipos do usuário (OLI-001 R2: opção com contagem).
+    assert "angio (1)" in all_body
+    assert 'value="cardio"' not in all_body
 
     # Filtro ?subtype=angio mantém exatamente o conjunto visível.
     filtered = client.get(reverse("doctor:queue"), {"subtype": "angio"})
@@ -612,9 +821,10 @@ def test_generalist_sees_all(
     body = response.content.decode()
     assert str(angio_case.case_id) in body
     assert str(cardio_case.case_id) in body
-    # Dropdown com todos os subtipos do catálogo.
+    # Dropdown com todos os subtipos do catálogo (OLI-001 R2: com contagens).
     for subtype in ("angio", "neuro", "cardio", "radio"):
-        assert f'<option value="{subtype}">{subtype}</option>' in body
+        assert f'value="{subtype}"' in body
+        assert f"{subtype} (" in body
 
 
 @pytest.mark.django_db
@@ -756,20 +966,22 @@ def test_queue_shows_types_and_pending_counts(
     assert "1002" in body
     assert "Caio Reis" in body
     assert "1003" in body
-    assert "Aguardando decisão médica" in body
+    # Revisão OLI-001: pendentes sem badge genérico ``status-badge``.
+    assert "Aguardando decisão médica" not in body
+    assert "status-badge" not in body
+    assert "Aguardando há" in body
 
     # Tipos declarados com badge de subtipo por card.
     assert "Arteriografia periférica" in body
     assert "Arteriografia cerebral" in body
     assert "Drenagem biliar percutânea" in body
 
-    # Contagem de pendentes por subtipo no cabeçalho (angio/neuro/radio com
-    # caso; cardio sem caso pendente).
-    assert "Pendentes por subtipo" in body
-    assert "angio: 1" in body
-    assert "neuro: 1" in body
-    assert "radio: 1" in body
-    assert "cardio: 0" in body
+    # OLI-001 R2: contagens nas opções do filtro server-side; sem fileira de badges.
+    assert "Pendentes por subtipo" not in body
+    assert "angio (1)" in body
+    assert "neuro (1)" in body
+    assert "radio (1)" in body
+    assert "cardio (0)" in body
 
 
 # ── R6: matriz de acesso (predicado único can_access_case) ────────────────
@@ -975,11 +1187,12 @@ def test_queue_cards_close_anchor(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """Cada card da fila médica é um link que fecha antes do card seguinte.
+    """OLI-001 R4: CTA real com ``stretched-link``; sem ``list-group-item`` no card.
 
     Regressão do bug real em dev (2026-09-15): o card abria
     ``<a class="list-group-item…">`` mas fechava com ``</div>`` — HTML
     malformado desde 9214587 distorce a lista (cards sem fundo/limites).
+    O clique amplo agora é o ``stretched-link`` do CTA (D3).
     """
     first = _make_awaiting_case(nir_user, (ANGIO_TYPE,), patient_name="Paciente Um")
     second = _make_awaiting_case(nir_user, (ANGIO_TYPE,), patient_name="Paciente Dois")
@@ -987,19 +1200,13 @@ def test_queue_cards_close_anchor(
 
     body = client.get(reverse("doctor:queue")).content.decode()
 
-    anchor = '<a class="list-group-item list-group-item-action py-3"'
-    first_open = body.find(
-        f'{anchor}\n         href="{reverse("doctor:case_decide", args=[first.case_id])}"'
-    )
-    second_open = body.find(
-        f'{anchor}\n         href="{reverse("doctor:case_decide", args=[second.case_id])}"'
-    )
-    assert first_open > 0 and second_open > first_open
-    # O fechamento do PRIMEIRO card deve vir antes da abertura do segundo:
-    # sem isso, o <a> aberto engole os cards seguintes (distorção em cascata).
-    # ``find`` devolve -1 quando não acha — exigir fechamento real (> 0).
-    first_close = body.find("</a>", first_open)
-    assert 0 < first_close < second_open
+    assert "list-group-item" not in body
+    first_card = _card_slice(body, first.case_id)
+    second_card = _card_slice(body, second.case_id)
+    assert "stretched-link" in first_card
+    assert f'href="{reverse("doctor:case_decide", args=[first.case_id])}"' in first_card
+    assert f'href="{reverse("doctor:case_decide", args=[second.case_id])}"' in second_card
+    assert "Avaliar" in first_card
 
 
 # ── case-work-lock slice 002: reserva nos cards da fila (R8) ──────────────
@@ -1054,10 +1261,13 @@ def test_awaiting_cards_reflect_lock_state(
 
     free_card = _card_block(body, free.case_id)
     assert "Avaliar" in free_card
+    assert "stretched-link" in free_card
+    assert "list-group-item" not in free_card
     assert f'href="{reverse("doctor:case_decide", args=[free.case_id])}"' in free_card
 
     mine_card = _card_block(body, mine.case_id)
     assert "Continuar avaliação" in mine_card
+    assert "stretched-link" in mine_card
     assert f'href="{reverse("doctor:case_decide", args=[mine.case_id])}"' in mine_card
 
     # O card reservado não carrega o uid (sem href): localizar pelo paciente.
@@ -1067,6 +1277,8 @@ def test_awaiting_cards_reflect_lock_state(
     assert "disabled" in other_card
     # Sem ação primária: o card reservado por outro não abre a página de trabalho.
     assert f'href="{reverse("doctor:case_decide", args=[other.case_id])}"' not in other_card
+    assert "stretched-link" not in other_card
+    assert "list-group-item" not in other_card
 
 
 @pytest.mark.django_db
@@ -1091,3 +1303,154 @@ def test_queue_expires_stale_lock_before_rendering(
     case.refresh_from_db()
     assert case.lock_token is None
     assert case.locked_by is None
+
+
+# ── OLI-001: página completa dos pendentes (R1–R5) ──────────────────────────
+
+
+@pytest.mark.django_db
+def test_queue_pending_title_and_full_container(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-001 R1: título via ``page_title`` e container integral alinhado."""
+    _make_awaiting_case(nir_user, (ANGIO_TYPE,), patient_name="Paciente Titulo")
+    login_user(user_factory("medico-oli-titulo", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue")).content.decode()
+
+    assert body.count("page-title") >= 1
+    assert "Casos aguardando decisão</h1>" in body
+    assert "col-lg-10" not in body
+    assert "justify-content-center" not in body
+    assert "operational-list-page" in body
+
+
+@pytest.mark.django_db
+def test_queue_decided_title(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-001 R1/D1: aba decididos titula «Casos decididos» (sem recorte de data)."""
+    login_user(user_factory("medico-oli-titulo-dec", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
+
+    assert "Casos decididos</h1>" in body
+    assert "Casos aguardando decisão</h1>" not in body
+
+
+@pytest.mark.django_db
+def test_queue_single_subtype_filter_with_counts_in_pending_only(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-001 R2/D6: um único seletor server-side; contagens só em pendentes."""
+    _make_awaiting_case(nir_user, (ANGIO_TYPE,), patient_name="Paciente Filtro")
+    login_user(user_factory("medico-oli-filtro", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue")).content.decode()
+
+    assert body.count('name="subtype"') == 1
+    assert "data-doctor-exam-filter" not in body
+    assert "Pendentes por subtipo" not in body
+    assert "angio (1)" in body
+    assert "data-doctor-queue-search" in body
+
+    decided_body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
+    assert decided_body.count('name="subtype"') == 1
+    assert "data-doctor-exam-filter" not in decided_body
+    # Decididos: opções sem contagem de pendentes.
+    assert "angio (1)" not in decided_body
+
+
+@pytest.mark.django_db
+def test_queue_pending_card_regions_8_4_and_single_surface(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-001 R3: ``.case-card > .row`` com conteúdo 8 e tempo/ação 4."""
+    case = _make_awaiting_case(
+        nir_user,
+        (ANGIO_TYPE,),
+        patient_name="Paciente Regioes",
+        agency_record_number="OLI001",
+        days_on_screen=2,
+    )
+    login_user(user_factory("medico-oli-regioes", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue")).content.decode()
+
+    card = _card_block(body, case.case_id)
+    assert '<div class="case-card card p-3">' in card
+    assert '<div class="row">' in card
+    assert "col-lg-8" in card
+    assert "col-lg-4" in card
+    assert card.index("col-lg-8") < card.index("col-lg-4")
+    assert "list-group-item" not in card
+    assert card.count("Aguardando há") == 1
+    assert "Dias em tela: 2" in card
+
+
+@pytest.mark.django_db
+def test_queue_empty_state_is_single_info_alert(
+    client: Client,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-001 R5/D10: vazio é um único ``alert-info``, sem segundo card."""
+    login_user(user_factory("medico-oli-vazio", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue")).content.decode()
+
+    assert "alert alert-info" in body
+    assert "Nenhum caso aguardando" in body
+    assert "card shadow-sm" not in body
+    # Um único alerta de estado vazio no fragmento (a busca tem o seu
+    # ``no-results`` oculto, fora do fragmento trocado pelo polling).
+    fragment = body.split('id="doctor-queue-content"', 1)[1]
+    assert fragment.count("alert alert-info") == 1
+
+
+@pytest.mark.django_db
+def test_queue_default_option_shows_total_pending_distinct(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """Revisão OLI-001 (D6): ``Todas (N)`` = total distinto de pendentes.
+
+    Caso multi-subtipo conta 1× no total (somar ``pending_counts`` por
+    subtipo duplicaria): multi(angio+cardio) + angio + cardio = total 3,
+    angio 2, cardio 2 (soma 4 ≠ total). Após ``?subtype=angio`` o total
+    da default permanece 3 (não o filtrado).
+    """
+    _make_awaiting_case(nir_user, (ANGIO_TYPE, CARDIO_TYPE), patient_name="Caso Multi")
+    _make_awaiting_case(nir_user, (ANGIO_TYPE,), patient_name="Caso Angio")
+    _make_awaiting_case(nir_user, (CARDIO_TYPE,), patient_name="Caso Cardio")
+    login_user(user_factory("medico-oli-todas-total", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue")).content.decode()
+
+    assert "Todas (3)" in body
+    assert "Todas (4)" not in body
+    assert "angio (2)" in body
+    assert "cardio (2)" in body
+
+    filtered_body = client.get(reverse("doctor:queue"), {"subtype": "angio"}).content.decode()
+    assert "Todas (3)" in filtered_body
+    assert "angio (2)" in filtered_body
+
+    decided_body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
+    assert ">Todas</option>" in decided_body
+    assert "Todas (" not in decided_body
+    assert "angio (2)" not in decided_body

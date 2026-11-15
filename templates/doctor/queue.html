@@ -1,46 +1,29 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}{{ app_display_name }} — Fila médica{% endblock %}
+{% block title %}{{ app_display_name }} — {% if tab == 'decididos' %}Casos decididos{% else %}Casos aguardando decisão{% endif %}{% endblock %}
+
+{% block page_title %}<h1 class="page-title">{% if tab == 'decididos' %}Casos decididos{% else %}Casos aguardando decisão{% endif %}</h1>{% endblock %}
 
 {% block nav %}{% include "doctor/_nav.html" with active_tab=tab pending_count=doctor_pending_count decided_count=doctor_decided_count %}{% endblock %}
 
 {% block content %}
-<div class="row justify-content-center mt-4">
-  <div class="col-12 col-lg-10">
-    <h1 class="page-title">Fila médica</h1>
-
+<div class="operational-list-page">
     <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
       <form method="get" action="{% url 'doctor:queue' %}" class="d-flex align-items-center gap-2">
         <input type="hidden" name="tab" value="{{ tab }}">
         <label for="subtype-filter" class="form-label mb-0">Subtipo</label>
         <select class="form-select form-select-sm w-auto" name="subtype" id="subtype-filter">
-          <option value=""{% if not subtype %} selected{% endif %}>Todas</option>
-          {% for option in subtype_options %}
-          <option value="{{ option }}"{% if subtype == option %} selected{% endif %}>{{ option }}</option>
+          <option value=""{% if not subtype %} selected{% endif %}>Todas{% if tab == 'aguardando' %} ({{ doctor_pending_count }}){% endif %}</option>
+          {% for option in subtype_option_items %}
+          <option value="{{ option.value }}"{% if subtype == option.value %} selected{% endif %}>{{ option.label }}{% if tab == 'aguardando' %} ({{ option.pending_count }}){% endif %}</option>
           {% endfor %}
         </select>
         <button type="submit" class="btn btn-sm btn-outline-primary">Filtrar</button>
       </form>
-      <span class="small text-muted">Pendentes por subtipo:</span>
-      {% for option, count in pending_counts.items %}
-      <span class="badge rounded-pill text-bg-light border text-muted"
-            title="Casos aguardando decisão do subtipo {{ option }}">
-        {{ option }}: {{ count }}
-      </span>
-      {% endfor %}
     </div>
 
     <div class="mb-3" id="doctor-queue-search-bar">
-      <div class="mb-3" id="doctor-queue-type-filter">
-        <label class="form-label fw-semibold mb-2" for="doctor-queue-exam-type">Filtrar por tipo de exame</label>
-        <select class="form-select" id="doctor-queue-exam-type" data-doctor-exam-filter>
-          <option value="all" data-exam-type-label="Todos" data-exam-type-count="all" selected>Todos (0)</option>
-          {% for option in subtype_options %}
-          <option value="{{ option }}" data-exam-type-label="{{ option }}" data-exam-type-count="{{ option }}">{{ option }} (0)</option>
-          {% endfor %}
-        </select>
-      </div>
       <label for="doctor-queue-search-input" class="form-label fw-semibold">
         Buscar por nome ou ocorrência
       </label>
@@ -87,7 +70,6 @@
     >
       {% include "doctor/_queue_content.html" %}
     </div>
-  </div>
 </div>
 {% endblock %}
 

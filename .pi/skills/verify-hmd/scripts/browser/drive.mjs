@@ -183,7 +183,7 @@ try {
   {
     const { context, page } = await loginAs(browser, 'verify-doctor', 'doctor');
     check('doctor-home-url', page.url().includes('/doctor/'), page.url());
-    check('doctor-queue-heading', await page.getByRole('heading', { name: 'Fila médica' }).count() === 1);
+    check('doctor-queue-heading', await page.getByRole('heading', { name: 'Casos aguardando decisão' }).count() === 1);
     const body = await page.locator('body').innerText();
     check('doctor-sees-VERIFY-001', body.includes('VERIFY-001'), 'cartão sintético 001');
     check('doctor-sees-patient', body.includes('Paciente Sintético Um'), 'nome sintético');
@@ -197,7 +197,7 @@ try {
       );
       check(`static-asset-${asset.split('/').pop()}`, status === 200, `${asset} HTTP ${status}`);
     }
-    const card = page.locator('a.list-group-item-action').first();
+    const card = page.locator('[data-doctor-queue-card] a.stretched-link').first();
     check('doctor-card-link', (await card.count()) === 1);
     await card.click();
     await page.waitForURL(/\/doctor\/case\//);
@@ -210,7 +210,7 @@ try {
   // 2) Homes por papel (login real pelo form em cada um).
   const homes = [
     ['verify-nir', 'nir', '/intake/', 'Envio de relatório de regulação'],
-    ['verify-scheduler', 'scheduler', '/scheduler/', 'Fila de agendamento'],
+    ['verify-scheduler', 'scheduler', '/scheduler/', 'Solicitações de agendamento aguardando confirmação'],
     ['verify-manager', 'manager', '/dashboard/', 'Painel gerencial'],
     ['verify-admin', 'admin', '/dashboard/', 'Painel gerencial'],
   ];

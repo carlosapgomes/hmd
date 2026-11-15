@@ -404,33 +404,53 @@ def test_administrative_closure_result_is_scoped_to_creator(
     assert ADMIN_CLOSURE_REASON_TEXT not in active_body
 
 
-# ── R1/R2: identificação do paciente nos cards (queue-cards-wait-time) ────
+# ── R1/R2: identificação do paciente nos cards (OLI-004 R4/D3) ────
+# O card compacto usa ``.patient-name`` só para o nome; idade, sexo e
+# unidade de origem vivem nos metadados (``.case-meta``), junto do nº de
+# ocorrência e do sufixo de desambiguação.
 
-AGE_SUFFIX_IN_CARD = re.compile(r"\d+ a</div>")
+AGE_IN_CARD = re.compile(r"\d+ a")
 
 
 def _card_slice(body: str, case_id: object) -> str:
-    """Fatia o HTML do card do caso (do href até o ``</a>`` que fecha o link).
+    """Fatia o HTML do card do caso pelo marcador ``data-my-cases-card``.
 
     O escopo por card evita asserts por contagem global (ex.: ``—`` de outros
-    cards ou do próprio «Nº de ocorrência: —»). O card é um único ``<a>`` sem
-    âncoras aninhadas, então o primeiro ``</a>`` após o ``case_id`` o fecha.
+    cards ou do próprio «Nº de ocorrência: —»). No padrão OLI-004 o href do
+    detalhe é o CTA final (``stretched-link``), não um ``<a>`` que envolve o
+    card — o marcador do container é a fronteira estável do card.
     """
-    start = body.index(str(case_id))
-    end = body.index("</a>", start)
-    return body[start:end]
+    chunks = body.split("data-my-cases-card")
+    for chunk in chunks:
+        if str(case_id) in chunk:
+            return chunk
+    raise AssertionError(f"card do caso {case_id} ausente no corpo")
 
 
 def _card_visible_text(card: str) -> str:
-    """Corpo visível do card (após a tag de abertura), sem atributos de rota."""
-    return re.sub(r'href="[^"]*"', "", card[card.index(">") + 1 :])
+    """Corpo visível do card, sem atributos de rota."""
+    return re.sub(r'href="[^"]*"', "", card)
 
 
-def _identification_line(card: str) -> str:
-    """Conteúdo da linha ``fw-semibold`` do card (nome + idade)."""
-    match = re.search(r'<div class="fw-semibold">(.*?)</div>', card, re.S)
-    assert match is not None, "linha de identificação (fw-semibold) ausente no card"
+def _patient_name_line(card: str) -> str:
+    """Conteúdo de ``.patient-name`` do card (só o nome)."""
+    match = re.search(r'<div class="patient-name">(.*?)</div>', card, re.S)
+    assert match is not None, "linha .patient-name ausente no card"
+    return re.sub(r"<[^>]+>", "", match.group(1)).strip()
+
+
+def _card_meta_line(card: str) -> str:
+    """Conteúdo dos metadados ``.case-meta`` do card (nº, idade, sexos, origem)."""
+    match = re.search(r'<div class="[^"]*case-meta[^"]*">(.*?)</div>', card, re.S)
+    assert match is not None, "metadados .case-meta ausentes no card"
     return match.group(1).strip()
+
+
+def _nav_href(body: str, label: str) -> str:
+    """Href do link do header com o rótulo ``label`` (badge pode seguir)."""
+    match = re.search(rf'href="(?P<h>[^"]*)"[^>]*>{label}(?:</a>| )', body)
+    assert match is not None, f"link do header {label!r} ausente"
+    return match.group("h")
 
 
 @pytest.mark.django_db
@@ -449,7 +469,8 @@ def test_card_shows_patient_name_and_age(
     body = client.get(reverse("intake:my_cases")).content.decode()
 
     card = _card_slice(body, case.case_id)
-    assert _identification_line(card) == "Paciente Identificado · 84 a"
+    assert _patient_name_line(card) == "Paciente Identificado"
+    assert "84 a" in _card_meta_line(card)
 
 
 @pytest.mark.django_db
@@ -469,8 +490,8 @@ def test_card_without_identification_shows_dash_and_omits_age(
     body = client.get(reverse("intake:my_cases")).content.decode()
 
     card = _card_slice(body, case.case_id)
-    assert _identification_line(card) == "—"
-    assert AGE_SUFFIX_IN_CARD.search(card) is None
+    assert _patient_name_line(card) == "—"
+    assert AGE_IN_CARD.search(_card_meta_line(card)) is None
 
 
 @pytest.mark.django_db
@@ -489,7 +510,8 @@ def test_card_shows_zero_age(
     body = client.get(reverse("intake:my_cases")).content.decode()
 
     card = _card_slice(body, case.case_id)
-    assert _identification_line(card) == "Paciente Zero · 0 a"
+    assert _patient_name_line(card) == "Paciente Zero"
+    assert "0 a" in _card_meta_line(card)
 
 
 @pytest.mark.django_db
@@ -699,3 +721,225 @@ def test_cards_without_occurrence_number_keep_dash_without_suffix(
         card = _card_slice(body, case.case_id)
         assert "Nº de ocorrência: <strong>—</strong>" in card
         assert case.short_id not in _card_visible_text(card)
+
+
+# ── OLI-004 R1–R6: paridade da página e da lista compacta ───────────────
+
+
+@pytest.mark.django_db
+def test_oli004_page_title_container_and_no_top_cta_or_internal_pills(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R1: título via ``page_title``, container integral, sem CTA/pills internas."""
+    _create_case(nir_user, pdf_factory)
+
+    client.force_login(nir_user)
+    response = client.get(reverse("intake:my_cases"))
+    body = response.content.decode()
+
+    assert response.status_code == 200
+    assert '<h1 class="page-title">Todos os seus encaminhamentos</h1>' in body
+    assert "operational-list-page" in body
+    assert "col-12 col-lg-10" not in body
+    assert "Enviar relatório" not in body
+    # Navegação única é o header: nenhuma pill interna Ativos/Encerrados.
+    assert 'aria-label="Filtro pela situação do caso"' not in body
+    assert ">Ativos<" not in body
+    assert "Meus Casos" in body
+    assert "Casos Encerrados" in body
+
+
+@pytest.mark.django_db
+def test_oli004_header_tabs_preserve_filters_and_other_pages_stay_clean(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R1/R2: header carrega ``filter_qs`` só no contexto de meus casos."""
+    _create_case(nir_user, pdf_factory, "relatorio-sesab.pdf")
+
+    client.force_login(nir_user)
+    body = client.get(
+        reverse("intake:my_cases"),
+        {"q": "5040778", "status": "FAILED", "procedure_type": "cat_cardiaco"},
+    ).content.decode()
+
+    active_href = _nav_href(body, "Meus Casos")
+    closed_href = _nav_href(body, "Casos Encerrados")
+    assert "tab=active" in active_href
+    assert "q=5040778" in active_href
+    assert "status=FAILED" in active_href
+    assert "procedure_type=cat_cardiaco" in active_href
+    assert "tab=closed" in closed_href
+    assert "q=5040778" in closed_href
+    assert "status=FAILED" in closed_href
+    assert "procedure_type=cat_cardiaco" in closed_href
+
+    # Sem filtros: hrefs limpos, sem querystring vazia/legada.
+    clean_body = client.get(reverse("intake:my_cases")).content.decode()
+    assert _nav_href(clean_body, "Meus Casos").endswith("?tab=active")
+    assert _nav_href(clean_body, "Casos Encerrados").endswith("?tab=closed")
+
+    # Outra página do NIR (Novo Encaminhamento) não herda filtros.
+    home_body = client.get(reverse("intake:home")).content.decode()
+    home_active = _nav_href(home_body, "Meus Casos")
+    assert home_active.endswith("?tab=active")
+    assert "q=" not in home_active
+    assert "status=" not in home_active
+    assert "procedure_type=" not in home_active
+
+
+@pytest.mark.django_db
+def test_oli004_list_header_is_neutral_single_count_without_warning(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R3: card ``p-4`` com «Meus Casos» + badge do total, sem alerta amarelo."""
+    _create_case(nir_user, pdf_factory)
+    _create_case(nir_user, pdf_factory)
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases")).content.decode()
+
+    assert "alert-warning" not in body
+    assert "Meus Casos" in body
+    assert re.search(r"Meus Casos.*?2 casos", body, re.S) is not None
+    assert "Atualizado automaticamente" in body
+    # Live region do JS é visualmente oculto (sem segunda contagem visual).
+    assert 'data-my-cases-status class="visually-hidden' in body
+
+
+@pytest.mark.django_db
+def test_oli004_card_compact_four_regions_and_real_cta(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R4: ``.case-card > .row`` em 4/3/3/2, CTA «Ver detalhes», sem resumo/espera."""
+    case = _create_case(nir_user, pdf_factory, "relatorio-sesab.pdf")
+    case.patient_name = "Paciente Compacto"
+    case.patient_age = 64
+    case.agency_record_number = "5040778"
+    case.save(update_fields=["patient_name", "patient_age", "agency_record_number"])
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases")).content.decode()
+    card = _card_slice(body, case.case_id)
+
+    assert re.search(r'<div class="case-card card p-3">\s*<div class="row">', body) is not None
+    assert card.index("col-md-4") < card.index("col-md-3")
+    assert card.index("col-md-3") < card.index("col-md-2")
+    assert 'class="patient-name"' in card or "patient-name" in card
+    assert _patient_name_line(card) == "Paciente Compacto"
+    assert "Recebido em" in card
+    assert "Aguardando" not in card
+    assert "summary-box" not in card
+    assert "waiting-time" not in card
+    assert "list-group-item" not in card
+    detail_url = reverse("intake:case_detail", args=[case.case_id])
+    assert f'href="{detail_url}"' in card
+    assert "Ver detalhes" in card
+
+
+@pytest.mark.django_db
+def test_oli004_card_metadata_shows_demography_and_procedures(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R4: demografia (sexo/origem) e procedimentos nos metadados do card."""
+    case = _create_case(nir_user, pdf_factory)
+    case.patient_name = "Paciente Demografia"
+    case.patient_age = 52
+    case.patient_gender = "F"
+    case.origin_unit = "Hospital Regional"
+    case.save(update_fields=["patient_name", "patient_age", "patient_gender", "origin_unit"])
+
+    client.force_login(nir_user)
+    card = _card_slice(client.get(reverse("intake:my_cases")).content.decode(), case.case_id)
+
+    meta = _card_meta_line(card)
+    assert "52 a" in meta
+    assert "F" in meta
+    assert "Hospital Regional" in meta
+    assert "Procedimentos:" in card
+
+
+@pytest.mark.django_db
+def test_oli004_exceptions_stay_compact_without_summary_box(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R5: falha, retenção e encerramento administrativo sem apagar dados."""
+    retained = _retain_for_review(_create_case(nir_user, pdf_factory))
+    failed = _fail_case(_create_case(nir_user, pdf_factory))
+    closed = _create_case(nir_user, pdf_factory)
+    manager = user_factory("gestor-oli004", MANAGER_ROLE)
+    _close_administratively(closed, manager)
+
+    client.force_login(nir_user)
+    active_body = client.get(reverse("intake:my_cases")).content.decode()
+    retained_card = _card_slice(active_body, retained.case_id)
+    failed_card = _card_slice(active_body, failed.case_id)
+    assert "Retido para revisão" in retained_card
+    assert "Falha de processamento" in failed_card
+    assert "summary-box" not in retained_card
+    assert "summary-box" not in failed_card
+
+    closed_body = client.get(reverse("intake:my_cases"), {"tab": "closed"}).content.decode()
+    closed_card = _card_slice(closed_body, closed.case_id)
+    assert "Encerrado administrativamente" in closed_card
+    assert ADMIN_CLOSURE_REASON_TEXT in closed_card
+    assert "summary-box" not in closed_card
+
+
+@pytest.mark.django_db
+def test_oli004_empty_with_filters_offers_limpar_filtros(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R5: vazio com filtros (partial) centralizado com «Limpar filtros»."""
+    _create_case(nir_user, pdf_factory)
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases_partial"), {"q": "9999999"}).content.decode()
+
+    assert "Nenhum caso encontrado para os filtros aplicados." in body
+    assert "Limpar filtros" in body
+    assert "tab=active" in body
+
+
+@pytest.mark.django_db
+def test_oli004_empty_without_filters_active_offers_novo_encaminhamento(
+    client: Client,
+    nir_user: User,
+) -> None:
+    """R5: vazio sem filtros na aba ativa orienta a aba + Novo Encaminhamento."""
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases_partial")).content.decode()
+
+    assert "Nenhum caso ativo no momento." in body
+    assert "Novo Encaminhamento" in body
+    assert reverse("intake:home") in body
+    assert "Limpar filtros" not in body
+
+
+@pytest.mark.django_db
+def test_oli004_empty_without_filters_closed_offers_novo_encaminhamento(
+    client: Client,
+    nir_user: User,
+) -> None:
+    """R5: vazio sem filtros na aba encerrados orienta a aba + Novo."""
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases_partial"), {"tab": "closed"}).content.decode()
+
+    assert "Nenhum caso encerrado até agora." in body
+    assert "Novo Encaminhamento" in body
+    assert reverse("intake:home") in body
+    assert "Limpar filtros" not in body

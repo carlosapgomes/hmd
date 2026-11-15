@@ -71,7 +71,7 @@ from apps.cases.locks import (
     release_case_lock,
     renew_case_lock,
 )
-from apps.cases.models import Case, CaseDocument, CaseStatus
+from apps.cases.models import Case, CaseDocument, CaseStatus, DoctorDisposition
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.units import unit_label
 
@@ -147,6 +147,9 @@ _PROFILE_BY_TYPE = {profile.procedure_type: profile for profile in PROCEDURE_PRO
 _CATALOG_INDEX: dict[str, int] = {
     profile.procedure_type: index for index, profile in enumerate(PROCEDURE_PROFILES)
 }
+# Rótulo legível da disposição médica atual da row (DoctorDisposition) —
+# OLI-002 D8: projeção das rows já pré-carregadas, sem query por card.
+_DISPOSITION_LABELS = dict(DoctorDisposition.choices)
 
 
 def _require_user(request: HttpRequest) -> User:
@@ -208,6 +211,8 @@ def _queue_item(case: Case, *, user: User) -> dict[str, object]:
     aparece apenas quando já definida no agendamento (R2). O estado de reserva
     (``compute_lock_display``) alimenta as três variantes de ação do card
     aguardando: livre (ação), própria (▶ Continuar) e de outro (🔒 Reservado).
+    OLI-002 D8: disposição por procedimento projetada das mesmas rows, sem
+    consultar events por card.
     """
     rows = [row for row in case.procedures.all() if row.declared_by_nir]
     rows.sort(key=lambda row: _CATALOG_INDEX[row.procedure_type])
@@ -218,15 +223,21 @@ def _queue_item(case: Case, *, user: User) -> dict[str, object]:
         "status_label": case.get_status_display(),
         "patient_name": case.patient_name or "—",
         "patient_age": case.patient_age,
+        "patient_gender": case.patient_gender or "",
+        "origin_unit": case.origin_unit or "",
         "days_on_screen": case.days_on_screen,
         "agency_record_number": case.agency_record_number or "—",
         "created_at": case.created_at,
         "unit_label": unit_label_text,
+        "reopen_reason": case.scheduling_reopen_reason.strip(),
         "lock": compute_lock_display(case, user),
         "procedures": [
             {
                 "label": _PROFILE_BY_TYPE[row.procedure_type].label,
                 "subtype": _PROFILE_BY_TYPE[row.procedure_type].doctor_subtipo,
+                "disposition_label": _DISPOSITION_LABELS.get(
+                    row.doctor_disposition, row.doctor_disposition
+                ),
             }
             for row in rows
         ],
@@ -242,30 +253,53 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
     Mesmos guards, ordenação por tempo de tela e expiração lazy de leases
     antes da montagem — o partial executa o MESMO caminho da página cheia
     (D9: não é GET puro; o efeito colateral de expiração é preexistente).
+    OLI-002 D7: ``procedure_type`` server-side opcional SÓ em ``aguardando``,
+    validado contra o catálogo (inválido = vazio), aplicado antes da
+    ordenação/paginação e preservado em ``filter_qs``/form/paginação/partial.
     """
     user = _require_user(request)
     tab = request.GET.get("tab", "aguardando")
     if tab not in TAB_STATUSES:
         tab = "aguardando"
+    requested_procedure_type = request.GET.get("procedure_type", "")
+    procedure_type = (
+        requested_procedure_type
+        if tab == "aguardando" and requested_procedure_type in _PROFILE_BY_TYPE
+        else ""
+    )
 
     # R6/D4: expiração lazy das reservas vencidas antes de montar a fila — uma
     # lease vencida não pode continuar bloqueando o card.
     expire_stale_locks_for_statuses(TAB_STATUSES["aguardando"])
 
+    cases = Case.objects.filter(status__in=TAB_STATUSES[tab])
+    if procedure_type:
+        cases = cases.filter(
+            procedures__declared_by_nir=True,
+            procedures__procedure_type=procedure_type,
+        ).distinct()
     cases = (
-        Case.objects.filter(status__in=TAB_STATUSES[tab])
-        .order_by(F("days_on_screen").desc(nulls_last=True), "created_at", "case_id")
+        cases.order_by(F("days_on_screen").desc(nulls_last=True), "created_at", "case_id")
         .select_related("locked_by")
         .prefetch_related("procedures")
     )
     page = Paginator(cases, QUEUE_PAGE_SIZE).get_page(request.GET.get("page", "1"))
     items = [_queue_item(case, user=user) for case in page.object_list]
 
+    filter_parts: list[tuple[str, str]] = [("tab", tab)]
+    if procedure_type:
+        filter_parts.append(("procedure_type", procedure_type))
+
     return {
         "tab": tab,
+        "procedure_type": procedure_type,
+        "procedure_type_options": [
+            {"value": profile.procedure_type, "label": profile.label}
+            for profile in PROCEDURE_PROFILES
+        ],
         "page_obj": page,
         "items": items,
-        "filter_qs": urlencode({"tab": tab}),
+        "filter_qs": urlencode(filter_parts),
     }
 
 

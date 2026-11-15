@@ -9,24 +9,9 @@ auditável, fechando o estágio entre a sumarização e o agendamento.
 
 ## Requirements
 
-### Requirement: Fila médica com filtro por estado e subtipo
+### Requirement: Fila médica operacional com filtro por estado e subtipo
 
-O sistema SHALL exibir a fila de casos para o papel ativo `doctor`/`admin`,
-segmentada por estado (`aguardando decisão` = `AWAITING_DOCTOR`; `decididos` =
-estados pós-decisão), ordenada por **tempo de tela** — `days_on_screen`
-(descendente, casos sem o campo ao fim), desempate FIFO por `created_at` —
-com filtro por subtipo de
-procedimento: `Todas` + os subtipos atribuídos ao usuário (generalista sem
-subtipo e `admin` veem `Todas` e qualquer subtipo). Os cards SHALL exibir a
-identificação do paciente (nome e idade quando presentes), nº de ocorrência,
-tempo de espera (desde `created_at`) e o tempo de tela oficial do cabeçalho
-(dias em tela) quando presente. Antes de montar a aba aguardando, o sistema
-SHALL expirar reservas vencidas dos casos em `AWAITING_DOCTOR`; cada card
-dessa aba SHALL refletir o estado de reserva do caso: sem reserva → ação
-«Avaliar» que abre a página de trabalho de decisão; reservado pelo próprio
-médico → ação «Continuar avaliação»; reservado por outro portador → botão
-desabilitado «Reservado» com o nome do portador. Outros papéis ativos
-recebem 403. Os cards NÃO exibem o identificador interno do caso (uid). A apresentação segue o padrão ats-web: abas `Pendentes/Decididos` (rótulo `Decididos` fiel à query por estado, sem recorte de data), visual `case-card` com alerta de espera, badges de contagem nas abas, busca client-side por nome/ocorrência e atualização automática via partial a cada 20 s; o filtro server-side por subtipo permanece a base (o filtro client apenas refina o renderizado, nunca amplia o escopo).
+O sistema SHALL exibir ao papel ativo `doctor`/`admin` as abas `Pendentes` (`AWAITING_DOCTOR`) e `Decididos` (estados pós-decisão), ordenadas por `days_on_screen` desc nulls-last e FIFO, com filtro server-side único por subtipo e busca client-side por nome/ocorrência. Em desktop, cada card SHALL separar conteúdo (8/12) e tempo/ação (4/12). Pendentes exibem espera uma única vez e ações de reserva; decididos exibem disposição e data/hora por procedimento e «Ver detalhes», sem espera. Guards, paginação, partial a cada 20 s e contadores são preservados; uid nunca é exibido.
 
 #### Scenario: Médico de subtipo filtra a fila
 
@@ -52,34 +37,40 @@ recebem 403. Os cards NÃO exibem o identificador interno do caso (uid). A apres
 - **WHEN** o médico acessa a fila
 - **THEN** a ordem é 10, 3 e o caso sem cabeçalho ao fim (desempate FIFO), independentemente do momento do upload
 
-#### Scenario: Card com identificação e tempo de espera
+#### Scenario: Card pendente com identificação e tempo de espera únicos
 
-- **GIVEN** um caso em `AWAITING_DOCTOR` com nome, idade 84 e `days_on_screen` 6
-- **WHEN** o médico acessa a fila (aba aguardando)
-- **THEN** o card exibe nome e idade (`84 a`), o rótulo «Aguardando há …» com o tempo desde o recebimento e o badge `6 d em tela`
+- **GIVEN** um caso em `AWAITING_DOCTOR` com nome, idade 84, sexo, origem e `days_on_screen` 6
+- **WHEN** o médico acessa a aba aguardando
+- **THEN** o card exibe nome (`84 a`), ocorrência e demografia disponível, o badge «Dias em tela: 6» e exatamente um rótulo «Aguardando há …», sem repetir a data de recebimento
 
-#### Scenario: Aba decidida usa rótulo de recebimento
+#### Scenario: Card decidido orientado ao resultado
 
-- **GIVEN** um caso decidido com nome e idade
+- **GIVEN** um caso decidido com dois procedimentos, disposições e horários persistidos
 - **WHEN** o médico acessa a aba decididos
-- **THEN** o card exibe o rótulo «Recebido há …» (sem «Aguardando», que não faz sentido em histórico) e a idade junto do nome
+- **THEN** o card exibe nome/idade, ocorrência, disposição e data/hora de cada procedimento e o botão «Ver detalhes», sem «Aguardando há», «Recebido há» ou `waiting-time`
+
+#### Scenario: Decisões mistas não são agregadas visualmente
+
+- **GIVEN** um caso decidido com um procedimento aprovado e outro negado
+- **WHEN** o card da aba decididos é renderizado
+- **THEN** cada procedimento mantém seu próprio badge de disposição, aprovado em verde e negado em vermelho, sem um resultado único para o caso
 
 #### Scenario: Cards sem o identificador interno do caso
 
 - **GIVEN** casos com uid interno e nº de ocorrência
 - **WHEN** a fila é renderizada
-- **THEN** nenhum card exibe o uid do caso — o nº de ocorrência (com `—` quando ausente) e a identificação do paciente são os identificadores do card
+- **THEN** nenhum card exibe o uid do caso — o nº de ocorrência (com `—` quando ausente) e a identificação do paciente são os identificadores visíveis
 
 #### Scenario: Caso reservado por outro médico aparece bloqueado
 
 - **GIVEN** um caso em `AWAITING_DOCTOR` com reserva ativa de outro médico
-- **WHEN** o médico acessa a fila (aba aguardando)
-- **THEN** o card exibe o botão «Reservado» desabilitado com o nome do portador, sem ação primária
+- **WHEN** o médico acessa a aba aguardando
+- **THEN** o card exibe «Reservado» desabilitado com o nome do portador, sem ação primária ou link de abertura
 
 #### Scenario: Reserva do próprio médico oferece continuar
 
 - **GIVEN** um caso em `AWAITING_DOCTOR` com reserva ativa do próprio médico
-- **WHEN** ele acessa a fila (aba aguardando)
+- **WHEN** ele acessa a aba aguardando
 - **THEN** o card exibe a ação «Continuar avaliação» que reabre a página de trabalho
 
 #### Scenario: Reserva vencida não bloqueia o card
@@ -92,13 +83,37 @@ recebem 403. Os cards NÃO exibem o identificador interno do caso (uid). A apres
 
 - **GIVEN** casos aguardando e em estados pós-decisão (`DOCTOR_DENIED`, `DOCTOR_ACCEPTED`, `SCHEDULER_REQUESTED`)
 - **WHEN** o médico abre a fila
-- **THEN** as abas exibem `Pendentes` e `Decididos`, e a aba de decididos lista os casos nos estados da aba, independentemente da data da decisão (sem recorte de data)
+- **THEN** as abas exibem `Pendentes` e `Decididos`, e decididos lista esses estados independentemente da data da decisão
+
+#### Scenario: Título e container acompanham a aba
+
+- **GIVEN** a fila médica aberta em qualquer aba
+- **WHEN** a página é renderizada em desktop
+- **THEN** o título é «Casos aguardando decisão» em pendentes ou «Casos decididos» em decididos, e título, filtros, alertas e cards ocupam a mesma largura do container do header, sem margem superior extra
+
+#### Scenario: Card operacional tem duas regiões no desktop
+
+- **GIVEN** ao menos um card na fila em viewport desktop
+- **WHEN** o card é renderizado
+- **THEN** identificação e resumo ocupam a região principal de 8/12 e tempo/resultado/ação ocupam 4/12 à direita, dentro de uma única superfície de card, sem item de lista aninhado
+
+#### Scenario: Filtro de subtipo tem um único controle
+
+- **GIVEN** a fila com subtipos disponíveis e contagens de pendentes
+- **WHEN** a aba aguardando é renderizada
+- **THEN** existe apenas um seletor de subtipo, submetido ao server, com as contagens de pendentes em suas opções; nenhum segundo seletor client-side de exame/subtipo é exibido
+
+#### Scenario: Decididos não exibe contadores de pendentes no filtro
+
+- **GIVEN** a aba decididos aberta
+- **WHEN** o filtro de subtipo é exibido
+- **THEN** suas opções não anunciam contagens de pendentes e nenhuma linha «Pendentes por subtipo» aparece
 
 #### Scenario: Partial atualiza a fila sem reload
 
 - **GIVEN** a fila aberta e um novo caso chegando a `AWAITING_DOCTOR`, compatível com o subtipo ativo e posicionado na página exibida
 - **WHEN** decorre o intervalo de atualização
-- **THEN** o novo card aparece sem recarregar a página, preservando aba, filtro e paginação
+- **THEN** o novo card aparece sem recarregar a página, preservando aba, filtro, busca e paginação
 
 #### Scenario: Caso fora do filtro ou da página não aparece
 
@@ -110,13 +125,25 @@ recebem 403. Os cards NÃO exibem o identificador interno do caso (uid). A apres
 
 - **GIVEN** a fila com vários casos renderizados
 - **WHEN** o médico digita o nome do paciente ou o nº de ocorrência na busca
-- **THEN** apenas os cards correspondentes permanecem visíveis, sem nova requisição
+- **THEN** apenas os cards correspondentes permanecem visíveis, sem nova requisição e sem alterar o escopo do filtro server-side
 
 #### Scenario: Badges de contagem nas abas
 
 - **GIVEN** 3 casos aguardando e 5 decididos acessíveis ao médico
 - **WHEN** a fila é renderizada
 - **THEN** as abas exibem as contagens 3 e 5
+
+#### Scenario: Estado vazio é informativo
+
+- **GIVEN** uma aba sem casos no escopo atual
+- **WHEN** ela é renderizada
+- **THEN** um alerta informativo informa que não há casos aguardando avaliação ou que não há casos decididos, sem um segundo card vazio redundante
+
+#### Scenario: Layout permanece utilizável no mobile
+
+- **GIVEN** um card com nome longo, múltiplos procedimentos e ação
+- **WHEN** a fila é exibida em viewport de 390 px
+- **THEN** as regiões empilham, badges quebram linha, a ação permanece acessível com alvo mínimo de 44 px e não há overflow horizontal
 
 ### Requirement: Access control por subtipo no conjunto declarado
 

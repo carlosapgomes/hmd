@@ -325,10 +325,10 @@ try {
   // ── R2 no reenvio: combobox do reenvio corrigido (UI real) ──
   {
     const { context, page } = await loginAs(browser, 'verify-doctor', 'doctor-resub');
-    await page.locator('a.list-group-item-action, div.list-group-item').first().waitFor({ timeout: 15000 }).catch(() => {});
+    await page.locator('[data-doctor-queue-card] a.stretched-link').first().waitFor({ timeout: 15000 }).catch(() => {});
     const doctorBody = await page.locator('body').innerText();
     check('resubmit-doctor-sees-VERIFY-001', doctorBody.includes('VERIFY-001'), 'cartão sintético 001');
-    const decideHref = await page.locator('[data-agency-record-number="VERIFY-001"] a.list-group-item-action').getAttribute('href').catch(() => null);
+    const decideHref = await page.locator('[data-agency-record-number="VERIFY-001"] a.stretched-link').getAttribute('href').catch(() => null);
     const decideMatch = (decideHref || '').match(/\/doctor\/case\/([0-9a-f-]+)\/decide\//);
     check('resubmit-cleaned-case-found-in-queue', !!decideMatch, decideHref || 'sem link');
     if (decideMatch) {

@@ -11,6 +11,7 @@ reservas/ordenação/paginação preservadas inclusive via partial (D9).
 
 from __future__ import annotations
 
+import pathlib
 from collections.abc import Callable, Sequence
 from datetime import timedelta
 
@@ -24,6 +25,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.cases.locks import claim_case_lock
 from apps.cases.models import Case, CaseProcedure, CaseStatus
+from apps.cases.procedures import record_doctor_procedure_decisions
 
 ANGIO_TYPE = "art_perif"
 CARDIO_TYPE = "cat_cardiaco"
@@ -82,7 +84,7 @@ def test_queue_cards_use_case_card_visual_markers(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R1: card com case-card/summary-box/waiting-time/status-badge + nome/idade."""
+    """OLI-001 rev: card pendente sem badge genérico de status (sem redundância)."""
     case = _make_awaiting_case(
         nir_user,
         (ANGIO_TYPE,),
@@ -99,11 +101,16 @@ def test_queue_cards_use_case_card_visual_markers(
     assert "case-card" in card
     assert "summary-box" in card
     assert "waiting-time" in card
-    assert "status-badge" in card
+    # Revisão OLI-001: sem ``status-badge`` genérico nos pendentes; os badges
+    # de subtipo/procedimento e ``Dias em tela`` permanecem.
+    assert "status-badge" not in card
+    assert "Aguardando decisão médica" not in card
+    assert "badge rounded-pill" in card
     assert "Paciente Paridade" in card
     assert "84 a" in card
     assert "777001" in card
-    assert "6 d em tela" in card
+    assert "Dias em tela: 6" in card
+    assert "6 d em tela" not in card
     assert "Arteriografia periférica" in card
     assert "angio" in card
     assert "Aguardando há" in card
@@ -142,7 +149,7 @@ def test_queue_page_has_htmx_polling_search_and_exam_filter(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R2/R3: container htmx 20 s p/ partial, busca client-side, filtro de exame, ARIA."""
+    """OLI-001 R2/R6: htmx 20 s, busca client-side, filtro único server-side, ARIA."""
     _make_awaiting_case(
         nir_user,
         (ANGIO_TYPE,),
@@ -158,7 +165,9 @@ def test_queue_page_has_htmx_polling_search_and_exam_filter(
     assert 'hx-trigger="every 20s"' in body
     assert 'hx-swap="innerHTML"' in body
     assert "data-doctor-queue-search" in body
-    assert "data-doctor-exam-filter" in body
+    # OLI-001 R2: sem seletor client-side redundante.
+    assert "data-doctor-exam-filter" not in body
+    assert body.count('name="subtype"') == 1
     assert "data-doctor-queue-filter-status" in body
     assert 'aria-live="polite"' in body
     assert "data-doctor-queue-no-results" in body
@@ -197,7 +206,7 @@ def test_queue_partial_returns_same_fragment_with_same_guards(
     assert "case-card" in partial_body
     assert "summary-box" in partial_body
     # Fragmento, não a página cheia (sem heading/nav/base).
-    assert "Fila médica</h1>" not in partial_body
+    assert "Casos aguardando decisão</h1>" not in partial_body
     assert "doctor-queue-content" not in partial_body
 
     # Mesmo fragmento do server-side: o card aparece igual na página cheia.
@@ -320,5 +329,138 @@ def test_queue_render_query_count_bounded_independent_of_card_count(
     # base da fila +
     # expiração lazy + 1 query por subtipo do filtro (≤4) + contadores do nav;
     # nenhuma escala com o nº de cards. Limite folgado sem mascarar N+1.
+    assert page_count_many <= 20
+    assert partial_count_many <= 20
+
+
+def test_operational_list_css_scope_and_search_js_without_exam_filter() -> None:
+    """OLI-001 R2/D2: CSS escopado à lista operacional; JS sem filtro de exame."""
+    css = pathlib.Path("static/css/app.css").read_text(encoding="utf-8")
+    assert ".operational-list-page" in css
+    js = pathlib.Path("static/js/doctor_queue_filter.js").read_text(encoding="utf-8")
+    assert "data-doctor-exam-filter" not in js
+    assert "typeSelect" not in js
+    assert "data-doctor-queue-search" in js
+
+
+def _make_decided_case(
+    created_by: User,
+    decided_by: User,
+    procedure_types: Sequence[str],
+    *,
+    dispositions: dict[str, str],
+    patient_name: str = "",
+    agency_record_number: str = "",
+) -> Case:
+    """Caso decidido pelo serviço (disposições + horários nas rows, OLI-003)."""
+    case = Case.objects.create(created_by=created_by)
+    for procedure_type in procedure_types:
+        CaseProcedure.objects.create(case=case, procedure_type=procedure_type, declared_by_nir=True)
+    case.start_pdf_extraction(user=None, role=SYSTEM_ROLE)
+    case.complete_pdf_extraction(user=None, role=SYSTEM_ROLE)
+    case.complete_anonymization(user=None, role=SYSTEM_ROLE)
+    case.complete_llm_extraction(user=None, role=SYSTEM_ROLE)
+    case.complete_llm_summarization(user=None, role=SYSTEM_ROLE)
+    Case.objects.filter(pk=case.pk).update(
+        patient_name=patient_name, agency_record_number=agency_record_number, patient_age=60
+    )
+    record_doctor_procedure_decisions(
+        case,
+        {procedure_type: (dispositions[procedure_type], "") for procedure_type in procedure_types},
+        user=decided_by,
+        role=DOCTOR_ROLE,
+    )
+    case.refresh_from_db()
+    return case
+
+
+@pytest.mark.django_db
+def test_queue_decided_card_shows_per_procedure_result(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-003 R2/R3: decididos sem badge genérico; disposição por procedimento.
+
+    Substitui a guarda temporária de OLI-001 (``status-done``): o card
+    orientado ao resultado exibe ``Negado``/``Aprovado`` por row com o
+    horário de ``doctor_decided_at``, sem espera e sem estado agregado.
+    """
+    doctor = user_factory("medico-paridade-dec", (DOCTOR_ROLE,))
+    decided = _make_decided_case(
+        nir_user,
+        doctor,
+        (ANGIO_TYPE,),
+        dispositions={ANGIO_TYPE: "denied"},
+        patient_name="Paciente Decidido Paridade",
+        agency_record_number="888003",
+    )
+    row = decided.procedures.get(procedure_type=ANGIO_TYPE)
+    assert row.doctor_decided_at is not None
+    expected_time = timezone.localtime(row.doctor_decided_at).strftime("%d/%m/%Y %H:%M")
+    login_user(user_factory("geral-paridade-dec", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+
+    body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
+
+    card = _card_wrapper(body, decided.case_id)
+    assert "status-badge" not in card
+    assert "status-done" not in card
+    assert "Negado pelo médico" not in card
+    assert "Negado" in card
+    assert "text-bg-danger" in card
+    assert f"Decidido em {expected_time}" in card
+    assert "Recebido há" not in card
+    assert "waiting-time" not in card
+    assert "Ver detalhes" in card
+
+
+@pytest.mark.django_db
+def test_queue_decided_render_query_count_bounded_independent_of_card_count(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """OLI-003 R6: decididos sem N+1 — disposição/horário das rows pré-carregadas.
+
+    Página cheia e partial com 1 ou 5 cards decididos executam o MESMO
+    número de queries (disposição e ``doctor_decided_at`` vêm do
+    ``prefetch_related("procedures")``, nunca de query/event por card).
+    """
+    doctor = user_factory("medico-queries-dec", (DOCTOR_ROLE,))
+    login_user(user_factory("geral-queries-dec", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+    queue_url = reverse("doctor:queue")
+    partial_url = reverse("doctor:queue_partial")
+
+    def _query_count(url: str, params: dict[str, str]) -> int:
+        with CaptureQueriesContext(connection) as captured:
+            response = client.get(url, params)
+        assert response.status_code == 200
+        return len(captured.captured_queries)
+
+    _make_decided_case(
+        nir_user,
+        doctor,
+        (ANGIO_TYPE, CARDIO_TYPE),
+        dispositions={ANGIO_TYPE: "approved", CARDIO_TYPE: "denied"},
+        patient_name="Paciente Decidido Query Um",
+    )
+    page_count_few = _query_count(queue_url, {"tab": "decididos"})
+    partial_count_few = _query_count(partial_url, {"tab": "decididos"})
+
+    for index in range(4):
+        _make_decided_case(
+            nir_user,
+            doctor,
+            (ANGIO_TYPE, CARDIO_TYPE),
+            dispositions={ANGIO_TYPE: "approved", CARDIO_TYPE: "denied"},
+            patient_name=f"Paciente Decidido Query Extra {index}",
+        )
+    page_count_many = _query_count(queue_url, {"tab": "decididos"})
+    partial_count_many = _query_count(partial_url, {"tab": "decididos"})
+
+    assert page_count_many == page_count_few
+    assert partial_count_many == partial_count_few
     assert page_count_many <= 20
     assert partial_count_many <= 20

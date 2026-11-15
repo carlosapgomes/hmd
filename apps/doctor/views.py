@@ -80,7 +80,7 @@ from apps.cases.locks import (
     release_case_lock,
     renew_case_lock,
 )
-from apps.cases.models import Case, CaseDocument, CaseStatus
+from apps.cases.models import Case, CaseDocument, CaseStatus, DoctorDisposition
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES, VALID_DOCTOR_SUBTYPES
 from apps.cases.procedures import get_declared_procedure_types, record_doctor_procedure_decisions
 
@@ -144,6 +144,9 @@ CASE_LEAVE_MESSAGE = "Reserva liberada — o caso voltou a ficar disponível na 
 
 # Perfil do catálogo por tipo (ordem/rotulo/subtipo dos cards da fila).
 _PROFILE_BY_TYPE = {profile.procedure_type: profile for profile in PROCEDURE_PROFILES}
+# Rótulo legível da disposição médica atual da row (DoctorDisposition) —
+# OLI-003 D8: projetada das rows já pré-carregadas, sem consultar events.
+_DISPOSITION_LABELS = dict(DoctorDisposition.choices)
 # Ordem canônica de exibição dos tipos declarados (registro do catálogo).
 _CATALOG_INDEX: dict[str, int] = {
     profile.procedure_type: index for index, profile in enumerate(PROCEDURE_PROFILES)
@@ -272,8 +275,12 @@ def _queue_item(case: Case, *, user: User) -> dict[str, object]:
 
     Os tipos saem das rows já pré-carregadas (``prefetch_related``),
     declaradas pelo NIR, na ordem canônica do catálogo; cada tipo leva o label
-    e o ``doctor_subtipo`` (badge no template). O estado de reserva (D2) entra
-    em ``lock`` para o card escolher a ação (Avaliar/Continuar/Reservado).
+    e o ``doctor_subtipo`` (badge no template). OLI-003 D8: cada tipo leva
+    também a disposição (``doctor_disposition`` + rótulo) e o instante da
+    decisão (``doctor_decided_at``) da própria row — sem consultar
+    ``decision_event``/trilha/presenter por card, sem N+1. O estado de
+    reserva (D2) entra em ``lock`` para o card escolher a ação
+    (Avaliar/Continuar/Reservado).
     """
     rows = [row for row in case.procedures.all() if row.declared_by_nir]
     rows.sort(key=lambda row: _CATALOG_INDEX[row.procedure_type])
@@ -282,6 +289,8 @@ def _queue_item(case: Case, *, user: User) -> dict[str, object]:
         "status_label": case.get_status_display(),
         "patient_name": case.patient_name or "—",
         "patient_age": case.patient_age,
+        "patient_gender": case.patient_gender or "",
+        "origin_unit": case.origin_unit or "",
         "days_on_screen": case.days_on_screen,
         "agency_record_number": case.agency_record_number or "—",
         "created_at": case.created_at,
@@ -290,6 +299,11 @@ def _queue_item(case: Case, *, user: User) -> dict[str, object]:
             {
                 "label": _PROFILE_BY_TYPE[row.procedure_type].label,
                 "subtype": _PROFILE_BY_TYPE[row.procedure_type].doctor_subtipo,
+                "disposition": row.doctor_disposition,
+                "disposition_label": _DISPOSITION_LABELS.get(
+                    row.doctor_disposition, row.doctor_disposition
+                ),
+                "decided_at": row.doctor_decided_at,
             }
             for row in rows
         ],
@@ -338,6 +352,13 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
         if access.allows_declared_types(_declared_types_of_case(case))
     ]
     pending_counts = _pending_counts_by_subtype(access, subtype_options)
+    # OLI-001 D6: opções do filtro server-side já projetadas — em
+    # ``aguardando`` cada opção carrega a contagem de pendentes; em
+    # ``decididos`` o template ignora a contagem.
+    subtype_option_items = [
+        {"value": option, "label": option, "pending_count": pending_counts[option]}
+        for option in subtype_options
+    ]
 
     filter_parts: list[tuple[str, str]] = [("tab", tab)]
     if subtype:
@@ -347,6 +368,7 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
         "tab": tab,
         "subtype": subtype,
         "subtype_options": subtype_options,
+        "subtype_option_items": subtype_option_items,
         "pending_counts": pending_counts,
         "page_obj": page,
         "items": items,

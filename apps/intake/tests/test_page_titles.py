@@ -72,11 +72,11 @@ def test_intake_home_page_title(client: Client, nir_user: User) -> None:
 
 @pytest.mark.django_db
 def test_intake_my_cases_page_title(client: Client, nir_user: User) -> None:
-    """Meus casos tem ``h1.page-title`` com o nome da visão."""
+    """Meus casos tem ``h1.page-title`` com o nome da visão (OLI-004 R1)."""
     client.force_login(nir_user)
     response = client.get(reverse("intake:my_cases"))
     assert response.status_code == 200
-    _assert_page_title(response.content.decode(), "Meus casos")
+    _assert_page_title(response.content.decode(), "Todos os seus encaminhamentos")
 
 
 @pytest.mark.django_db

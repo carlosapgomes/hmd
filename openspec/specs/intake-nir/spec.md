@@ -138,7 +138,8 @@ O NIR SHALL conseguir revisar casos retidos pelo gate na tela de detalhe, com du
 
 ### Requirement: Meus casos e detalhe do NIR
 O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com status, tipos declarados, indicador de retenção pelo gate e a identificação do paciente (nome e idade quando presentes — o NIR é o criador do caso); o detalhe de um caso SHALL exibir a identificação do paciente (nome e idade, padrão da lista) num card «Identificação do paciente» com badge de status no header, além de documentos (com visualização do PDF) e comunicações — **sem a trilha de eventos** (a trilha vive no painel; caso `FAILED` exibe badge de erro «Falha no processamento»). Acesso a caso criado por outro usuário SHALL ser negado. Os cards NÃO exibem o uid completo do caso — a única exceção é o sufixo curto de desambiguação (`· <8 chars>`), exibido apenas no cenário de nº duplicado descrito abaixo. Toda referência textual a um caso no âmbito do NIR — `<title>`, breadcrumb, cabeçalho do detalhe, mensagens flash e alerta de lote — SHALL usar a **referência humana**: nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel); o uid completo NÃO é exibido em texto visível (permanece apenas como chave das URLs). A linha rotulada «Nº de ocorrência» dos cards mantém `—` quando o nº está ausente (decisão vigente de `queues-remove-uid`: card sem nº fica apenas com a identificação do paciente) — o fallback em `uid <8 chars>` aplica-se a referências (títulos, breadcrumbs, cabeçalho do detalhe, mensagens), não a essa linha rotulada. Onde dois casos compartilham o mesmo nº (reenvio corrigido cria caso novo), a referência SHALL ser desambiguada com sufixo curto (`nº · <8 chars>`): link de «Reenvios corrigidos» no detalhe, página «Reenviar corrigido», flash do novo caso e cards de «meus casos» quando a lista contém nº duplicado. O detalhe exibe TODAS as rows de procedimento do caso com a origem («Declarado» NIR / «Detectado na extração») e o status de detecção após a reconciliação; no card de revisão por divergência, o resumo declarados × detectados acompanha a ação de liberar.
- A lista segue o padrão ats-web: visual de cards com alerta de espera, abas `Ativos/Encerrados` com contadores, filtros server-side (busca por nº de ocorrência com mínimo de 3 caracteres, status, tipo de procedimento) e atualização automática via partial; escopo por criador e semântica das abas preservados.
+
+Meus casos terá página e lista na largura do header, navegação Ativos/Encerrados apenas no header, filtros server-side preservados, contagem neutra e cards compactos em quatro regiões no desktop (4/3/3/2), sem alerta de espera ou resumo redundante. O partial, os contadores e o encerramento administrativo são preservados.
 
 #### Scenario: Lista mostra apenas casos do próprio NIR
 
@@ -160,9 +161,9 @@ O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com s
 
 #### Scenario: Card de meus casos identifica o paciente
 
-- **GIVEN** um caso criado pelo NIR com nome e idade extraídos do cabeçalho
+- **GIVEN** um caso criado pelo NIR com nome, idade, sexo e origem extraídos do cabeçalho
 - **WHEN** o NIR abre meus casos
-- **THEN** o card exibe o nome do paciente e a idade (`84 a`); caso sem identificação exibe `—` no lugar do nome e omite a idade
+- **THEN** o card exibe nome, idade (`84 a`), ocorrência e demografia disponível; sem nome exibe `—` e omite idade
 
 #### Scenario: Caso FAILED exibe badge de erro no detalhe do NIR
 
@@ -174,13 +175,13 @@ O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com s
 
 - **GIVEN** casos com uid interno e nº de ocorrência
 - **WHEN** a lista é renderizada
-- **THEN** nenhum card exibe o uid do caso — o nº de ocorrência (com `—` quando ausente) e a identificação do paciente são os identificadores do card
+- **THEN** nenhum card exibe o uid do caso — o nº de ocorrência (com `—` quando ausente) e a identificação do paciente são os identificadores visíveis
 
 #### Scenario: Detalhe retido por divergência lista declarados e detectados
 
 - **GIVEN** um caso do próprio NIR retido em `LLM_EXTRACTING` por divergência (`angio_art_perif` declarada não-detectada e `art_perif` detectada não-declarada)
 - **WHEN** o NIR abre o detalhe
-- **THEN** a seção de procedimentos exibe ambas as rows com os rótulos legíveis e os badges de origem e detecção («Não detectado», «Detectado na extração»), e o card de revisão resume declarados × detectados junto ao botão de liberação
+- **THEN** a seção de procedimentos exibe ambas as rows com os rótulos legíveis e os badges de origem e detecção, e o card de revisão resume declarados × detectados junto ao botão de liberação
 
 #### Scenario: Detalhe do NIR identifica o paciente sem uid completo
 
@@ -220,9 +221,15 @@ O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com s
 
 #### Scenario: Abas Ativos e Encerrados com contadores
 
-- **GIVEN** 2 casos ativos e 1 encerrado (CLEANED) do NIR
+- **GIVEN** 2 casos ativos e 1 encerrado (`CLEANED`) do NIR
 - **WHEN** abre meus casos
-- **THEN** as abas exibem as contagens 2 e 1, e cada aba lista só os casos da situação correspondente
+- **THEN** o header exibe Meus Casos/Casos Encerrados com as contagens 2 e 1, cada destino lista só a situação correspondente e nenhuma segunda pill Ativos/Encerrados aparece no corpo da página
+
+#### Scenario: Troca de aba pelo header preserva filtros
+
+- **GIVEN** meus casos com ocorrência, status e tipo filtrados
+- **WHEN** o NIR alterna entre Meus Casos e Casos Encerrados pelo header
+- **THEN** o parâmetro `tab` muda e os filtros ativos são preservados na URL e na listagem
 
 #### Scenario: Partial atualiza meus casos sem reload
 
@@ -235,3 +242,33 @@ O NIR SHALL ver, numa lista "meus casos", apenas os casos criados por ele, com s
 - **GIVEN** meus casos filtrados por um status e um novo caso criado em outro status
 - **WHEN** decorre o intervalo de atualização
 - **THEN** nenhum card novo aparece e os filtros seguem aplicados
+
+#### Scenario: Página e lista têm hierarquia neutra
+
+- **GIVEN** meus casos com resultados
+- **WHEN** a página é renderizada
+- **THEN** o título é «Todos os seus encaminhamentos», a quantidade aparece em cabeçalho neutro da lista e não existe alerta amarelo de contagem nem CTA «Enviar relatório» duplicado no topo
+
+#### Scenario: Card compacto tem quatro regiões no desktop
+
+- **GIVEN** um caso com procedimento, recebimento, status e detalhe disponível
+- **WHEN** o card é renderizado em desktop
+- **THEN** identificação ocupa 4/12, recebimento/complementos 3/12, status/alertas 3/12 e «Ver detalhes» 2/12 à direita, numa única superfície, sem `summary-box`, `waiting-time` ou item de lista aninhado
+
+#### Scenario: Status e exceções permanecem visíveis no card compacto
+
+- **GIVEN** casos com andamento, falha, retenção e encerramento administrativo
+- **WHEN** os cards são renderizados
+- **THEN** cada um mantém status e badges semânticos correspondentes, e o encerramento administrativo conserva resultado e motivo sem recriar uma caixa de resumo
+
+#### Scenario: Estado vazio orienta a próxima ação
+
+- **GIVEN** uma listagem sem resultados
+- **WHEN** há filtros ativos
+- **THEN** o estado vazio centralizado oferece «Limpar filtros»; sem filtros, informa a ausência da situação da aba e oferece «Novo Encaminhamento» quando aplicável
+
+#### Scenario: Card compacto permanece utilizável no mobile
+
+- **GIVEN** um card com nome longo, múltiplos procedimentos e ação
+- **WHEN** a lista é exibida em viewport de 390 px
+- **THEN** as regiões empilham, badges quebram linha, «Ver detalhes» ocupa a largura disponível com alvo mínimo de 44 px e não há overflow horizontal

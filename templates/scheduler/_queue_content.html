@@ -1,11 +1,13 @@
 {% comment %}
-Fragmento compartilhado da fila do agendador (ui-parity-queues D1): a página
-cheia (``queue.html``) inclui este arquivo no server-side dentro do container
-htmx e o endpoint ``scheduler:queue_partial`` renderiza SÓ este arquivo —
-server == partial. Contém cards ``case-card + summary-box + waiting-time +
-status-badge`` (padrão visual da casa), estado vazio e paginação server-side
-preservada (D2; links de página são navegação normal, fora do swap).
-
+Fragmento compartilhado da fila do agendador (ui-parity-queues D1; OLI-002):
+a página cheia (``queue.html``) inclui este arquivo no server-side dentro do
+container htmx e o endpoint ``scheduler:queue_partial`` renderiza SÓ este
+arquivo — server == partial. Pendentes: card operacional compacto (D3) —
+uma única superfície ``.case-card > .row`` com conteúdo ``col-lg-8`` e
+tempo/ação ``col-lg-4``; decisão médica por procedimento; CTA real com
+``stretched-link`` quando a ação é permitida; sem badge genérico de status
+nem ``list-group-item``. Processados: markup preservado fora do ramo
+pendente (``Recebido há``, unidade, ``status-badge``).
 Contexto (de ``_build_queue_context``): ``tab``, ``items``, ``page_obj``,
 ``filter_qs``. Atributos ``data-scheduler-queue-card``/``data-patient-name``/
 ``data-agency-record-number`` alimentam a busca client-side
@@ -14,7 +16,7 @@ escopo server. Sem diferenciação por unidade: o ``unit_label`` é só exibiç�
 quando já definido no agendamento.
 {% endcomment %}
 {% if tab == 'aguardando' and page_obj.paginator.count > 0 %}
-<div class="alert alert-warning d-flex align-items-center gap-2 mb-3" role="alert">
+<div class="alert alert-info d-flex align-items-center gap-2 mb-3" role="alert">
   <span class="pulse-dot"></span>
   <strong>{{ page_obj.paginator.count }} caso{% if page_obj.paginator.count != 1 %}s{% endif %} aguardando agendamento.</strong>
 </div>
@@ -26,12 +28,59 @@ quando já definido no agendamento.
   <div class="col-12" data-scheduler-queue-card data-patient-name="{{ item.patient_name }}" data-agency-record-number="{{ item.agency_record_number }}">
     <div class="case-card card p-3">
       {% url 'scheduler:case_detail' case_id=item.case_id as card_url %}
-      {% if tab == 'aguardando' and item.lock.is_locked and not item.lock.is_locked_by_current_user %}
-      {% comment %}
-      Reservado por outro agendador (case-work-lock D4): card SEM ação
-      primária — o clique não abre a página de trabalho (evita leitura
-      duplicada entre as unidades).
-      {% endcomment %}
+      {% if tab == 'aguardando' %}
+      <div class="row">
+        <div class="col-lg-8">
+          <div class="fw-semibold patient-name">{{ item.patient_name }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}{% if item.unit_label %} <span class="badge rounded-pill text-bg-info">{{ item.unit_label }}</span>{% endif %}</div>
+          <div class="small text-muted case-meta">
+            Nº de ocorrência: {{ item.agency_record_number }}{% if item.patient_gender %} · {{ item.patient_gender }}{% endif %}{% if item.origin_unit %} · 🏥 {{ item.origin_unit }}{% endif %}
+          </div>
+          {% if item.reopen_reason %}
+          <div class="alert alert-warning py-2 px-3 mt-1 mb-2 small">
+            <strong>Reaberto por intercorrência:</strong> {{ item.reopen_reason }}
+          </div>
+          {% endif %}
+          <div class="summary-box mt-2">
+            <div class="row">
+              <div class="col-sm-12 mb-2">
+                <div class="summary-label">Procedimentos</div>
+                <div class="summary-value">
+                  {% if item.procedures %}
+                  <span class="d-flex flex-wrap align-items-center gap-2">
+                    {% for procedure in item.procedures %}
+                    <span class="small">{{ procedure.label }}</span>
+                    <span class="badge rounded-pill text-bg-light border text-muted">{{ procedure.subtype }}</span>
+                    <span class="badge rounded-pill text-bg-light border text-muted">{{ procedure.disposition_label }}</span>
+                    {% endfor %}
+                  </span>
+                  {% else %}
+                  —
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-4 text-lg-end mt-3 mt-lg-0 d-flex flex-lg-column flex-wrap justify-content-between align-items-lg-end gap-2">
+          {% if item.days_on_screen is not None %}
+          <span class="badge badge-wrap bg-warning text-dark mb-2">Dias em tela: {{ item.days_on_screen }}</span>
+          {% endif %}
+          <div class="waiting-time">
+            ⏱ Aguardando há {{ item.created_at|timesince }}
+          </div>
+          {% if item.lock.is_locked_by_current_user %}
+          <a href="{{ card_url }}" class="btn btn-sm btn-success stretched-link mt-2">▶ Continuar</a>
+          {% elif item.lock.is_locked %}
+          <button type="button" class="btn btn-sm btn-secondary mt-2" disabled
+                  title="Reservado por {{ item.lock.locked_by_display }}">🔒 Reservado</button>
+          <div class="small text-muted mt-1">por {{ item.lock.locked_by_display }}</div>
+          {% else %}
+          <a href="{{ card_url }}" class="btn btn-sm btn-primary stretched-link mt-2">Agendar</a>
+          {% endif %}
+        </div>
+      </div>
+      {% else %}
+      {% if item.lock.is_locked and not item.lock.is_locked_by_current_user %}
       <div class="list-group-item py-3">
       {% else %}
       <a class="list-group-item list-group-item-action py-3"
@@ -91,25 +140,28 @@ quando já definido no agendamento.
           {% endif %}
         </div>
         {% endif %}
-      {% if tab == 'aguardando' and item.lock.is_locked and not item.lock.is_locked_by_current_user %}
+      {% if item.lock.is_locked and not item.lock.is_locked_by_current_user %}
       </div>
       {% else %}
       </a>
+      {% endif %}
       {% endif %}
     </div>
   </div>
   {% endfor %}
 </div>
 {% else %}
+{% if tab == 'processados' %}
 <div class="card shadow-sm">
   <div class="card-body text-muted">
-    {% if tab == 'processados' %}
     Nenhum caso processado até agora.
-    {% else %}
-    Nenhum caso aguardando agendamento.
-    {% endif %}
   </div>
 </div>
+{% else %}
+<div class="alert alert-info d-flex align-items-center gap-2 mb-3" role="alert">
+  Nenhum caso aguardando agendamento.
+</div>
+{% endif %}
 {% endif %}
 
 {% if page_obj.paginator.num_pages > 1 %}

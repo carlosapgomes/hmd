@@ -440,11 +440,11 @@ try {
   {
     const { context, page } = await loginAs(browser, 'verify-doctor', 'doctor-resub');
     // Fila médica: o cartão do VERIFY-001 é o caminho até o caso.
-    await page.locator('a.list-group-item-action, div.list-group-item').first().waitFor({ timeout: 15000 }).catch(() => {});
-    check('resubmit-doctor-queue-heading', (await page.getByRole('heading', { name: 'Fila médica' }).count()) >= 1);
+    await page.locator('[data-doctor-queue-card] a.stretched-link').first().waitFor({ timeout: 15000 }).catch(() => {});
+    check('resubmit-doctor-queue-heading', (await page.getByRole('heading', { name: 'Casos aguardando decisão' }).count()) >= 1);
     const doctorBody = await page.locator('body').innerText();
     check('resubmit-doctor-sees-VERIFY-001', doctorBody.includes('VERIFY-001'), 'cartão sintético 001');
-    const decideHref = await page.locator('[data-agency-record-number="VERIFY-001"] a.list-group-item-action').getAttribute('href').catch(() => null);
+    const decideHref = await page.locator('[data-agency-record-number="VERIFY-001"] a.stretched-link').getAttribute('href').catch(() => null);
     const decideMatch = (decideHref || '').match(/\/doctor\/case\/([0-9a-f-]+)\/decide\//);
     check('resubmit-cleaned-case-found-in-queue', !!decideMatch, decideHref || 'sem link');
     if (decideMatch) {

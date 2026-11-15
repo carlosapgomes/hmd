@@ -45,6 +45,11 @@ seeding is never feature proof. Skipped entry points remain unverified.
   synthetic cases as cards (`VERIFY-001`, patient name, declared procedures)
   and the first card opens the case work page read-only, without submitting
   any decision.
+- [Fila médica — decididos orientados ao resultado](fila-medica-decididos.md): the
+  decided tab (`Casos decididos`) with per-procedure disposition/time cards,
+  mixed approved+denied without case-level aggregation, `Ver detalhes` CTA
+  to the read-only detail, filter without counts, empty `alert-info` and
+  1280/390px measures (operational-lists-ui-parity slice 003).
 - [Header, navegação e sino — 4 papéis](header-nav-4-papeis.md): header
   padrão ats-web por papel com faixa de navegação, toggler mobile e sino
   com polling zero→1 sem reload (slice 004).

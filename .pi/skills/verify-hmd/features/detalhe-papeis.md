@@ -110,6 +110,31 @@ desktop, viewer dedicado no mobile) no detalhe do NIR
   `nir-101-resize-1280-carregado`, `nir-101-sem-js-noscript` (+ `report.json`/
   `observed-state.json`).
 
+## PVP-003 — viewer + cards do relatório no médico (VERIFY-001 + VERIFY-101)
+
+Prova dos cards `Texto Extraído do PDF` (com placeholder de indisponibilidade
+quando vazio — diferença contratual vs NIR) e `Visualizar PDF Original`
+(lazy no desktop, viewer dedicado no mobile) nas duas páginas médicas
+(pdf-original-viewer-parity, slice PVP-003), sem substituir passos existentes
+(Parte A + Parte B seguem intactas): detalhe read-only pós-decisão do
+`VERIFY-001` (Parte A, após a decisão da jornada) e página de trabalho
+(`AWAITING_DOCTOR`, VERIFY-101 da Parte B, com reserva via GET — leitura
+normal, sem decisão submetida; saída por «Sair sem decidir» libera a
+reserva e volta à fila).
+
+- Rede (contador CORRIGIDO em modo headed-Xvfb, caminho REAL
+  `GET /doctor/case/.../pdf/...` sem `?probe=1`): detalhe/página fechados =
+  0 GET; card externo aberto = 0 GET; expansão do sub-collapse do doc 1 ⇒
+  ≥1 GET sem marcador SÓ no documento-alvo; mobile 390 = 0 GET de embed.
+- Placeholder de texto quando aplicável (VERIFY-001 do seed não tem
+  `extracted_text` populado → o card exibe o placeholder em vez de omitir).
+- Viewer mobile do médico (`doctor:pdf_viewer`, mesma rota de serve do
+  `doctor:case_pdf`) com `← Voltar` no topo (sticky) e no rodapé;
+  `?next=` inseguro cai no detalhe do caso.
+- Evidência: `doctor-101-detalhe-1280-fechado`, `doctor-101-viewer-mobile`,
+  `doctor-101-work-1280-fechado`, `doctor-101-work-doc1-expandido`,
+  `doctor-101-work-390` (+ `report.json`/`observed-state.json`).
+
 ```bash
 .pi/skills/verify-hmd/scripts/control-hmd doctor --run <tmp/verification/hmd-verify-...>
 node .pi/skills/verify-hmd/scripts/browser/drive-detalhe-papeis.mjs --run <tmp/verification/hmd-verify-...>

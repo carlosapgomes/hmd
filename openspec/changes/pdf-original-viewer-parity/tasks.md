@@ -22,10 +22,10 @@ Contract: `slices/slice-002-nir-report-cards.md`
 
 Contract: `slices/slice-003-doctor-report-cards.md`
 
-- [ ] 3.1 Escrever RED da rota `doctor:pdf_viewer` (matriz/next/404) e dos cards nas duas páginas; executar os testes focados e registrar as falhas esperadas.
-- [ ] 3.2 Implementar viewer e os dois cards no partial `_case_cards.html` (placeholder sem texto); verificar testes focados verdes e a suíte doctor sem regressão.
-- [ ] 3.3 Estender/rodar a jornada `detalhe-papeis` (médico, detalhe + decisão) em 1280/390, com PNG/snapshot/JSON.
-- [ ] 3.4 Rodar o quality gate, produzir `/tmp/hmd-slice-pvp-003-report.md` e submeter o slice à revisão independente antes de avançar.
+- [x] 3.1 Escrever RED da rota `doctor:pdf_viewer` (matriz/next/404) e dos cards nas duas páginas; executar os testes focados e registrar as falhas esperadas.
+- [x] 3.2 Implementar viewer e os dois cards no partial `_case_cards.html` (placeholder sem texto); verificar testes focados verdes e a suíte doctor sem regressão.
+- [x] 3.3 Rodar `detalhe-papeis` (médico, detalhe + decisão) sobre VERIFY-101 em 1280/390, com PNG/snapshot/JSON.
+- [x] 3.4 Rodar o quality gate, produzir `/tmp/hmd-slice-pvp-003-report.md` e submeter o slice à revisão independente antes de avançar.
 
 ## 4. Slice 004 — Agendador: viewer + dois cards sob o gate
 

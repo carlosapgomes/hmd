@@ -62,7 +62,7 @@ from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import F, QuerySet
-from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
+from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.clickjacking import xframe_options_sameorigin
@@ -82,6 +82,7 @@ from apps.cases.locks import (
     renew_case_lock,
 )
 from apps.cases.models import Case, CaseDocument, CaseStatus, DoctorDisposition
+from apps.cases.navigation import resolve_safe_next_url
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES, VALID_DOCTOR_SUBTYPES
 from apps.cases.procedures import get_declared_procedure_types, record_doctor_procedure_decisions
 
@@ -416,7 +417,13 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     if not can_access_case(user, case, active_role=active_role):
         raise PermissionDenied
     context = build_case_detail_context(case)
-    context["documents"] = list(case.documents.all())
+    # Texto do caso para o card (slice PVP-003, R2): o card lê
+    # ``case.extracted_text`` (fonte única); vazio exibe o placeholder.
+    context["case"] = case
+    documents: list[CaseDocument] = list(case.documents.all())
+    context["documents"] = documents
+    context["pdf_items"] = _build_pdf_items(case, documents)
+    context["detail_url"] = reverse("doctor:case_detail", args=[case.case_id])
     return render(request, "doctor/case_detail.html", context)
 
 
@@ -456,6 +463,70 @@ def case_pdf(
     )
 
 
+def _build_pdf_items(case: Case, documents: list[CaseDocument]) -> list[dict[str, object]]:
+    """Itens do card do PDF original (slice PVP-003, R2/D1).
+
+    A view monta ``pdf_items`` (position/filename/size/serve/viewer) com
+    ``reverse`` — o template (partial compartilhado) apenas itera, sem lógica
+    de URL (mesma regra do slice PVP-002 no NIR).
+    """
+    return [
+        {
+            "position": document.position,
+            "filename": document.original_filename,
+            "size": document.size_bytes,
+            "serve_url": reverse("doctor:case_pdf", args=[case.case_id, document.position]),
+            "viewer_url": reverse("doctor:pdf_viewer", args=[case.case_id, document.position]),
+        }
+        for document in documents
+    ]
+
+
+@role_required("doctor", "admin")
+def pdf_viewer(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    position: int,
+) -> HttpResponse:
+    """Viewer mobile do PDF original do caso acessível ao médico (slice PVP-003, R1).
+
+    Mesmo guard fail-closed de ``case_pdf``: papel ativo doctor/admin +
+    ``can_access_case`` com o papel ativo da sessão (subtipo fora da matriz
+    → 403, como no serve). Position inexistente ou documento sem arquivo →
+    404. O ``?next=`` passa por ``resolve_safe_next_url`` (fallback ao
+    detalhe); o template ``pdf_viewer/mobile_pdf_viewer.html`` recebe título,
+    URLs do PDF e volta.
+    """
+    user = _require_user(request)
+    active_role = request.session.get("active_role", "")
+    case = get_object_or_404(
+        Case.objects.only("case_id", "status"),
+        case_id=case_id,
+    )
+    if not can_access_case(user, case, active_role=active_role):
+        raise PermissionDenied
+    document = get_object_or_404(
+        CaseDocument.objects.only("pk", "case_id", "file"),
+        case=case,
+        position=position,
+    )
+    if not document.file:
+        raise Http404
+    detail_url = reverse("doctor:case_detail", args=[case.case_id])
+    serve_url = reverse("doctor:case_pdf", args=[case.case_id, position])
+    back_url = resolve_safe_next_url(request, detail_url)
+    return render(
+        request,
+        "pdf_viewer/mobile_pdf_viewer.html",
+        {
+            "viewer_title": "PDF Original",
+            "pdf_url": serve_url,
+            "fallback_pdf_url": serve_url,
+            "back_url": back_url,
+        },
+    )
+
+
 def _render_decision_page(
     request: HttpRequest,
     case: Case,
@@ -471,7 +542,11 @@ def _render_decision_page(
     perda da posse (D2 item 5) sem nunca perder as demais entradas digitadas.
     """
     context = build_case_detail_context(case)
-    context["documents"] = list(case.documents.all())
+    context["case"] = case
+    work_documents: list[CaseDocument] = list(case.documents.all())
+    context["documents"] = work_documents
+    context["pdf_items"] = _build_pdf_items(case, work_documents)
+    context["detail_url"] = reverse("doctor:case_detail", args=[case.case_id])
     context["form"] = form
     context["decision_fields"] = form.procedure_fields()
     context["lock_token"] = lock_token

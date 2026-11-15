@@ -23,6 +23,13 @@ urlpatterns: list[URLPattern] = [
     path("partials/queue/", views.queue_partial, name="queue_partial"),
     path("case/<uuid:case_id>/", views.case_detail, name="case_detail"),
     path("case/<uuid:case_id>/pdf/<int:position>/", views.case_pdf, name="case_pdf"),
+    # Viewer mobile do PDF original (slice PVP-003, R1): mesmo guard de
+    # case_pdf; ?next= validado com resolve_safe_next_url.
+    path(
+        "case/<uuid:case_id>/pdf/<int:position>/viewer/",
+        views.pdf_viewer,
+        name="pdf_viewer",
+    ),
     path("case/<uuid:case_id>/decide/", views.case_decide, name="case_decide"),
     path("case/<uuid:case_id>/leave/", views.case_leave, name="case_leave"),
     path("case/<uuid:case_id>/lock/renew/", views.lock_renew, name="lock_renew"),

@@ -186,41 +186,78 @@ detalhe read-only (`case_detail.html`).
       </div>
     </div>
 
-    <!-- Documentos -->
+    <!-- Texto Extraído do PDF (slice PVP-003, R2): o CARD NUNCA é omitido —
+         sem extracted_text exibe o placeholder de indisponibilidade
+         (diferença contratual vs NIR, que omite). -->
     <div class="card shadow-sm mb-4 doctor-report-card">
       <div class="card-header bg-white">
-        <h2 class="h5 mb-0">Documentos</h2>
+        <h2 class="h5 mb-0">
+          <button class="btn btn-link text-decoration-none p-0 text-dark collapsed" type="button"
+                  data-bs-toggle="collapse" data-bs-target="#text-collapse"
+                  aria-expanded="false" aria-controls="text-collapse">
+            Texto Extraído do PDF <small class="text-muted ms-2">(clique para expandir)</small>
+          </button>
+        </h2>
       </div>
-      <div class="table-responsive">
-        <table class="table align-middle mb-0">
-          <thead class="table-light">
-            <tr>
-              <th scope="col">#</th>
-              <th scope="col">Arquivo</th>
-              <th scope="col">Tamanho</th>
-              <th scope="col"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for document in documents %}
-            <tr>
-              <td class="text-muted">{{ document.position }}</td>
-              <td class="font-monospace small">{{ document.original_filename }}</td>
-              <td>{{ document.size_bytes|filesizeformat }}</td>
-              <td class="text-end">
-                <a href="{% url 'doctor:case_pdf' case_id document.position %}"
-                   target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary">
-                  Abrir PDF original
-                </a>
-              </td>
-            </tr>
-            {% empty %}
-            <tr><td colspan="4" class="text-muted">Nenhum documento neste caso.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+      <div class="collapse" id="text-collapse">
+        <div class="card-body report-block-body">
+          {% if case.extracted_text %}
+          <pre class="bg-light p-3 rounded-3 mb-0" style="white-space: pre-wrap; font-size: 0.875rem;">{{ case.extracted_text }}</pre>
+          {% else %}
+          <p class="text-muted mb-0">Texto extraído indisponível para este caso.</p>
+          {% endif %}
+        </div>
       </div>
     </div>
+
+    <!-- Visualizar PDF Original (slice PVP-003, R2/D1/D2): um sub-collapse
+         por documento (``data-pdf-doc-collapse``), embed lazy com ``data-src``
+         SEM ``src``, "Abrir em nova aba" e link mobile (``d-md-none``)
+         para o viewer dedicado com ``?next=``. O fallback sem-JS vive FORA
+         dos collapses. -->
+    {% if pdf_items %}
+    <div class="card shadow-sm mb-4 doctor-report-card">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">
+          <button class="btn btn-link text-decoration-none p-0 text-dark collapsed" type="button"
+                  data-bs-toggle="collapse" data-bs-target="#pdf-collapse"
+                  aria-expanded="false" aria-controls="pdf-collapse">
+            Visualizar PDF Original <small class="text-muted ms-2">(clique para expandir)</small>
+          </button>
+        </h2>
+      </div>
+      <div class="collapse" id="pdf-collapse">
+        <div class="card-body">
+          {% for item in pdf_items %}
+          <div class="mb-3">
+            <a href="{{ item.viewer_url }}?next={{ detail_url|urlencode }}"
+               class="btn btn-sm btn-outline-primary d-inline-flex d-md-none align-items-center gap-2 text-break">
+              PDF {{ item.position }} — {{ item.filename }}
+            </a>
+            <button class="btn btn-link text-decoration-none p-0 text-dark d-none d-md-inline-flex align-items-center gap-2 collapsed" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#pdf-collapse-{{ item.position }}"
+                    aria-expanded="false" aria-controls="pdf-collapse-{{ item.position }}">
+              {{ item.filename }} <small class="text-muted">({{ item.size|filesizeformat }})</small>
+            </button>
+            <div class="collapse" id="pdf-collapse-{{ item.position }}" data-pdf-doc-collapse>
+              <div class="mb-2 text-end">
+                <a href="{{ item.serve_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Abrir em nova aba</a>
+              </div>
+              <div class="ratio ratio-1x1 d-none d-md-block" style="max-height: 80vh;">
+                <embed class="pdf-lazy-embed" data-src="{{ item.serve_url }}" type="application/pdf" style="width: 100%; height: 100%;">
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <noscript>
+      {% for item in pdf_items %}
+      <p class="mb-2"><a href="{{ item.serve_url }}" target="_blank" rel="noopener">Abrir PDF {{ item.filename }}</a></p>
+      {% endfor %}
+    </noscript>
+    {% endif %}
 
     {% if attachments %}
     <!-- Anexos (attachment-processing-ocr, slice 004/D5): cards consultivos —

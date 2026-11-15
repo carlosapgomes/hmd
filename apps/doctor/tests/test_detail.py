@@ -685,7 +685,10 @@ def test_detail_200_awaiting_with_reidentified_cards(
         "Prior-case",
         "Sumário clínico",
         "Estrutura extraída",
-        "Documentos",
+        # PVP-003 (R2): o card "Documentos" foi substituído pelos dois
+        # cards do relatório no mesmo ponto.
+        "Texto Extraído do PDF",
+        "Visualizar PDF Original",
     ):
         assert card_title in body
     # Conteúdo re-identificado (valores reais no lugar dos tokens).

@@ -25,27 +25,32 @@ SYSTEM_ROLE = "system"
 ANGIO_TYPE = "art_perif"
 
 # Ordem clínica contratada (doctor-detail-context) — pinada aqui como
-# guarda visual: o restyle não pode reordenar os cards.
+# guarda visual: o restyle não pode reordenar os cards. PVP-003 (R2): o
+# card "Documentos" foi substituído pelos dois cards do relatório no
+# mesmo ponto (após Prior-case, antes de Requisitos).
 _CLINICAL_ORDER = (
     "Procedimentos do caso",
     "Sumário clínico",
     "Estrutura extraída",
     "Prior-case",
-    "Documentos",
+    "Texto Extraído do PDF",
+    "Visualizar PDF Original",
     "Requisitos gerais acionáveis",
     "Alertas consultivos",
 )
 
 # Ordem COMPLETA com os cards condicionais (P2-3): «Anexos» (só com anexo
 # no caso) e «Recomendação agregada do pipeline» (só com sugestão agregada
-# do LLM2) entram entre «Documentos»→«Requisitos» e «Requisitos»→«Alertas»
-# respectivamente, conforme _case_cards.html e _WORK_PAGE_CARD_ORDER.
+# do LLM2) entram entre «Visualizar PDF Original»→«Requisitos» e
+# «Requisitos»→«Alertas» respectivamente, conforme _case_cards.html e
+# _WORK_PAGE_CARD_ORDER.
 _FULL_CLINICAL_ORDER = (
     "Procedimentos do caso",
     "Sumário clínico",
     "Estrutura extraída",
     "Prior-case",
-    "Documentos",
+    "Texto Extraído do PDF",
+    "Visualizar PDF Original",
     "Anexos",
     "Requisitos gerais acionáveis",
     "Recomendação agregada do pipeline",
@@ -119,8 +124,11 @@ def _login(client: Client, user: User, role: str) -> None:
 
 
 def _card_title_index(body: str, title: str) -> int:
-    marker = f'<h2 class="h5 mb-0">{title}</h2>'
-    index = body.find(marker)
+    # PVP-003 (R2): os dois cards do relatório têm o título dentro do botão
+    # do collapse (sem ``h2`` próprio) — aceita as duas formas.
+    index = body.find(f'<h2 class="h5 mb-0">{title}</h2>')
+    if index == -1:
+        index = body.find(title)
     assert index != -1, f"card «{title}» ausente no detalhe"
     return index
 

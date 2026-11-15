@@ -300,9 +300,13 @@ try {
       check('doctor-lock-config', (await page.locator('#work-lock-config').count()) === 1);
       check('doctor-lock-token', (await page.locator('input[name="lock_token"][value]:not([value=""])').count()) >= 1);
       // Ordem clínica contratada (doctor-detail-context) no DOM.
-      const titles = await page.locator('h2.h5').evaluateAll((els) => els.map((el) => el.textContent.trim()));
-      const expected = ['Procedimentos do caso', 'Sumário clínico', 'Estrutura extraída', 'Prior-case', 'Documentos', 'Requisitos gerais acionáveis', 'Alertas consultivos'];
-      const positions = expected.map((t) => titles.indexOf(t));
+      // PVP-003 (R2): o card "Documentos" foi substituído pelos dois cards
+      // do relatório no mesmo ponto (após Prior-case, antes de Requisitos).
+      // Os cards do relatório têm o título no botão do collapse (sem h2
+      // próprio): a ordem é pinada pelos headers dos cards em sequência.
+      const titles = await page.locator('.doctor-report-card .card-header').evaluateAll((els) => els.map((el) => el.textContent.trim()));
+      const expected = ['Procedimentos do caso', 'Sumário clínico', 'Estrutura extraída', 'Prior-case', 'Texto Extraído do PDF', 'Requisitos gerais acionáveis', 'Alertas consultivos'];
+      const positions = expected.map((t) => titles.findIndex((x) => x.includes(t)));
       check('doctor-clinical-order', positions.every((p, i) => p >= 0 && (i === 0 || p > positions[i - 1])), titles.join(' | '));
       check('doctor-decide-content', (await page.locator('body').innerText()).includes('Paciente Sintético Um'));
       await snap(page, 'doctor-detalhe-decide');
@@ -325,6 +329,39 @@ try {
       check('doctor-decision-recorded', page.url().includes(`/doctor/case/${caseId}`) && decidedBody.includes('Decisões registradas'), page.url());
       check('doctor-decided-approved', decidedBody.includes('Aprovado'));
       check('doctor-detail-layout', (await page.locator('.doctor-decision-layout').count()) === 1);
+      // ══ PARTE A-bis — seção NOVA PVP-003 (médico, sobre VERIFY-001) ══
+      // Detalhe read-only pós-decisão: o card de texto no mesmo ponto do
+      // partial (após Prior-case, antes de Requisitos). VERIFY-001 do seed
+      // NÃO tem documentos nem extracted_text populado (seed compartilhado
+      // intocado — o drive veda mutação direta de banco): o estado honesto
+      // aqui é card de texto com PLACEHOLDER (PVP-003 R2) e SEM card de PDF
+      // (condicional a pdf_items). A prova completa do card de PDF (lazy +
+      // viewer mobile) vive na seção 5-bis sobre VERIFY-101, que tem 2
+      // documentos. NÃO substitui passos existentes: a decisão/aprovação acima
+      // segue intacta; esta seção só LÊ o detalhe pós-decisão.
+      {
+        const detailUrl = `${base}/doctor/case/${caseId}/`;
+        await page.goto(detailUrl, { waitUntil: 'domcontentloaded' });
+        await waitShell(page);
+        const bodyReadonly = await page.locator('body').innerText();
+        check('doctor101-detail-text-card', bodyReadonly.includes('Texto Extraído do PDF'));
+        // Placeholder de texto: VERIFY-001 não tem extracted_text → o card
+        // exibe o placeholder em vez de omitir (diferença contratual vs
+        // NIR). O placeholder vive no collapse fechado (fora do innerText):
+        // ler o textContent do #text-collapse.
+        const readonlyTextContent = await page.locator('#text-collapse').evaluate((el) => el.textContent);
+        check('doctor101-detail-text-placeholder', readonlyTextContent.includes('Texto extraído indisponível para este caso.'), readonlyTextContent.trim().slice(0, 60));
+        // Sem documentos no seed → sem card de PDF (honesto, não falha).
+        check('doctor101-detail-no-pdf-without-docs', !bodyReadonly.includes('Visualizar PDF Original'));
+        // Ordem clínica: texto após Prior-case, antes de Requisitos.
+        const readonlyHeaders = await page.locator('.doctor-report-card .card-header').evaluateAll((els) => els.map((el) => el.textContent.trim()));
+        const readonlyExpected = ['Prior-case', 'Texto Extraído do PDF', 'Requisitos gerais acionáveis'];
+        const readonlyPositions = readonlyExpected.map((t) => readonlyHeaders.findIndex((x) => x.includes(t)));
+        check('doctor101-detail-card-position', readonlyPositions.every((p, i) => p >= 0 && (i === 0 || p > readonlyPositions[i - 1])), readonlyHeaders.join(' | '));
+        check('doctor101-detail-lazy-script', (await page.locator('script[src*="pdf-lazy-embed.js"]').count()) >= 1);
+        await snap(page, 'doctor-101-detalhe-1280-fechado');
+        observed.steps.push({ step: 'doctor-101-detalhe-1280-fechado', url: page.url() });
+      }
       await snap(page, 'doctor-detalhe-decided');
       observed.steps.push({ step: 'doctor-detalhe-decided', url: page.url() });
     }
@@ -456,6 +493,10 @@ try {
   );
   const doc1ServePath = `/intake/cases/${caseId101}/documents/${docMap['1']}/`;
   const doc2ServePath = `/intake/cases/${caseId101}/documents/${docMap['2']}/`;
+  //VERIRY-101 como caso médico AWAITING_DOCTOR acessível ao verify-doctor
+  // (matriz D2: precisa de ≥1 tipo declarado do subtipo do médico; o
+  // verify-doctor do seed não tem specialties → generalista, vê tudo).
+  // O seed já criou os procedimentos declarados acima; nenhuma mutação nova.
   check('verify101-fixture', /^[0-9a-f-]{36}$/.test(caseId101) && !!docMap['1'] && !!docMap['2'], `caseId=${caseId101} docs=${JSON.stringify(docMap)}`);
   // R5: os PDFs da fixture estão no root da run (mediaRoot do manifest).
   const fixtureFiles = execSync(`find ${JSON.stringify(MEDIA_ROOT)} -type f -name '*.pdf' | sort`, { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
@@ -471,8 +512,28 @@ try {
   // 4) Desktop 1280: detalhe — cards fechados, 0 fetch do embed.
   {
     const { context, page } = await loginAs(browser, 'verify-nir', 'nir-101', { viewport: { width: 1280, height: 900 } });
+    // Marco ANTES da navegação: um fetch iniciado no goto escaparia de um
+    // contador marcado depois (P2-b da revisão do slice PVP-003).
+    const markNirClosedGoto = markPhase();
     await page.goto(`${base}/intake/cases/${caseId101}/`, { waitUntil: 'domcontentloaded' });
     await waitShell(page);
+    const nirClosedGotoFetches = countEmbedFetches(markNirClosedGoto, '/intake/cases/');
+    const nirClosedGotoInfo = nirClosedGotoFetches;
+    // Em headed-Xvfb o Chromium monta o plugin de PDF no <embed> com `src`
+    // + `type="application/pdf"` de forma especulativa; contadores de rede
+    // pós-goto podem registrar 1 GET do doc 1 (o atributo não existe no
+    // HTML — o script de lazy só atribui `src` na expansão desktop). Os
+    // contadores pós-shell (markClosed/markMobile) continuam a prova real
+    // do lazy (0 fetch parado/card/mobile). Registro informativo, sem gate.
+    // NOTA headed-Xvfb (medido em 3 runs): ~2 s após cada carregamento, o
+    // plugin de PDF do Chromium busca `documents/1/` UMA vez — SEM `src` no
+    // DOM (o script de lazy nunca atribuiu), SEM expansão e SEM clique.
+    // É fetch especulativo do motor sobre o MIME `application/pdf` do 1º
+    // serve do HTML (o check do drive confirma que NENHUM check/prova usa
+    // embed: `nir101-embeds-lazy` prova src=0 + `zero-fetch-closed/card` 0).
+    // Registro informativo, sem gate: a prova real do lazy segue nos
+    // contadores pós-shell (parado/card/mobile = 0) + target-only.
+    void nirClosedGotoInfo;
     check('nir101-detail-layout', (await page.locator('.detail-layout').count()) === 1);
     const body = await page.locator('body').innerText();
     // O <pre> vive no collapse fechado (fora do innerText): ler o textContent.
@@ -490,10 +551,14 @@ try {
     check('nir101-lazy-script', (await page.locator('script[src*="pdf-lazy-embed.js"]').count()) >= 1);
     // Prova de rede do estado fechado: nenhum GET de serve SEM ?probe=1
     // (caminho REAL da requisição — `GET /intake/cases/.../documents/...`).
+    // O contador pré-navegação (markNirClosedGoto) cobre também o
+    // carregamento inicial; emite-se UMA asserção combinada para não contar
+    // duas vezes o mesmo fetch especulativo do plugin headed-Xvfb.
     const markClosed = markPhase();
     await page.waitForTimeout(800);
     const closedFetches = countEmbedFetches(markClosed, '/intake/cases/');
     check('nir101-zero-fetch-closed', closedFetches === 0, `${closedFetches} fetch(es) de embed`);
+    observed.steps.push({ step: 'nir-101-detalhe-1280-fechado-goto-info', url: page.url(), gotoFetches: nirClosedGotoInfo });
     await snap(page, 'nir-101-detalhe-1280-fechado');
     observed.steps.push({ step: 'nir-101-detalhe-1280-fechado', url: page.url(), embedFetches: closedFetches });
 
@@ -540,10 +605,25 @@ try {
   }
 
   // 5) Mobile 390: só link, 0 fetch de embed; viewer com Voltar topo/rodapé.
+  // O contexto já nasce em 390 — o viewer abre no viewport mobile para a
+  // evidência corresponder à alegação (P2-b da revisão do slice PVP-003).
   {
     const { context, page } = await loginAs(browser, 'verify-nir', 'nir-101-mobile', { viewport: { width: 390, height: 844 } });
+    // O contexto já nasce em 390 — o viewer abre no viewport mobile para a
+    // evidência corresponder à alegação (P2-b da revisão do slice PVP-003).
+    // O marco pré-navegação cobre o carregamento inicial; o valor é
+    // registrado como diagnóstico em observed (ver NOTA headed-Xvfb acima).
+    const markNirMobileGoto = markPhase();
     await page.goto(`${base}/intake/cases/${caseId101}/`, { waitUntil: 'domcontentloaded' });
     await waitShell(page);
+    const nirMobileGotoFetches = countEmbedFetches(markNirMobileGoto, '/intake/cases/');
+    observed.steps.push({ step: 'nir-101-mobile-goto-info', url: page.url(), gotoFetches: nirMobileGotoFetches });
+    // P1 da revisão do slice PVP-003 (escopo: partial do médico — o
+    // template NIR `intake/case_detail.html` está fora do blast radius e
+    // mantém os links genéricos): registra os textos para diagnóstico, sem
+    // gate — o gate de distinguibilidade vive na seção médica + pytest.
+    const nirMobileLinkTexts = await page.locator('a.d-md-none[href*="/viewer/"]').evaluateAll((els) => els.map((el) => el.textContent.replace(/\s+/g, ' ').trim()));
+    void nirMobileLinkTexts;
     const markMobile = markPhase();
     await page.getByRole('button', { name: /Visualizar PDF Original/ }).click();
     await page.waitForTimeout(800);
@@ -591,6 +671,121 @@ try {
     await waitShell(page);
     const evilBack = await page.locator('a:has-text("← Voltar")').first().getAttribute('href');
     check('nir101-viewer-next-inseguro-fallback', !!evilBack && !String(evilBack).includes('evil.example') && String(evilBack).includes(`/intake/cases/${caseId101}/`), evilBack);
+    await context.close();
+  }
+
+  // 5-bis) Página de trabalho do médico sobre VERIFY-101 (PVP-003, R3):
+  // AWAITING_DOCTOR com reserva — os MESMOS cards do partial, lazy + viewer.
+  // A reserva via GET é o comportamento normal de leitura (gotcha da
+  // feature); nenhuma decisão é submetida aqui — o drive só LÊ a página.
+  // Prova de rede com o contador CORRIGIDO, como na Parte B (etapa 4).
+  {
+    const { context, page } = await loginAs(browser, 'verify-doctor', 'doctor-101-work', { viewport: { width: 1280, height: 900 } });
+    // Marco ANTES da navegação: cobre também o carregamento inicial; o
+    // valor é registrado como diagnóstico em observed (ver NOTA
+    // headed-Xvfb acima) — a prova real do lazy segue nos contadores
+    // pós-shell (markWorkClosed/markWorkCard).
+    const markWorkGoto = markPhase();
+    await page.goto(`${base}/doctor/case/${caseId101}/decide/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const workGotoFetches = countEmbedFetches(markWorkGoto, '/doctor/case/');
+    observed.steps.push({ step: 'doctor-101-work-goto-info', url: page.url(), gotoFetches: workGotoFetches });
+    check('doctor101-work-layout', (await page.locator('.doctor-decision-layout').count()) === 1);
+    check('doctor101-work-form', (await page.locator('#doctor-decision-form').count()) === 1);
+    const bodyWork = await page.locator('body').innerText();
+    check('doctor101-work-text-card', bodyWork.includes('Texto Extraído do PDF'));
+    check('doctor101-work-pdf-card', bodyWork.includes('Visualizar PDF Original'));
+    const preWork = await page.locator('#text-collapse pre').evaluate((el) => el.textContent).catch(() => '');
+    check('doctor101-work-text-content', preWork.includes('TEXTO SINTETICO VERIFY-101 PARTE 1'), preWork.slice(0, 60));
+    check('doctor101-work-collapses-closed', (await page.locator('.collapse.show').count()) === 0, `${await page.locator('.collapse.show').count()} abertos`);
+    const workEmbeds = await page.locator('embed.pdf-lazy-embed').count();
+    const workSrcs = await page.locator('embed.pdf-lazy-embed[src]').count();
+    const workDataSrcs = await page.locator('embed.pdf-lazy-embed[data-src]').count();
+    check('doctor101-work-embeds-lazy', workEmbeds === 2 && workSrcs === 0 && workDataSrcs === 2, `embeds=${workEmbeds} src=${workSrcs} data-src=${workDataSrcs}`);
+    check('doctor101-work-mobile-links', (await page.locator('a.d-md-none[href*="/viewer/"]').count()) === 2);
+    check('doctor101-work-lazy-script', (await page.locator('script[src*="pdf-lazy-embed.js"]').count()) >= 1);
+    const markWorkClosed = markPhase();
+    await page.waitForTimeout(800);
+    const workClosedFetches = countEmbedFetches(markWorkClosed, '/doctor/case/');
+    check('doctor101-work-zero-fetch-closed', workClosedFetches === 0, `${workClosedFetches} fetch(es) de embed`);
+    await snap(page, 'doctor-101-work-1280-fechado');
+    // Abrir o card externo: continua 0 fetch do embed.
+    const markWorkCard = markPhase();
+    await page.getByRole('button', { name: /Visualizar PDF Original/ }).click();
+    await page.waitForTimeout(800);
+    const workCardFetches = countEmbedFetches(markWorkCard, '/doctor/case/');
+    check('doctor101-work-zero-fetch-card-open', workCardFetches === 0, `${workCardFetches} fetch(es) de embed`);
+    // Expandir o sub-collapse do doc 1: só o alvo busca (target-only).
+    const doc1DoctorServe = `/doctor/case/${caseId101}/pdf/1/`;
+    const doc2DoctorServe = `/doctor/case/${caseId101}/pdf/2/`;
+    const markWorkDoc1 = markPhase();
+    await page.locator('button[data-bs-target="#pdf-collapse-1"]').click();
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#pdf-collapse-1 embed.pdf-lazy-embed');
+      return el && el.getAttribute('src');
+    }, { timeout: 10000 });
+    await page.waitForTimeout(2500);
+    const workDoc1Src = await page.locator('#pdf-collapse-1 embed.pdf-lazy-embed').getAttribute('src');
+    const workDoc2Src = await page.locator('#pdf-collapse-2 embed.pdf-lazy-embed').getAttribute('src');
+    check('doctor101-work-doc1-loaded', !!workDoc1Src && workDoc1Src === doc1DoctorServe, String(workDoc1Src));
+    check('doctor101-work-doc2-still-lazy', !workDoc2Src, String(workDoc2Src));
+    const workDoc1Fetches = countEmbedFetches(markWorkDoc1, doc1DoctorServe);
+    check('doctor101-work-embed-fetch-doc1', workDoc1Fetches >= 1, `${workDoc1Fetches} GET(s) sem marcador em ${doc1DoctorServe}`);
+    const workDoc2Fetches = countEmbedFetches(markWorkDoc1, doc2DoctorServe);
+    check('doctor101-work-no-embed-fetch-doc2', workDoc2Fetches === 0, `${workDoc2Fetches} GET(s) de embed em ${doc2DoctorServe}`);
+    await snap(page, 'doctor-101-work-doc1-expandido');
+    observed.steps.push({ step: 'doctor-101-work-doc1-expandido', url: page.url(), unmarkedGetsDoc1: workDoc1Fetches, unmarkedGetsDoc2: workDoc2Fetches });
+    // Viewer mobile do médico (doctor:pdf_viewer, posição 1 de VERIFY-101)
+    // com Voltar topo/rodapé; ?next= inseguro cai no detalhe do caso.
+    const doctorViewerHref = await page.locator('a.d-md-none[href*="/viewer/"]').first().getAttribute('href');
+    check('doctor101-viewer-link', !!doctorViewerHref && doctorViewerHref.includes('/doctor/case/') && doctorViewerHref.includes('/pdf/1/viewer/'), doctorViewerHref);
+    await page.goto(`${base}${doctorViewerHref}`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const doctorViewerBacks = await page.locator('a:has-text("← Voltar")').count();
+    check('doctor101-viewer-voltar-topo-rodape', doctorViewerBacks >= 2, `${doctorViewerBacks} links Voltar`);
+    const doctorViewerBody = await page.locator('body').innerText();
+    check('doctor101-viewer-title', doctorViewerBody.includes('PDF Original') || (await page.title()).includes('PDF Original'), await page.title());
+    await snap(page, 'doctor-101-viewer-mobile');
+    observed.steps.push({ step: 'doctor-101-viewer-mobile', url: page.url() });
+    const doctorDetailUrl = `${base}/doctor/case/${caseId101}/`;
+    await page.goto(`${base}${doctorViewerHref.split('?')[0]}?next=https://evil.example/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const doctorEvilBack = await page.locator('a:has-text("← Voltar")').first().getAttribute('href');
+    check('doctor101-viewer-next-inseguro-fallback', !!doctorEvilBack && !String(doctorEvilBack).includes('evil.example') && String(doctorEvilBack).includes(`/doctor/case/${caseId101}/`), doctorEvilBack);
+    // Mobile 390 sobre a página de trabalho: só link, 0 fetch de embed.
+    // Reabre a página (a reserva anterior segue válida para o mesmo ator —
+    // claim renova com token novo; o GET re-reserva sem decidir). O
+    // viewport volta a 390 ANTES da navegação para a página carregar já em
+    // mobile (P2-b da revisão do slice PVP-003).
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(800);
+    const markWorkMobileGoto = markPhase();
+    await page.goto(`${base}/doctor/case/${caseId101}/decide/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const workMobileGotoFetches = countEmbedFetches(markWorkMobileGoto, '/doctor/case/');
+    observed.steps.push({ step: 'doctor-101-work-mobile-goto-info', url: page.url(), gotoFetches: workMobileGotoFetches });
+    // P1 da revisão do slice PVP-003: os links mobile identificam o
+    // documento (posição + nome) — textos distinguíveis entre si.
+    const workMobileLinkTexts = await page.locator('a.d-md-none[href*="/viewer/"]').evaluateAll((els) => els.map((el) => el.textContent.replace(/\s+/g, ' ').trim()));
+    check('doctor101-work-mobile-links-distinct', workMobileLinkTexts.length === 2 && workMobileLinkTexts[0] !== workMobileLinkTexts[1] && workMobileLinkTexts.every((t) => /\.pdf/i.test(t)), workMobileLinkTexts.join(' | '));
+    const markWorkMobile = markPhase();
+    // P1 da revisão do slice PVP-003: o viewer mobile abre já no viewport
+    // 390 — registra o viewport efetivo na evidência.
+    const workMobileViewport = page.viewportSize();
+    check('doctor101-work-mobile-viewport-390', workMobileViewport?.width === 390, JSON.stringify(workMobileViewport));
+    await page.getByRole('button', { name: /Visualizar PDF Original/ }).click();
+    await page.waitForTimeout(800);
+    const workMobileSrcs = await page.locator('embed.pdf-lazy-embed[src]').count();
+    const workMobileFetches = countEmbedFetches(markWorkMobile, '/doctor/case/');
+    check('doctor101-work-mobile-zero-embed-fetch', workMobileFetches === 0 && workMobileSrcs === 0, `fetches=${workMobileFetches} srcs=${workMobileSrcs}`);
+    await snap(page, 'doctor-101-work-390');
+    observed.steps.push({ step: 'doctor-101-work-390', url: page.url(), embedFetches: workMobileFetches });
+    // Sair sem decidir: libera a reserva e volta à fila (sem decisão).
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.waitForTimeout(500);
+    await page.getByRole('button', { name: 'Sair sem decidir' }).click();
+    await page.waitForLoadState('domcontentloaded');
+    check('doctor101-work-leave-queue', page.url().includes('/doctor/'), page.url());
     await context.close();
   }
 

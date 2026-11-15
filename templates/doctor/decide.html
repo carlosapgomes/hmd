@@ -134,4 +134,7 @@
 {% if lock_token %}
 <script src="{% static 'js/work_lock.js' %}" defer></script>
 {% endif %}
+<!-- Lazy-embed dos PDFs do relatório (slice PVP-003, R2/D2): sem ele os
+     sub-collapses de documento não carregam por expansão no desktop. -->
+<script src="{% static 'js/pdf-lazy-embed.js' %}"></script>
 {% endblock %}

@@ -4,6 +4,28 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.18] — 2026-11-15
+
+**Listas operacionais na paridade geométrica + ícone no molde do CHD** —
+2 changes (`operational-lists-ui-parity`, `pwa-icon-simplify`), 6 slices
+TDD com revisão independente por slice. Suíte 1707 → **1762** (+55
+
+testes). Sem migrations (deploy direto).
+
+- **operational-lists-ui-parity** — as quatro listas operacionais ficam com a
+  geometria e a densidade do ats-web, com evidência visual desktop/mobile:
+  pendentes do médico e do agendador no modelo de página completo (container,
+  título, filtro de subtipo server-side com contagens nas opções + busca
+  client-side, alerta, cards em conteúdo 8/12 × tempo/ação 4/12, dias em
+  tela, locks preservados); decididos do médico vira card orientado ao
+  resultado (disposição e horário por procedimento, sem agregação);
+  meus casos alinhado ao padrão; navegação operacional harmonizada. Sem
+  mudança em regras de regulação.
+- **pwa-icon-simplify** — ícone HMD no molde do CHD: fundo plano na
+  primária `#0d4a8a` + sigla "HMD" centralizada, sem a faixa teal (que não
+  existe na referência); variante `-contrast` e PNGs regenerados;
+  diferenciação entre os sistemas segue pela cor/sigla/nome.
+
 ## [0.1.17] — 2026-11-14
 
 **Runbook de deploy unificado + repo neutro em infra** — 3 changes de

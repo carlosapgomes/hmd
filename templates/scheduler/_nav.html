@@ -8,13 +8,17 @@ filtro por estado atual (`?tab=processados`) — e NÃO `Processados Hoje`.
 A terceira aba do molde (`Buscar caso antigo`) não tem rota no HMD e é
 omitida (sem historical_search). Os valores `?tab=` são preservados.
 
+OLI-005 (D11): contador único por `data-count` + pseudo-elemento CSS
+(`.nav-count-badge`); sem badge `<span>` inline. Pendentes usa estilo
+de ação (danger); demais contadores são neutros; zero oculto por CSS.
+
 Contexto:
   active_tab: "aguardando" | "processados" (opcional; nenhuma aba fica
   ativa se ausente — página transversal fora da fila).
-  pending_count / processed_count: int (opcionais, para badges; os
-  plugs os alimentam com os totais do context processor `queue_counters`
-  (scheduler_pending_count/scheduler_processed_count), sob os mesmos
-  guards da view).
+  pending_count / processed_count: int (opcionais; quando presentes —
+  inclusive zero — vão para `data-count` via context processor
+  `queue_counters` (scheduler_pending_count/scheduler_processed_count),
+  sob os mesmos guards da view).
 
 Uso:
   {% include "scheduler/_nav.html" with active_tab=tab %}
@@ -23,26 +27,24 @@ Uso:
   <ul class="nav nav-pills gap-2">
     <li class="nav-item">
       {% if pending_count is not None %}
-      <a class="nav-link text-white {% if active_tab == 'aguardando' %}active{% endif %} {% if pending_count %}nav-count-badge nav-count-badge--danger{% endif %}"
+      <a class="nav-link nav-count-badge nav-count-badge--danger {% if active_tab == 'aguardando' %}active{% endif %}"
          data-count="{{ pending_count }}"
-         {% if pending_count %}style="position:relative;"{% endif %}
          {% if active_tab == 'aguardando' %}aria-current="page"{% endif %}
-         href="{% url 'scheduler:queue' %}?tab=aguardando">Pendentes{% if pending_count %} <span class="badge rounded-pill text-bg-light text-dark">{{ pending_count }}</span>{% endif %}</a>
+         href="{% url 'scheduler:queue' %}?tab=aguardando">Pendentes</a>
       {% else %}
-      <a class="nav-link text-white {% if active_tab == 'aguardando' %}active{% endif %}"
+      <a class="nav-link {% if active_tab == 'aguardando' %}active{% endif %}"
          {% if active_tab == 'aguardando' %}aria-current="page"{% endif %}
          href="{% url 'scheduler:queue' %}?tab=aguardando">Pendentes</a>
       {% endif %}
     </li>
     <li class="nav-item">
       {% if processed_count is not None %}
-      <a class="nav-link text-white {% if active_tab == 'processados' %}active{% endif %} {% if processed_count %}nav-count-badge nav-count-badge--neutral{% endif %}"
+      <a class="nav-link nav-count-badge nav-count-badge--neutral {% if active_tab == 'processados' %}active{% endif %}"
          data-count="{{ processed_count }}"
-         {% if processed_count %}style="position:relative;"{% endif %}
          {% if active_tab == 'processados' %}aria-current="page"{% endif %}
-         href="{% url 'scheduler:queue' %}?tab=processados">Processados{% if processed_count %} <span class="badge rounded-pill text-bg-light text-dark">{{ processed_count }}</span>{% endif %}</a>
+         href="{% url 'scheduler:queue' %}?tab=processados">Processados</a>
       {% else %}
-      <a class="nav-link text-white {% if active_tab == 'processados' %}active{% endif %}"
+      <a class="nav-link {% if active_tab == 'processados' %}active{% endif %}"
          {% if active_tab == 'processados' %}aria-current="page"{% endif %}
          href="{% url 'scheduler:queue' %}?tab=processados">Processados</a>
       {% endif %}

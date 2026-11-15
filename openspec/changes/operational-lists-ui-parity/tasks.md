@@ -40,7 +40,7 @@ Contract: `slices/slice-004-nir-my-cases-page-parity.md`
 
 Contract: `slices/slice-005-operational-nav-parity.md`
 
-- [ ] 5.1 Escrever RED das pills ativas/hover/focus, contadores exclusivamente por `data-count`/pseudo-elemento, zero oculto e ausência de badges inline; verificar falhas sem alterar rotas/labels/contagens.
-- [ ] 5.2 Implementar CSS HMD e partials `_nav` de NIR/médico/agendador, preservando `aria-current`, filtros do NIR e acesso por papel; verificar testes de navegação e identidade reservada.
-- [ ] 5.3 Atualizar `header-nav-4-papeis` e comprovar desktop/mobile; executar a regressão das quatro jornadas de listas, conferir medidas e ausência de contadores duplicados/overflow com PNG/snapshot/JSON.
-- [ ] 5.4 Rodar quality gate e mapa `verify-hmd` aplicável completo, produzir `/tmp/hmd-slice-oli-005-report.md` com a matriz dos cinco slices e submeter o change à revisão final; não arquivar nem iniciar outro change.
+- [x] 5.1 Escrever RED das pills ativas/hover/focus, contadores exclusivamente por `data-count`/pseudo-elemento, zero oculto e ausência de badges inline; verificar falhas sem alterar rotas/labels/contagens.
+- [x] 5.2 Implementar CSS HMD e partials `_nav` de NIR/médico/agendador, preservando `aria-current`, filtros do NIR e acesso por papel; verificar testes de navegação e identidade reservada.
+- [x] 5.3 Atualizar `header-nav-4-papeis` e comprovar desktop/mobile; executar a regressão das quatro jornadas de listas, conferir medidas e ausência de contadores duplicados/overflow com PNG/snapshot/JSON.
+- [x] 5.4 Rodar quality gate e mapa `verify-hmd` aplicável completo, produzir `/tmp/hmd-slice-oli-005-report.md` com a matriz dos cinco slices e submeter o change à revisão final; não arquivar nem iniciar outro change.

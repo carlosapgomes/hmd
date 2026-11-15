@@ -146,8 +146,13 @@ def test_pills_with_counters_stay(
     assert 'aria-label="Filtro pela situação do caso"' not in body
     assert 'href="/intake/cases/?tab=active"' in body
     assert 'href="/intake/cases/?tab=closed"' in body
-    assert ">2</span>" in body
-    assert ">1</span>" in body
+    # OLI-005 (D11): contador único por data-count + pseudo-elemento;
+    # sem badge <span> inline no link (o número não é texto do DOM).
+    assert 'data-count="2"' in body
+    assert 'data-count="1"' in body
+    assert "nav-count-badge--neutral" in body
+    assert ">2</span>" not in body
+    assert ">1</span>" not in body
 
 
 @pytest.mark.django_db

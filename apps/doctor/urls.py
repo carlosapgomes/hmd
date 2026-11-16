@@ -23,6 +23,18 @@ urlpatterns: list[URLPattern] = [
     path("partials/queue/", views.queue_partial, name="queue_partial"),
     path("case/<uuid:case_id>/", views.case_detail, name="case_detail"),
     path("case/<uuid:case_id>/pdf/<int:position>/", views.case_pdf, name="case_pdf"),
+    path(
+        "case/<uuid:case_id>/attachments/<int:attachment_id>/",
+        views.serve_attachment,
+        name="serve_attachment",
+    ),
+    # Viewer do anexo PDF (slice PVP-006, R2): SÓ application/pdf (imagens
+    # usam link direto + <img loading=lazy>); mesmo guard de serve_attachment.
+    path(
+        "case/<uuid:case_id>/attachments/<int:attachment_id>/viewer/",
+        views.attachment_pdf_viewer,
+        name="attachment_pdf_viewer",
+    ),
     # Viewer mobile do PDF original (slice PVP-003, R1): mesmo guard de
     # case_pdf; ?next= validado com resolve_safe_next_url.
     path(

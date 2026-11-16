@@ -71,6 +71,7 @@ from django_fsm import TransitionNotAllowed
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
+from apps.attachments.models import CaseAttachment
 from apps.cases.closure import post_doctor_denial_reply
 from apps.cases.locks import (
     CaseLockConflictError,
@@ -424,7 +425,124 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     context["documents"] = documents
     context["pdf_items"] = _build_pdf_items(case, documents)
     context["detail_url"] = reverse("doctor:case_detail", args=[case.case_id])
+    attachments: list[CaseAttachment] = list(case.attachments.all())
+    context["attachment_items"] = _build_attachment_items(case, attachments)
     return render(request, "doctor/case_detail.html", context)
+
+
+def _build_attachment_items(
+    case: Case, attachments: list[CaseAttachment]
+) -> list[dict[str, object]]:
+    """Itens do bloco Arquivo dos cards de anexo (slice PVP-006, R3/D1).
+
+    A view monta ``attachment_items`` (pk/nome/size/serve/viewer/is_pdf)
+    com ``reverse`` — o partial (compartilhado detalhe×trabalho) apenas
+    itera, sem lógica de URL (mesma regra do ``_build_pdf_items`` do
+    slice PVP-003).
+    """
+    attachment_items: list[dict[str, object]] = []
+    for position, attachment in enumerate(attachments, start=1):
+        attachment_items.append(
+            {
+                "attachment_id": attachment.pk,
+                "position": position,
+                "original_filename": attachment.original_filename,
+                "size": attachment.size_bytes,
+                "is_pdf": attachment.content_type == "application/pdf",
+                "serve_url": reverse("doctor:serve_attachment", args=[case.case_id, attachment.pk]),
+                "viewer_url": reverse(
+                    "doctor:attachment_pdf_viewer", args=[case.case_id, attachment.pk]
+                ),
+            }
+        )
+    return attachment_items
+
+
+@role_required("doctor", "admin")
+def attachment_pdf_viewer(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    attachment_id: int,
+) -> HttpResponse:
+    """Viewer mobile do anexo PDF acessível ao médico (slice PVP-006, R2).
+
+    Mesmo guard fail-closed de ``serve_attachment``: papel ativo doctor/admin
+    + ``can_access_case`` com o papel ativo da sessão (subtipo fora da matriz
+    → 403, como no serve). SOMENTE para ``application/pdf`` (D3): imagens e
+    outros tipos usam link direto + ``<img loading=lazy>`` (sem viewer
+    dedicado) → 404. Anexo de outro caso, inexistente ou sem arquivo → 404
+    fail-closed (lição P1-4). O ``?next=`` passa por ``resolve_safe_next_url``
+    (fallback ao detalhe); o template ``pdf_viewer/mobile_pdf_viewer.html``
+    recebe título, URLs do PDF e volta.
+    """
+    user = _require_user(request)
+    active_role = request.session.get("active_role", "")
+    case = get_object_or_404(
+        Case.objects.only("case_id", "status"),
+        case_id=case_id,
+    )
+    if not can_access_case(user, case, active_role=active_role):
+        raise PermissionDenied
+    attachment = get_object_or_404(
+        CaseAttachment.objects.only("pk", "case_id", "file", "content_type"),
+        case=case,
+        pk=attachment_id,
+    )
+    if attachment.content_type != "application/pdf" or not attachment.file:
+        raise Http404
+    detail_url = reverse("doctor:case_detail", args=[case.case_id])
+    serve_url = reverse("doctor:serve_attachment", args=[case.case_id, attachment_id])
+    back_url = resolve_safe_next_url(request, detail_url)
+    return render(
+        request,
+        "pdf_viewer/mobile_pdf_viewer.html",
+        {
+            "viewer_title": "Anexo",
+            "pdf_url": serve_url,
+            "fallback_pdf_url": serve_url,
+            "back_url": back_url,
+        },
+    )
+
+
+@role_required("doctor", "admin")
+@xframe_options_sameorigin
+def serve_attachment(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    attachment_id: int,
+) -> HttpResponse:
+    """Serve o arquivo do anexo do caso acessível ao médico (slice PVP-006, R1).
+
+    Mesmo guard do detalhe (papel ativo + matriz D2 via ``can_access_case``).
+    Content-type ORIGINAL do upload e filename original; anexo de outro caso,
+    inexistente ou sem arquivo → 404 fail-closed (lição P1-4). O arquivo
+    servido é o ORIGINAL (R4 — bytes intactos, mesma política de
+    ``case_pdf``).
+    """
+    user = _require_user(request)
+    active_role = request.session.get("active_role", "")
+    case = get_object_or_404(
+        Case.objects.only("case_id", "status"),
+        case_id=case_id,
+    )
+    if not can_access_case(user, case, active_role=active_role):
+        raise PermissionDenied
+    attachment = get_object_or_404(
+        CaseAttachment.objects.only("pk", "case_id", "file", "original_filename", "content_type"),
+        case=case,
+        pk=attachment_id,
+    )
+    if not attachment.file:
+        raise Http404
+    return cast(
+        HttpResponse,
+        FileResponse(
+            attachment.file.open("rb"),
+            content_type=attachment.content_type or "application/octet-stream",
+            filename=attachment.original_filename or "anexo",
+        ),
+    )
 
 
 @role_required("doctor", "admin")
@@ -547,6 +665,8 @@ def _render_decision_page(
     context["documents"] = work_documents
     context["pdf_items"] = _build_pdf_items(case, work_documents)
     context["detail_url"] = reverse("doctor:case_detail", args=[case.case_id])
+    work_attachments: list[CaseAttachment] = list(case.attachments.all())
+    context["attachment_items"] = _build_attachment_items(case, work_attachments)
     context["form"] = form
     context["decision_fields"] = form.procedure_fields()
     context["lock_token"] = lock_token

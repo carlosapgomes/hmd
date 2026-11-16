@@ -49,10 +49,10 @@ Contract: `slices/slice-005-dashboard-report-cards.md`
 
 Contract: `slices/slice-006-attachment-viewing-nir-doctor.md`
 
-- [ ] 6.1 Escrever RED dos serves + viewers de anexo NIR/médico e da visualização nos cards (PDF/JPEG); executar os testes focados e registrar as falhas esperadas.
-- [ ] 6.2 Implementar rotas e blocos de arquivo nos cards (embed lazy PDF, imagem lazy, viewer mobile só PDF); verificar testes focados verdes e as suítes attachments/intake/doctor sem regressão.
-- [ ] 6.3 Estender/rodar a jornada `detalhe-papeis` (anexos NIR + médico, PDF/JPEG; setup VERIFY-103 via runVerifyPy) em 1280/390, com PNG/snapshot/JSON.
-- [ ] 6.4 Rodar o quality gate, produzir `/tmp/hmd-slice-pvp-006-report.md` e submeter o slice à revisão independente antes de avançar.
+- [x] 6.1 Escrever RED dos serves + viewers de anexo NIR/médico e da visualização nos cards (PDF/JPEG); executar os testes focados e registrar as falhas esperadas.
+- [x] 6.2 Implementar rotas e blocos de arquivo nos cards (embed lazy PDF, imagem lazy, viewer mobile só PDF); verificar testes focados verdes e as suítes attachments/intake/doctor sem regressão.
+- [x] 6.3 Estender/rodar a jornada `detalhe-papeis` (anexos NIR + médico, PDF/JPEG; setup VERIFY-103 via runVerifyPy) em 1280/390, com PNG/snapshot/JSON.
+- [x] 6.4 Rodar o quality gate, produzir `/tmp/hmd-slice-pvp-006-report.md` e submeter o slice à revisão independente antes de avançar.
 
 ## 7. Slice 007 — Anexos no painel + verificação final
 

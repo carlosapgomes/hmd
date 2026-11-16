@@ -453,8 +453,11 @@ def test_detail_lists_attachments_status(
     pdf_factory: Callable[..., SimpleUploadedFile],
     attachment_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R4: o detalhe do NIR lista cada anexo com nome/tamanho/tipo e o status
-    legível via ``get_status_display`` (bloco "Anexos")."""
+    """R4 (ajustado pelo slice PVP-006, R3): o detalhe do NIR lista cada anexo
+    com nome legível (original_filename, nunca o path UUID), tamanho e status
+    legível via ``get_status_display`` (bloco "Anexos") — mais o link de
+    abertura e a visualização colapsável do arquivo. O content-type bruto
+    saiu da listagem (imagem usa ``<img>`` do próprio serve; PDF usa embed)."""
     case = create_case_with_documents(
         user=nir_user,
         role=NIR_ROLE,
@@ -475,8 +478,9 @@ def test_detail_lists_attachments_status(
     block = body[block_start:]
     assert "evidencia-1.jpg" in block  # nome legível (original_filename), não o path UUID
     assert stored_name not in block
-    assert "image/jpeg" in block
-    assert str(attachment.size_bytes) in block
+    assert "Abrir anexo" in block
+    assert reverse("intake:serve_attachment", args=[case.case_id, attachment.pk]) in block
+    assert 'loading="lazy"' in block
     assert attachment.get_status_display() in block  # "Pendente"
 
 

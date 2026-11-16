@@ -140,6 +140,53 @@ reserva e volta à fila).
 DISPLAY=:99 node .pi/skills/verify-hmd/scripts/browser/drive-detalhe-papeis.mjs --run <tmp/verification/hmd-verify-...>
 ```
 
+## PVP-006 — anexos NIR + médico com visualização do arquivo (VERIFY-103)
+
+Prova dos serves de anexo por papel (`intake:serve_attachment` /
+`doctor:serve_attachment`), viewers dedicados de anexo PDF
+(`intake:attachment_pdf_viewer` / `doctor:attachment_pdf_viewer`) e dos
+blocos de visualização nos cards de anexo (pdf-original-viewer-parity,
+slice PVP-006), sem substituir passos existentes (Partes A/B/C + seções
+médicas seguem intactas): fixture VERIFY-103 criada NO DRIVE via
+runVerifyPy (nunca no seed compartilhado).
+
+- Fixture: criador `verify-nir`, `AWAITING_DOCTOR`, 1 `CaseDocument` com PDF
+  VÁLIDO (PyMuPDF, 1 página com texto "VERIFY-103 doc 1") + 1 anexo PDF
+  válido (texto "VERIFY-103 anexo PDF") + 1 anexo JPEG real (pixmap PyMuPDF
+  do texto "VERIFY-103 anexo JPEG"), rows diretas com paths seguros por
+  UUID (mesmo callable), declarados no envio conceitual de anexos
+  (`validate_attachments` com `pdf_count=1`); acessível ao médico como
+  VERIFY-001/002 (matriz D2 — verify-doctor generalista); IDs/nomes fora de
+  VERIFY-001/002 e das faixas de outros drives (faixa 103 dedicada a anexos
+  nesta jornada); `HMD_VERIFY_MEDIA_ROOT` validado sob a run.
+- NIR detalhe com anexos (1280): cada anexo tem "Abrir anexo"
+  (`target=_blank`, serve do papel); expansão do sub-collapse do anexo PDF
+  ⇒ ≥1 GET sem marcador SÓ na URL de serve do anexo (caminho REAL
+  `GET /intake/cases/.../attachments/...`); fechado/mobile = 0 via gates
+  pré-goto URL-exatos AMBOS os anexos; anexo JPEG expõe
+  `<img loading="lazy" src=serve>` (sem viewer dedicado).
+- Viewer mobile do anexo (390): aberto JÁ no viewport 390, `← Voltar` no
+  topo (sticky) e no rodapé; PDF.js renderiza o anexo em canvas;
+  `?next=` inseguro cai no detalhe do NIR.
+- Médico: página de trabalho do VERIFY-103 (`AWAITING_DOCTOR`, reserva via
+  GET — leitura normal, sem decisão submetida; saída por «Sair sem decidir»
+  libera a reserva e volta à fila): bloco "Arquivo" no card do anexo após
+  a evidência, com as mesmas provas essenciais (lazy target-only, zero
+  fechado, `<img loading="lazy">` do JPEG). Detalhe read-only cobre o
+  mesmo partial (mesmas URLs de serve/viewer — pytest cobre as duas
+  páginas).
+- Sem anexos: detalhe NIR do VERIFY-101 segue sem a seção "Abrir anexo"
+  (regressão — a ausência prova que o bloco é condicional a anexos).
+- Cleanup imediato no próprio drive (após a prova médica): deleta o caso
+  VERIFY-103 (PROTECT de anexos exige apagar anexos/documentos primeiro —
+  feito na ordem) + remove os diretórios de mídia da run sob
+  `case_documents/<case_id>` e `case_attachments/<case_id>` (com guarda de
+  contenção sob a run); check `verify103-cleanup` prova `count() == 0`.
+- Evidência: `nir-103-detalhe-1280-fechado`, `nir-103-anexo-pdf-expandido`,
+  `nir-103-anexo-jpeg-expandido`, `nir-103-detalhe-390`,
+  `nir-103-viewer-mobile`, `doctor-103-work-anexo-expandido`
+  (+ `report.json`/`observed-state.json`).
+
 ## PVP-004 — viewer + dois cards do agendador (VERIFY-102 + VERIFY-101)
 
 Prova dos cards `Texto Extraído do PDF` (OMITIDO quando vazio — padrão NIR,

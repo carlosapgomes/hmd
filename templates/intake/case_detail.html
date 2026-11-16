@@ -338,37 +338,67 @@
     </noscript>
     {% endif %}
 
-    {% if attachments %}
-    <!-- Anexos (attachment-processing-ocr, slice 001, R4): evidências
-         enviadas junto com o relatório — bloco ausente quando não há anexos.
-         Sem conteúdo de verificação (o resultado clínico é do médico). -->
+    {% if attachment_items %}
+    <!-- Anexos (attachment-processing-ocr, slice 001, R4; visualização
+         slice PVP-006, R3): evidências enviadas junto com o relatório —
+         bloco ausente quando não há anexos (UI idêntica a antes).
+         Cada anexo tem link "Abrir anexo" (serve do papel) + visualização
+         colapsável: PDF → embed lazy (data-src SEM src) + link mobile ao
+         viewer dedicado identificando o arquivo; imagem → img lazy + link
+         direto (sem viewer dedicado). Sem conteúdo de verificação (o
+         resultado clínico é do médico). -->
     <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Anexos</h2>
       </div>
-      <div class="table-responsive">
-        <table class="table align-middle mb-0">
-          <thead class="table-light">
-            <tr>
-              <th scope="col">Arquivo</th>
-              <th scope="col">Tamanho</th>
-              <th scope="col">Tipo</th>
-              <th scope="col">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for attachment in attachments %}
-            <tr>
-              <td>{{ attachment.original_filename }}</td>
-              <td>{{ attachment.size_bytes|filesizeformat }}</td>
-              <td class="text-muted">{{ attachment.content_type }}</td>
-              <td>{{ attachment.get_status_display }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+      <div class="card-body">
+        {% for item in attachment_items %}
+        <div class="mb-3">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="fw-semibold">{{ item.attachment.original_filename }}</span>
+            <span class="badge rounded-pill text-bg-light border text-muted">{{ item.attachment.get_status_display }}</span>
+            <a href="{{ item.serve_url }}" class="btn btn-sm btn-outline-primary ms-auto" target="_blank" rel="noopener">Abrir anexo</a>
+          </div>
+          {% if item.is_pdf %}
+          <a href="{{ item.viewer_url }}?next={{ detail_url|urlencode }}"
+             class="btn btn-sm btn-outline-primary d-inline-flex d-md-none align-items-center gap-2">
+            Anexo {{ item.position }} — {{ item.attachment.original_filename }}
+          </a>
+          <button class="btn btn-link text-decoration-none p-0 text-dark d-none d-md-inline-flex align-items-center gap-2 collapsed" type="button"
+                  data-bs-toggle="collapse" data-bs-target="#attachment-collapse-{{ item.attachment.pk }}"
+                  aria-expanded="false" aria-controls="attachment-collapse-{{ item.attachment.pk }}">
+            Visualizar <small class="text-muted">({{ item.attachment.size_bytes|filesizeformat }})</small>
+          </button>
+          <div class="collapse" id="attachment-collapse-{{ item.attachment.pk }}" data-pdf-doc-collapse>
+            <div class="mb-2 text-end">
+              <a href="{{ item.serve_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Abrir em nova aba</a>
+            </div>
+            <div class="ratio ratio-1x1 d-none d-md-block" style="max-height: 80vh;">
+              <embed class="pdf-lazy-embed" data-src="{{ item.serve_url }}" type="application/pdf" style="width: 100%; height: 100%;">
+            </div>
+          </div>
+          {% else %}
+          <button class="btn btn-link text-decoration-none p-0 text-dark align-items-center gap-2 collapsed" type="button"
+                  data-bs-toggle="collapse" data-bs-target="#attachment-collapse-{{ item.attachment.pk }}"
+                  aria-expanded="false" aria-controls="attachment-collapse-{{ item.attachment.pk }}">
+            Visualizar <small class="text-muted">({{ item.attachment.size_bytes|filesizeformat }})</small>
+          </button>
+          <div class="collapse" id="attachment-collapse-{{ item.attachment.pk }}">
+            <div class="mb-2 text-end">
+              <a href="{{ item.serve_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Abrir em nova aba</a>
+            </div>
+            <img loading="lazy" src="{{ item.serve_url }}" class="img-fluid" alt="{{ item.attachment.original_filename }}">
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
       </div>
     </div>
+    <noscript>
+      {% for item in attachment_items %}
+      <p class="mb-2"><a href="{{ item.serve_url }}" target="_blank" rel="noopener">Abrir anexo {{ item.attachment.original_filename }}</a></p>
+      {% endfor %}
+    </noscript>
     {% endif %}
 
     <div class="row g-4">

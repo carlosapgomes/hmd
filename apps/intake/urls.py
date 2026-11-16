@@ -37,6 +37,18 @@ urlpatterns: list[URLPattern] = [
         views.pdf_viewer,
         name="pdf_viewer",
     ),
+    path(
+        "cases/<uuid:case_id>/attachments/<int:attachment_id>/",
+        views.serve_attachment,
+        name="serve_attachment",
+    ),
+    # Viewer do anexo PDF (slice PVP-006, R2): SÓ application/pdf (imagens
+    # usam link direto + <img loading=lazy>); mesmo guard de criador do serve.
+    path(
+        "cases/<uuid:case_id>/attachments/<int:attachment_id>/viewer/",
+        views.attachment_pdf_viewer,
+        name="attachment_pdf_viewer",
+    ),
     # Ações do gate NIR (slice 005, D6/D7): apenas caso retido do próprio criador.
     path(
         "cases/<uuid:case_id>/gate/release/",

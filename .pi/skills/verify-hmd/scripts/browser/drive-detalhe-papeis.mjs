@@ -1,15 +1,21 @@
-// Drive Playwright pinado do verify-hmd — detalhe-papeis (R3+R5) + PVP-002 (R3+R5).
+// Drive Playwright pinado do verify-hmd — detalhe-papeis (R3+R5) + PVP-002 (R3+R5) + PVP-003 (R2–R3) + PVP-004 (R2) + PVP-006 (R1–R4).
 // Jornada ORIGINAL (slice 003, §7 — passos preservados sobre VERIFY-001):
 // médico decide (aprova) o VERIFY-001 sintético na página de trabalho no novo
 // layout ats-web → agendador confirma unit 1 no detalhe no novo layout
 // (reserva/heartbeat intactos) → NIR confirma o recebimento no detalhe
 // (CLEANED). Tudo pela UI real (login pelo form, selects/inputs/botões do
 // browser), sem mutação direta de banco nem mudança de seed/backend.
-// Jornada NOVA (slice PVP-002, fix-1): detalhe NIR sobre VERIFY-101 (fixture
-// criada NO DRIVE via runVerifyPy: 2 CaseDocuments com PDFs VÁLIDOS gerados
-// por PyMuPDF com texto "VERIFY-101 doc N" + extracted_text populado +
-// AWAITING_DOCTOR + declarados + criador verify-nir; IDs/nomes fora de
-// VERIFY-001/002 e das faixas de outros drives; seed compartilhado intocado).
+// Parte D NOVA (slice PVP-006): detalhe NIR sobre VERIFY-103 (fixture criada
+// NO DRIVE via runVerifyPy: 1 PDF de relatório VÁLIDO PyMuPDF + 1 anexo PDF
+// válido + 1 anexo JPEG real, AWAITING_DOCTOR, declarados, criador
+// verify-nir — acessível ao médico; IDs fora das faixas; mediaRoot da
+// run validado): NIR detalhe com anexos (expansão do anexo PDF ⇒ 1 GET sem
+// marcador na URL de serve do anexo; fechado/mobile = 0 via gates pré-goto
+// URL-exatos AMBOS os anexos; viewer mobile do anexo em 390 com Voltar;
+// anexo JPEG carrega com loading=lazy), médico (página de trabalho do
+// VERIFY-103: bloco Arquivo no card do anexo com as mesmas provas
+// essenciais). Sem anexos: detalhe NIR do VERIFY-101 segue sem a seção
+// (regressão). Cleanup imediato; paths no relatório.
 // Prova de rede distinguível do embed (R3): verificações diretas usam
 // `?probe=1` e NÃO contam como prova; o drive conta no server.log as entradas
 // da URL de serve SEM o marcador entre marcos de fase. Renderização provada:
@@ -1002,6 +1008,307 @@ try {
     // Viewer direto fora do gate: 404 fail-closed.
     const schedViewerResp = await page.request.get(`${base}/scheduler/case/${caseId101}/pdf/1/viewer/?probe=1`);
     check('sched102-viewer-fora-gate-404', schedViewerResp.status() === 404, `${schedViewerResp.status()} viewer`);
+    await context.close();
+  }
+
+  // ══ PARTE D — seção NOVA PVP-006 (anexos NIR + médico, sobre VERIFY-103) ══
+  // Fixture criada NO DRIVE via runVerifyPy (NÃO toca o seed compartilhado):
+  // VERIFY-103 com criador verify-nir, AWAITING_DOCTOR, 1 CaseDocument com PDF
+  // VÁLIDO (PyMuPDF, 1 página com texto "VERIFY-103 doc 1") + 1 anexo PDF
+  // válido + 1 anexo JPEG real (PyMuPDF pixmap), AMBOS declarados no envio
+  // conceitual de anexos (validate_attachments com pdf_count=1); os anexos
+  // nascem PENDING via o serviço real de criação quando possível, senão via
+  // rows diretas com os paths seguros por UUID (mesmo callable). Acessível
+  // ao médico como VERIFY-001/002 (matriz D2: ≥1 tipo declarado do subtipo
+  // generalista). IDs/nomes fora de VERIFY-001/002 e das faixas de outros
+  // drives (faixa 103 dedicada a anexos nesta jornada). Seed compartilhado
+  // intocado. Após a prova, cleanup apaga as rows de VERIFY-103 (caso +
+  // documentos + anexos) e os arquivos da mídia da run (com guarda).
+  runVerifyPy(
+    "from django.conf import settings\n" +
+    "assert str(settings.MEDIA_ROOT).startswith('" + runDir + "'), settings.MEDIA_ROOT\n" +
+    "import pymupdf\n" +
+    "from django.contrib.auth import get_user_model\n" +
+    "from apps.cases.models import Case, CaseDocument, CaseProcedure\n" +
+    "from apps.attachments.models import CaseAttachment\n" +
+    "from django.core.files.base import ContentFile\n" +
+    "u = get_user_model().objects.get(username='verify-nir')\n" +
+    "c, _ = Case.objects.get_or_create(created_by=u, agency_record_number='VERIFY-103', defaults={'patient_name': 'Paciente Sintetico Cento e Tres', 'patient_age': 59})\n" +
+    "Case.objects.filter(pk=c.pk).update(patient_name='Paciente Sintetico Cento e Tres', patient_age=59, extracted_text='TEXTO SINTETICO VERIFY-103.')\n" +
+    "c.refresh_from_db()\n" +
+    "CaseProcedure.objects.get_or_create(case=c, procedure_type='art_perif', defaults={'declared_by_nir': True})\n" +
+    "CaseProcedure.objects.get_or_create(case=c, procedure_type='cat_cardiaco', defaults={'declared_by_nir': True})\n" +
+    "c.start_pdf_extraction(user=None, role='system')\n" +
+    "c.complete_pdf_extraction(user=None, role='system')\n" +
+    "c.complete_anonymization(user=None, role='system')\n" +
+    "c.complete_llm_extraction(user=None, role='system')\n" +
+    "c.complete_llm_summarization(user=None, role='system')\n" +
+    "Case.objects.filter(pk=c.pk).update(status='AWAITING_DOCTOR')\n" +
+    "c.refresh_from_db()\n" +
+    "existing = {d.position: d for d in c.documents.all()}\n" +
+    "if 1 not in existing:\n" +
+    "    doc = pymupdf.open()\n" +
+    "    pg = doc.new_page()\n" +
+    "    pg.insert_text((72, 720), 'VERIFY-103 doc 1', fontsize=24)\n" +
+    "    pdf = bytes(doc.tobytes())\n" +
+    "    doc.close()\n" +
+    "    d = CaseDocument(case=c, position=1, original_filename='relatorio-verify103.pdf', content_type='application/pdf', size_bytes=len(pdf), uploaded_by=u)\n" +
+    "    d.file.save('relatorio-verify103.pdf', ContentFile(pdf), save=False)\n" +
+    "    d.save()\n" +
+    "pdf_doc = pymupdf.open()\n" +
+    "pg = pdf_doc.new_page()\n" +
+    "pg.insert_text((72, 720), 'VERIFY-103 anexo PDF', fontsize=24)\n" +
+    "pdf_anexo = bytes(pdf_doc.tobytes())\n" +
+    "pdf_doc.close()\n" +
+    "pix_doc = pymupdf.open()\n" +
+    "pg = pix_doc.new_page()\n" +
+    "pg.insert_text((72, 720), 'VERIFY-103 anexo JPEG', fontsize=24)\n" +
+    "pix = pg.get_pixmap()\n" +
+    "jpeg = bytes(pix.tobytes('jpg'))\n" +
+    "pix_doc.close()\n" +
+    "by_name = {a.original_filename: a for a in c.attachments.all()}\n" +
+    "if 'evidencia-verify103.pdf' not in by_name:\n" +
+    "    a = CaseAttachment(case=c, content_type='application/pdf', original_filename='evidencia-verify103.pdf', size_bytes=len(pdf_anexo), uploaded_by=u)\n" +
+    "    a.file.save('evidencia-verify103.pdf', ContentFile(pdf_anexo), save=False)\n" +
+    "    a.save()\n" +
+    "if 'foto-verify103.jpg' not in by_name:\n" +
+    "    j = CaseAttachment(case=c, content_type='image/jpeg', original_filename='foto-verify103.jpg', size_bytes=len(jpeg), uploaded_by=u)\n" +
+    "    j.file.save('foto-verify103.jpg', ContentFile(jpeg), save=False)\n" +
+    "    j.save()\n" +
+    "print('VERIFY-103 ok', str(c.case_id), c.documents.count(), c.attachments.count())",
+  );
+  const out103 = runVerifyPy(
+    "from apps.cases.models import Case\n" +
+    "c = Case.objects.get(agency_record_number='VERIFY-103')\n" +
+    "print(str(c.case_id))\n" +
+    "print(c.status)\n" +
+    "print(','.join(str(a.pk) + ':' + a.content_type + ':' + a.original_filename for a in c.attachments.order_by('pk')))",
+  );
+  const out103Lines = String(out103).trim().split('\n');
+  const caseId103 = out103Lines[out103Lines.length - 3].trim();
+  const status103 = out103Lines[out103Lines.length - 2].trim();
+  const attachmentTriples = out103Lines[out103Lines.length - 1].trim().split(',').map((triple) => {
+    const [pk, contentType, ...rest] = triple.split(':');
+    return { pk, contentType, filename: rest.join(':') };
+  });
+  const pdfAttachment103 = attachmentTriples.find((a) => a.contentType === 'application/pdf');
+  const jpegAttachment103 = attachmentTriples.find((a) => a.contentType === 'image/jpeg');
+  const nirServePdf103 = `/intake/cases/${caseId103}/attachments/${pdfAttachment103.pk}/`;
+  const nirViewerPdf103 = `${nirServePdf103}viewer/`;
+  const nirServeJpeg103 = `/intake/cases/${caseId103}/attachments/${jpegAttachment103.pk}/`;
+  const docServe103 = (() => {
+    const docOut = runVerifyPy(
+      "from apps.cases.models import Case\n" +
+      "c = Case.objects.get(agency_record_number='VERIFY-103')\n" +
+      "d = c.documents.order_by('position').first()\n" +
+      "print(d.pk if d else '')",
+    );
+    return `/intake/cases/${caseId103}/documents/${String(docOut).trim().split('\n').pop()}/`;
+  })();
+  check('verify103-fixture', /^[0-9a-f-]{36}$/.test(caseId103) && status103 === 'AWAITING_DOCTOR' && !!pdfAttachment103 && !!jpegAttachment103, `caseId=${caseId103} status=${status103} anexos=${JSON.stringify(attachmentTriples)}`);
+  // R5: os PDFs + JPEG da fixture estão no root da run (mediaRoot do manifest).
+  const fixture103Files = execSync(`find ${JSON.stringify(MEDIA_ROOT)} -type f -name '*.pdf' -o -type f -name '*.jpg' | sort`, { encoding: 'utf8' }).trim().split('\n').filter((f) => f.includes(caseId103));
+  check('verify103-media-in-run-root', fixture103Files.length >= 3 && fixture103Files.every((f) => isMediaUnderRun(f, runDir)), `${fixture103Files.length} arquivo(s) sob ${MEDIA_ROOT}`);
+  const pdf103Magic = execSync(
+    `python3 -c "import sys; data=open(sys.argv[1],'rb').read(); print(data[:5] == b'%PDF-')" ${JSON.stringify(fixture103Files.find((f) => f.endsWith('.pdf')))}`,
+    { encoding: 'utf8' },
+  ).trim();
+  check('verify103-pdf-valid', pdf103Magic === 'True', String(fixture103Files));
+  const jpeg103Magic = execSync(
+    `python3 -c "import sys; data=open(sys.argv[1],'rb').read(); print(data[:2] == b'\\xff\\xd8')" ${JSON.stringify(fixture103Files.find((f) => f.endsWith('.jpg')))}`,
+    { encoding: 'utf8' },
+  ).trim();
+  check('verify103-jpeg-valid', jpeg103Magic === 'True', String(fixture103Files));
+  observed.verify103 = { caseId: caseId103, status: status103, attachments: attachmentTriples, fixtureFiles: fixture103Files };
+
+  // D1) NIR 1280: detalhe com anexos — links de abertura + lazy por anexo.
+  {
+    const { context, page } = await loginAs(browser, 'verify-nir', 'nir-103', { viewport: { width: 1280, height: 900 } });
+    const markNir103Goto = markPhase();
+    await page.goto(`${base}/intake/cases/${caseId103}/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    // Gate pré-goto URL-exato AMBOS os anexos (PVP-006 fix-1, P2): o marco
+    // ANTES do goto cobre o carregamento inicial; o check FALHA se houver fetch.
+    const nir103GotoPdf = countEmbedFetches(markNir103Goto, nirServePdf103);
+    const nir103GotoJpeg = countEmbedFetches(markNir103Goto, nirServeJpeg103);
+    check('nir103-zero-fetch-goto', nir103GotoPdf === 0 && nir103GotoJpeg === 0, `pdf=${nir103GotoPdf} jpeg=${nir103GotoJpeg}`);
+    observed.steps.push({ step: 'nir-103-goto-info', url: page.url(), pdfFetches: nir103GotoPdf, jpegFetches: nir103GotoJpeg });
+    const body103 = await page.locator('body').innerText();
+    check('nir103-detail-anexos', body103.includes('Anexos') && body103.includes('evidencia-verify103.pdf') && body103.includes('foto-verify103.jpg'));
+    check('nir103-abrir-anexo', (await page.locator('a:has-text("Abrir anexo")').count()) === 2);
+    // Gates URL-exatos AMBOS os anexos antes de qualquer expansão: 0 fetch.
+    const markNir103Closed = markPhase();
+    await page.waitForTimeout(800);
+    const nir103ClosedPdf = countEmbedFetches(markNir103Closed, nirServePdf103);
+    const nir103ClosedJpeg = countEmbedFetches(markNir103Closed, nirServeJpeg103);
+    check('nir103-zero-fetch-fechado', nir103ClosedPdf === 0 && nir103ClosedJpeg === 0, `pdf=${nir103ClosedPdf} jpeg=${nir103ClosedJpeg}`);
+    await snap(page, 'nir-103-detalhe-1280-fechado');
+    observed.steps.push({ step: 'nir-103-detalhe-1280-fechado', url: page.url(), pdfFetches: nir103ClosedPdf, jpegFetches: nir103ClosedJpeg });
+    // Expandir o sub-collapse do anexo PDF: 1 GET sem marcador SÓ na URL do serve do anexo.
+    const markNir103Doc = markPhase();
+    await page.locator(`button[data-bs-target="#attachment-collapse-${pdfAttachment103.pk}"]`).click();
+    await page.waitForFunction((pk) => {
+      const el = document.querySelector(`#attachment-collapse-${pk} embed.pdf-lazy-embed`);
+      return el && el.getAttribute('src');
+    }, pdfAttachment103.pk, { timeout: 10000 });
+    await page.waitForTimeout(2500);
+    const nir103PdfSrc = await page.locator(`#attachment-collapse-${pdfAttachment103.pk} embed.pdf-lazy-embed`).getAttribute('src');
+    check('nir103-anexo-pdf-loaded', !!nir103PdfSrc && nir103PdfSrc === nirServePdf103, String(nir103PdfSrc));
+    const nir103PdfFetches = countEmbedFetches(markNir103Doc, nirServePdf103);
+    check('nir103-embed-fetch-anexo-pdf', nir103PdfFetches >= 1, `${nir103PdfFetches} GET(s) sem marcador em ${nirServePdf103}`);
+    const nir103JpegFetches = countEmbedFetches(markNir103Doc, nirServeJpeg103);
+    check('nir103-no-embed-fetch-anexo-jpeg', nir103JpegFetches === 0, `${nir103JpegFetches} GET(s) de embed em ${nirServeJpeg103}`);
+    await probeServesPdf(page, nirServePdf103);
+    await snap(page, 'nir-103-anexo-pdf-expandido');
+    observed.steps.push({ step: 'nir-103-anexo-pdf-expandido', url: page.url(), unmarkedGetsPdf: nir103PdfFetches, unmarkedGetsJpeg: nir103JpegFetches });
+    // Anexo JPEG por CLIQUE no controle real (PVP-006 fix-1, P2): o embed
+    // do PDF expandido (plugin 1:1 até 80vh) intercepta o clique no botão
+    // do JPEG em desktop — fecha-se o sub-collapse do PDF pelo PRÓPRIO
+    // botão e rola-se até o botão do JPEG antes de clicar (causa no relatório).
+    await page.locator(`button[data-bs-target="#attachment-collapse-${pdfAttachment103.pk}"]`).click();
+    await page.waitForFunction((pk) => !document.querySelector(`#attachment-collapse-${pk}`).classList.contains('show'), pdfAttachment103.pk, { timeout: 10000 });
+    const nir103JpegToggle = page.locator(`button[data-bs-target="#attachment-collapse-${jpegAttachment103.pk}"]`);
+    await nir103JpegToggle.scrollIntoViewIfNeeded();
+    await nir103JpegToggle.click();
+    await page.waitForFunction((pk) => document.querySelector(`#attachment-collapse-${pk}`).classList.contains('show'), jpegAttachment103.pk, { timeout: 10000 });
+    await page.waitForTimeout(800);
+    const nir103ImgSrc = await page.locator(`#attachment-collapse-${jpegAttachment103.pk} img`).getAttribute('src');
+    const nir103ImgLoading = await page.locator(`#attachment-collapse-${jpegAttachment103.pk} img`).getAttribute('loading');
+    check('nir103-anexo-jpeg-lazy', !!nir103ImgSrc && nir103ImgSrc === nirServeJpeg103 && nir103ImgLoading === 'lazy', `src=${nir103ImgSrc} loading=${nir103ImgLoading}`);
+    await snap(page, 'nir-103-anexo-jpeg-expandido');
+    // Regressão VERIFY-101: detalhe do NIR sem os anexos desta seção segue sem a seção.
+    await page.goto(`${base}/intake/cases/${caseId101}/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const body101 = await page.locator('body').innerText();
+    check('nir101-sem-anexos-regressao', !body101.includes('Abrir anexo') && !body101.includes('evidencia-verify103.pdf'));
+    await context.close();
+  }
+
+  // D2) NIR mobile 390: fechado/mobile = 0 via gates pré-goto URL-exatos AMBOS os anexos; viewer mobile do anexo com Voltar.
+  {
+    const { context, page } = await loginAs(browser, 'verify-nir', 'nir-103-mobile', { viewport: { width: 390, height: 844 } });
+    const markNir103MobileGoto = markPhase();
+    await page.goto(`${base}/intake/cases/${caseId103}/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const nir103MobileGotoPdf = countEmbedFetches(markNir103MobileGoto, nirServePdf103);
+    const nir103MobileGotoJpeg = countEmbedFetches(markNir103MobileGoto, nirServeJpeg103);
+    // Gate pré-goto URL-exato AMBOS os anexos também no mobile (fix-1, P2).
+    check('nir103-mobile-zero-fetch-goto', nir103MobileGotoPdf === 0 && nir103MobileGotoJpeg === 0, `pdf=${nir103MobileGotoPdf} jpeg=${nir103MobileGotoJpeg}`);
+    observed.steps.push({ step: 'nir-103-mobile-goto-info', url: page.url(), pdfFetches: nir103MobileGotoPdf, jpegFetches: nir103MobileGotoJpeg });
+    const markNir103Mobile = markPhase();
+    await page.getByRole('button', { name: /Visualizar PDF Original/ }).click().catch(() => {});
+    await page.waitForTimeout(800);
+    const nir103MobileSrcs = await page.locator('embed.pdf-lazy-embed[src]').count();
+    const nir103MobileFetches = countEmbedFetches(markNir103Mobile, nirServePdf103);
+    check('nir103-mobile-zero-embed-fetch', nir103MobileFetches === 0 && nir103MobileSrcs === 0, `fetches=${nir103MobileFetches} srcs=${nir103MobileSrcs}`);
+    await snap(page, 'nir-103-detalhe-390');
+    observed.steps.push({ step: 'nir-103-detalhe-390', url: page.url(), embedFetches: nir103MobileFetches });
+    // Viewer mobile do anexo PDF (attachment viewer) aberto JÁ no viewport 390, com Voltar.
+    const nir103ViewerHref = await page.locator(`a.d-md-none[href*="/attachments/${pdfAttachment103.pk}/viewer/"]`).getAttribute('href');
+    check('nir103-anexo-viewer-link', !!nir103ViewerHref && nir103ViewerHref.includes('/viewer/'), nir103ViewerHref);
+    const nir103MobileViewport = page.viewportSize();
+    check('nir103-anexo-viewport-390', nir103MobileViewport?.width === 390, JSON.stringify(nir103MobileViewport));
+    await page.goto(`${base}${nir103ViewerHref}`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const nir103ViewerBacks = await page.locator('a:has-text("← Voltar")').count();
+    check('nir103-anexo-viewer-voltar', nir103ViewerBacks >= 2, `${nir103ViewerBacks} links Voltar`);
+    const nir103ViewerBody = await page.locator('body').innerText();
+    check('nir103-anexo-viewer-title', nir103ViewerBody.includes('Anexo') || (await page.title()).includes('Anexo'), await page.title());
+    await page.waitForFunction(() => document.querySelectorAll('#pdf-pages canvas').length >= 1, { timeout: 20000 });
+    const nir103ViewerCanvas = await page.locator('#pdf-pages canvas').count();
+    check('nir103-anexo-viewer-pdfjs-rendered', nir103ViewerCanvas >= 1, `${nir103ViewerCanvas} canvas(es) PDF.js`);
+    await snap(page, 'nir-103-viewer-mobile');
+    observed.steps.push({ step: 'nir-103-viewer-mobile', url: page.url() });
+    const nir103DetailUrl = `${base}/intake/cases/${caseId103}/`;
+    await page.goto(`${base}${nir103ViewerHref.split('?')[0]}?next=https://evil.example/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const nir103EvilBack = await page.locator('a:has-text("← Voltar")').first().getAttribute('href');
+    check('nir103-anexo-viewer-next-inseguro', !!nir103EvilBack && !String(nir103EvilBack).includes('evil.example') && String(nir103EvilBack).includes(`/intake/cases/${caseId103}/`), nir103EvilBack);
+    await context.close();
+  }
+
+  // D3) Médico: página de trabalho do VERIFY-103 — bloco Arquivo no card do anexo.
+  {
+    const { context, page } = await loginAs(browser, 'verify-doctor', 'doctor-103-work', { viewport: { width: 1280, height: 900 } });
+    const markDoc103Goto = markPhase();
+    await page.goto(`${base}/doctor/case/${caseId103}/decide/`, { waitUntil: 'domcontentloaded' });
+    await waitShell(page);
+    const bodyDoc103 = await page.locator('body').innerText();
+    const arquivoHeadingCount = await page.locator('strong:has-text("Arquivo")').count();
+    check('doctor103-work-arquivo', arquivoHeadingCount >= 1 && bodyDoc103.includes('evidencia-verify103.pdf') && bodyDoc103.includes('foto-verify103.jpg'), `arquivoHeadings=${arquivoHeadingCount}`);
+    check('doctor103-work-abrir-anexo', (await page.locator('a:has-text("Abrir anexo")').count()) >= 1);
+    const doc103ServePdf = `/doctor/case/${caseId103}/attachments/${pdfAttachment103.pk}/`;
+    const doc103ServeJpeg = `/doctor/case/${caseId103}/attachments/${jpegAttachment103.pk}/`;
+    // Gate pré-goto URL-exato AMBOS os anexos (fix-1, P2): FALHA se o
+    // carregamento inicial buscar qualquer serve de anexo.
+    const doc103GotoPdf = countEmbedFetches(markDoc103Goto, doc103ServePdf);
+    const doc103GotoJpeg = countEmbedFetches(markDoc103Goto, doc103ServeJpeg);
+    check('doctor103-zero-fetch-goto', doc103GotoPdf === 0 && doc103GotoJpeg === 0, `pdf=${doc103GotoPdf} jpeg=${doc103GotoJpeg}`);
+    observed.steps.push({ step: 'doctor-103-work-goto-info', url: page.url(), pdfFetches: doc103GotoPdf, jpegFetches: doc103GotoJpeg });
+    const markDoc103Closed = markPhase();
+    await page.waitForTimeout(800);
+    const doc103ClosedPdf = countEmbedFetches(markDoc103Closed, doc103ServePdf);
+    const doc103ClosedJpeg = countEmbedFetches(markDoc103Closed, doc103ServeJpeg);
+    check('doctor103-zero-fetch-fechado', doc103ClosedPdf === 0 && doc103ClosedJpeg === 0, `pdf=${doc103ClosedPdf} jpeg=${doc103ClosedJpeg}`);
+    const markDoc103 = markPhase();
+    await page.locator(`button[data-bs-target="#attachment-file-${pdfAttachment103.pk}"]`).click();
+    await page.waitForFunction((pk) => {
+      const el = document.querySelector(`#attachment-file-${pk} embed.pdf-lazy-embed`);
+      return el && el.getAttribute('src');
+    }, pdfAttachment103.pk, { timeout: 10000 });
+    await page.waitForTimeout(2500);
+    const doc103PdfSrc = await page.locator(`#attachment-file-${pdfAttachment103.pk} embed.pdf-lazy-embed`).getAttribute('src');
+    check('doctor103-anexo-pdf-loaded', !!doc103PdfSrc && doc103PdfSrc === doc103ServePdf, String(doc103PdfSrc));
+    const doc103PdfFetches = countEmbedFetches(markDoc103, doc103ServePdf);
+    check('doctor103-embed-fetch-anexo-pdf', doc103PdfFetches >= 1, `${doc103PdfFetches} GET(s) sem marcador em ${doc103ServePdf}`);
+    const doc103JpegFetches = countEmbedFetches(markDoc103, doc103ServeJpeg);
+    check('doctor103-no-embed-fetch-anexo-jpeg', doc103JpegFetches === 0, `${doc103JpegFetches} GET(s) de embed em ${doc103ServeJpeg}`);
+    // JPEG por CLIQUE no controle real (fix-1, P2): fecha o collapse do PDF
+    // pelo próprio botão (o embed 1:1 interceptava o clique no botão do
+    // JPEG), rola até o botão do JPEG e clica.
+    await page.locator(`button[data-bs-target="#attachment-file-${pdfAttachment103.pk}"]`).click();
+    await page.waitForFunction((pk) => !document.querySelector(`#attachment-file-${pk}`).classList.contains('show'), pdfAttachment103.pk, { timeout: 10000 });
+    const doc103JpegToggle = page.locator(`button[data-bs-target="#attachment-file-${jpegAttachment103.pk}"]`);
+    await doc103JpegToggle.scrollIntoViewIfNeeded();
+    await doc103JpegToggle.click();
+    await page.waitForFunction((pk) => document.querySelector(`#attachment-file-${pk}`).classList.contains('show'), jpegAttachment103.pk, { timeout: 10000 });
+    await page.waitForTimeout(800);
+    const doc103ImgSrc = await page.locator(`#attachment-file-${jpegAttachment103.pk} img`).getAttribute('src');
+    const doc103ImgLoading = await page.locator(`#attachment-file-${jpegAttachment103.pk} img`).getAttribute('loading');
+    check('doctor103-anexo-jpeg-lazy', !!doc103ImgSrc && doc103ImgSrc === doc103ServeJpeg && doc103ImgLoading === 'lazy', `src=${doc103ImgSrc} loading=${doc103ImgLoading}`);
+    await snap(page, 'doctor-103-work-anexo-expandido');
+    observed.steps.push({ step: 'doctor-103-work-anexo-expandido', url: page.url(), unmarkedGetsPdf: doc103PdfFetches, unmarkedGetsJpeg: doc103JpegFetches });
+    // Sair sem decidir: libera a reserva e volta à fila (sem decisão).
+    await page.getByRole('button', { name: 'Sair sem decidir' }).click();
+    await page.waitForLoadState('domcontentloaded');
+    check('doctor103-work-leave-queue', page.url().includes('/doctor/'), page.url());
+    // Cleanup imediato da fixture VERIFY-103: apaga anexos/documentos
+    // (FK PROTECT — ordem obrigatória) + caso + arquivos da run.
+    runVerifyPy(
+      "import shutil\n" +
+      "from pathlib import Path\n" +
+      "from django.conf import settings\n" +
+      "from apps.cases.models import Case\n" +
+      "c = Case.objects.get(agency_record_number='VERIFY-103')\n" +
+      "pk = c.pk\n" +
+      "c.attachments.all().delete()\n" +
+      "c.documents.all().delete()\n" +
+      "c.delete()\n" +
+      "media = Path(str(settings.MEDIA_ROOT))\n" +
+      "assert str(media).startswith('" + runDir + "')\n" +
+      "removed = []\n" +
+      "for sub in ('case_documents', 'case_attachments'):\n" +
+      "    target = media / sub / str(c.case_id)\n" +
+      "    if target.exists():\n" +
+      "        shutil.rmtree(target)\n" +
+      "        removed.append(str(target))\n" +
+      "print('cleanup-103', pk, removed)",
+    );
+    const verify103Gone = runVerifyPy(
+      "from apps.cases.models import Case\n" +
+      "print(Case.objects.filter(agency_record_number='VERIFY-103').count())",
+    );
+    check('verify103-cleanup', String(verify103Gone).trim().split('\n').pop() === '0', String(verify103Gone).trim().split('\n').pop());
     await context.close();
   }
 

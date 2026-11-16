@@ -56,6 +56,7 @@ from django.views.decorators.http import require_POST
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
+from apps.attachments.models import CaseAttachment
 from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS, acknowledge_case_receipt
 from apps.cases.events import CaseEventType
 from apps.cases.locks import CaseLockConflictError
@@ -532,6 +533,21 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         }
         for document in documents
     ]
+    # Cards de anexo (slice PVP-006, R3/D1/D6): cada anexo listado tem link
+    # de abertura (serve do papel) + visualização colapsável — PDF recebe
+    # embed lazy + viewer dedicado; imagem recebe img lazy + link direto.
+    attachment_items = [
+        {
+            "attachment": attachment,
+            "position": position,
+            "is_pdf": attachment.content_type == "application/pdf",
+            "serve_url": reverse("intake:serve_attachment", args=[case.case_id, attachment.pk]),
+            "viewer_url": reverse(
+                "intake:attachment_pdf_viewer", args=[case.case_id, attachment.pk]
+            ),
+        }
+        for position, attachment in enumerate(attachments, start=1)
+    ]
 
     context = {
         "case": case,
@@ -540,6 +556,7 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         "pdf_items": pdf_items,
         "detail_url": detail_path,
         "attachments": attachments,
+        "attachment_items": attachment_items,
         "communications": communications,
         "procedure_rows": procedure_rows,
         # Resumo do card de divergência (R2/D2): declarados (com detecção no
@@ -718,6 +735,88 @@ def pdf_viewer(
             "fallback_pdf_url": serve_url,
             "back_url": back_url,
         },
+    )
+
+
+@role_required("nir")
+def attachment_pdf_viewer(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    attachment_id: int,
+) -> HttpResponse:
+    """Viewer mobile do anexo PDF do caso do próprio NIR (slice PVP-006, R2).
+
+    Mesmo guard fail-closed de ``serve_attachment``: queryset por criador —
+    caso alheio, anexo de outro caso ou inexistente → 404. SOMENTE para
+    ``application/pdf`` (D3): imagens e outros tipos usam link direto +
+    ``<img loading=lazy>`` (sem viewer dedicado) → 404. Anexo sem arquivo →
+    404 fail-closed (lição P1-4). O ``?next=`` passa por
+    ``resolve_safe_next_url`` (fallback ao detalhe); o template
+    ``pdf_viewer/mobile_pdf_viewer.html`` recebe título, URLs do PDF e volta.
+    """
+    user = _require_user(request)
+    case = get_object_or_404(
+        Case.objects.only("case_id", "created_by"),
+        case_id=case_id,
+        created_by=user,
+    )
+    attachment = get_object_or_404(
+        CaseAttachment.objects.only("pk", "case_id", "file", "content_type"),
+        case=case,
+        pk=attachment_id,
+    )
+    if attachment.content_type != "application/pdf" or not attachment.file:
+        raise Http404
+    detail_url = reverse("intake:case_detail", args=[case.case_id])
+    serve_url = reverse("intake:serve_attachment", args=[case.case_id, attachment_id])
+    back_url = resolve_safe_next_url(request, detail_url)
+    return render(
+        request,
+        "pdf_viewer/mobile_pdf_viewer.html",
+        {
+            "viewer_title": "Anexo",
+            "pdf_url": serve_url,
+            "fallback_pdf_url": serve_url,
+            "back_url": back_url,
+        },
+    )
+
+
+@role_required("nir")
+@xframe_options_sameorigin
+def serve_attachment(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    attachment_id: int,
+) -> HttpResponse:
+    """Serve o arquivo do anexo do caso do próprio NIR (slice PVP-006, R1).
+
+    Mesmo guard fail-closed de ``serve_document`` (queryset por criador —
+    caso alheio, anexo de outro caso ou inexistente → 404). Content-type
+    ORIGINAL do upload e filename original; anexo sem arquivo → 404
+    fail-closed (lição P1-4). O arquivo servido é o ORIGINAL (R4 — bytes
+    intactos, mesma política dos serves de documento).
+    """
+    user = _require_user(request)
+    case = get_object_or_404(
+        Case.objects.only("case_id", "created_by"),
+        case_id=case_id,
+        created_by=user,
+    )
+    attachment = get_object_or_404(
+        CaseAttachment.objects.only("pk", "case_id", "file", "original_filename", "content_type"),
+        case=case,
+        pk=attachment_id,
+    )
+    if not attachment.file:
+        raise Http404
+    return cast(
+        HttpResponse,
+        FileResponse(
+            attachment.file.open("rb"),
+            content_type=attachment.content_type or "application/octet-stream",
+            filename=attachment.original_filename or "anexo",
+        ),
     )
 
 

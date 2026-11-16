@@ -568,10 +568,16 @@ def _attachment_reidentified_text(
 def _build_attachment_card(attachment: CaseAttachment, case: Case) -> dict[str, object]:
     """Card exibível de um anexo (R1/D5): nome, método, status, badge e
     resumo/evidência re-identificados — SOMENTE quando processado (anexos
-    pendentes/processando/falhou não têm resumo, apenas o status)."""
+    pendentes/processando/falhou não têm resumo, apenas o status).
+
+    ``attachment_id`` (pk) ancora o bloco "Arquivo" do slice PVP-006 (R3):
+    a view monta as URLs de serve/viewer por anexo e o template casa
+    card×item pelo id (nomes de arquivo podem colidir entre anexos).
+    """
     status = attachment.status
     processed = status == AttachmentStatus.PROCESSED
     return {
+        "attachment_id": attachment.pk,
         "original_filename": attachment.original_filename,
         "method_label": _ATTACHMENT_METHOD_LABELS.get(attachment.extraction_method, ""),
         "status_label": _ATTACHMENT_STATUS_LABELS.get(status, status),

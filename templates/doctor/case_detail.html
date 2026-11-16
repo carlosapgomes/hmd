@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load role_labels %}
+{% load role_labels static %}
 
 {% block title %}{{ app_display_name }} — Caso {{ case_reference }}{% endblock %}
 
@@ -60,4 +60,10 @@
   </div>
 </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<!-- Lazy-embed dos PDFs do relatório (slice PVP-003, R2/D2): sem ele os
+     sub-collapses de documento não carregam por expansão no desktop. -->
+<script src="{% static 'js/pdf-lazy-embed.js' %}"></script>
 {% endblock %}

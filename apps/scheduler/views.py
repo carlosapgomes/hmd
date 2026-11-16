@@ -57,6 +57,7 @@ from django.db.models import F
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 from django_fsm import TransitionNotAllowed
 
@@ -72,6 +73,7 @@ from apps.cases.locks import (
     renew_case_lock,
 )
 from apps.cases.models import Case, CaseDocument, CaseStatus, DoctorDisposition
+from apps.cases.navigation import resolve_safe_next_url
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.units import unit_label
 
@@ -381,7 +383,12 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     can_view_pdf = case.scheduled_by_id == user.pk and case.status in PDF_ALLOWED_STATUSES
     context["can_view_pdf"] = can_view_pdf
     if can_view_pdf:
-        context["pdf_documents"] = list(case.documents.all())
+        # Cards do relatório (slice PVP-004, R2/D1): a view monta pdf_items
+        # (position/filename/size/serve/viewer) com reverse; o template itera.
+        context["case"] = case
+        documents: list[CaseDocument] = list(case.documents.all())
+        context["pdf_items"] = _build_pdf_items(case, documents)
+        context["detail_url"] = reverse("scheduler:case_detail", args=[case.case_id])
     return render(request, "scheduler/case_detail.html", context)
 
 
@@ -629,10 +636,76 @@ def case_leave(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     return redirect(reverse("scheduler:queue"))
 
 
+def _build_pdf_items(case: Case, documents: list[CaseDocument]) -> list[dict[str, object]]:
+    """Itens do card do PDF original (slice PVP-004, R2/D1).
+
+    A view monta ``pdf_items`` (position/filename/size/serve/viewer) com
+    ``reverse`` — o template apenas itera, sem lógica de URL (mesma regra do
+    slice PVP-003 no médico).
+    """
+    return [
+        {
+            "position": document.position,
+            "filename": document.original_filename,
+            "size": document.size_bytes,
+            "serve_url": reverse("scheduler:case_pdf", args=[case.case_id, document.position]),
+            "viewer_url": reverse("scheduler:pdf_viewer", args=[case.case_id, document.position]),
+        }
+        for document in documents
+    ]
+
+
+@role_required("scheduler", "admin")
+def pdf_viewer(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    position: int,
+) -> HttpResponse:
+    """Viewer mobile do PDF original do caso processado pelo próprio agendador.
+
+    Mesmo gate fail-closed de ``case_pdf``: papel ativo scheduler/admin +
+    ``scheduled_by == request.user`` + status em ``PDF_ALLOWED_STATUSES``
+    (fora → 404 fail-closed, sem distinguir). Position inexistente ou
+    documento sem arquivo → 404 (lição P1-4 do PVP-002). O ``?next=`` passa
+    por ``resolve_safe_next_url`` (fallback ao detalhe do agendador); o
+    template ``pdf_viewer/mobile_pdf_viewer.html`` recebe título, URLs do
+    PDF e volta.
+    """
+    user = _require_user(request)
+    case = get_object_or_404(
+        Case.objects.only("case_id", "status", "scheduled_by_id"),
+        case_id=case_id,
+    )
+    if case.scheduled_by_id != user.pk or case.status not in PDF_ALLOWED_STATUSES:
+        # 404 fail-closed (nunca 403): não distingue existência/caso alheio.
+        raise Http404("PDF indisponível para este caso.")
+    document = get_object_or_404(
+        CaseDocument.objects.only("pk", "case_id", "file"),
+        case=case,
+        position=position,
+    )
+    if not document.file:
+        raise Http404
+    detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    serve_url = reverse("scheduler:case_pdf", args=[case.case_id, position])
+    back_url = resolve_safe_next_url(request, detail_url)
+    return render(
+        request,
+        "pdf_viewer/mobile_pdf_viewer.html",
+        {
+            "viewer_title": "PDF Original",
+            "pdf_url": serve_url,
+            "fallback_pdf_url": serve_url,
+            "back_url": back_url,
+        },
+    )
+
+
 # ── R7: PDF do caso processado pelo próprio agendador ─────────────────────
 
 
 @role_required("scheduler", "admin")
+@xframe_options_sameorigin
 def case_pdf(
     request: HttpRequest,
     case_id: uuid.UUID,

@@ -837,7 +837,10 @@ _WORK_PAGE_CARD_ORDER = (
     "Sumário clínico",
     "Estrutura extraída",
     "Prior-case",
-    "Documentos",
+    # PVP-003 (R2): o card "Documentos" foi substituído pelos dois cards
+    # do relatório no mesmo ponto.
+    "Texto Extraído do PDF",
+    "Visualizar PDF Original",
     "Anexos",
     "Requisitos gerais acionáveis",
     "Recomendação agregada do pipeline",
@@ -846,9 +849,15 @@ _WORK_PAGE_CARD_ORDER = (
 
 
 def _card_title_index(body: str, title: str) -> int:
-    """Índice do título (``h2``) do card na página de trabalho renderizada."""
-    marker = f'<h2 class="h5 mb-0">{title}</h2>'
-    index = body.find(marker)
+    """Índice do título do card na página de trabalho renderizada.
+
+    PVP-003 (R2): os dois cards do relatório têm o título dentro do botão
+    do collapse (sem ``h2`` próprio) — aceita as duas formas; os demais
+    cards mantêm o ``h2`` do padrão do partial.
+    """
+    index = body.find(f'<h2 class="h5 mb-0">{title}</h2>')
+    if index == -1:
+        index = body.find(title)
     assert index != -1, f"card «{title}» ausente na página de trabalho"
     return index
 
@@ -873,7 +882,8 @@ def _make_work_page_case(created_by: User, uploaded_by: User) -> Case:
 
 
 def _add_case_document(case: Case, uploaded_by: User, *, position: int) -> CaseDocument:
-    """Documento PDF fake do caso (card «Documentos» da página de trabalho)."""
+    """Documento PDF fake do caso (card «Visualizar PDF Original» da página
+    de trabalho — PVP-003 substituiu o card «Documentos»)."""
     uploaded = SimpleUploadedFile(
         f"relatorio-{position}.pdf",
         f"%PDF-1.4 conteudo do pdf {position}".encode(),
@@ -898,8 +908,9 @@ def test_work_page_lists_case_documents(
 ) -> None:
     """R2/D1: a página de trabalho lista os documentos do caso.
 
-    O card «Documentos» vem do partial compartilhado: sem a chave de contexto o
-    médico veria «Nenhum documento neste caso.» mesmo com PDFs no caso.
+    Os cards do PDF vêm do partial compartilhado (PVP-003, R2): o card
+    «Documentos» foi substituído pelo par «Texto Extraído do PDF» +
+    «Visualizar PDF Original» no mesmo ponto — o serve segue no sub-collapse.
     """
     case = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
     document = _add_case_document(case, nir_user, position=1)
@@ -910,7 +921,7 @@ def test_work_page_lists_case_documents(
 
     assert document.original_filename in body
     assert reverse("doctor:case_pdf", args=[case.case_id, document.position]) in body
-    assert "Nenhum documento neste caso." not in body
+    assert "Visualizar PDF Original" in body
 
 
 @pytest.mark.django_db

@@ -124,6 +124,7 @@ O sistema SHALL exibir ao papel ativo `scheduler`/`admin` as abas `Pendentes` (`
 - **WHEN** a fila é exibida em viewport de 390 px
 - **THEN** as regiões empilham, badges quebram linha, a ação permanece acessível com alvo mínimo de 44 px e não há overflow horizontal
 
+
 ### Requirement: Confirmação de agendamento com unidade e resposta final
 
 O sistema SHALL confirmar o agendamento de um caso em `SCHEDULER_REQUESTED` ou `AWAITING_SCHEDULING` registrando unidade (1 ou 2), data/hora e local, encadeando as transições até `FINAL_REPLY_POSTED` no mesmo atomic (na origem `AWAITING_SCHEDULING` a transição de entrada de fila não é re-disparada) e postando na thread do caso a resposta final ao NIR: para unidade 1, o texto padrão com local e data/hora; para unidade 2, exatamente "Recusar o relatório — caso agendado na {label da unidade 2 configurada}, que comunicará a Secretaria" (com os defaults de ambiente: "Recusar o relatório — caso agendado na Unidade 2, que comunicará a Secretaria"). Data/hora no passado é rejeitada. A abertura da página de confirmação reserva o caso (contexto próprio do agendador) e a submissão exige reserva vigente (token de lock), liberando-a ao concluir com sucesso.
@@ -152,6 +153,7 @@ O sistema SHALL confirmar o agendamento de um caso em `SCHEDULER_REQUESTED` ou `
 - **WHEN** o agendador envia a confirmação
 - **THEN** o formulário é reexibido com mensagem de reserva expirada e nada é persistido
 
+
 ### Requirement: Negação de agendamento com motivo obrigatório
 
 O sistema SHALL permitir negar o agendamento de um caso pronto (`SCHEDULER_REQUESTED` ou `AWAITING_SCHEDULING`), exigindo motivo não vazio, encadeando as transições até `FINAL_REPLY_POSTED` no mesmo atomic e postando ao NIR a resposta final com o motivo informado.
@@ -167,6 +169,7 @@ O sistema SHALL permitir negar o agendamento de um caso pronto (`SCHEDULER_REQUE
 - **GIVEN** um caso em `SCHEDULER_REQUESTED`
 - **WHEN** o agendador nega com motivo em branco
 - **THEN** o formulário rejeita com erro de validação e nada é persistido
+
 
 ### Requirement: Intercorrência pós-agendamento apenas na unidade 1
 
@@ -190,9 +193,10 @@ O sistema SHALL permitir desmarcar, por intercorrência, um caso confirmado na u
 - **WHEN** o agendador confirma novo agendamento na unidade 1
 - **THEN** o caso chega a `FINAL_REPLY_POSTED` com os novos dados e nova resposta final ao NIR
 
+
 ### Requirement: Visão do agendador limitada ao necessário
 
-O detalhe do caso para o agendador SHALL exibir apenas a identificação do paciente (nome, data de nascimento, número de ocorrência), o diagnóstico resumido (primeira linha do sumário, re-identificada apenas na renderização), os procedimentos com as decisões médicas (incluindo motivos das negativas), os dados de agendamento e a thread de comunicações — sem os demais artefatos do pipeline (linhas seguintes do sumário, estrutura extraída, alertas da policy, sugestão). O `<title>` e o breadcrumb do detalhe SHALL usar a **referência humana** do caso — nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel) — e o uid completo NÃO aparece em texto visível (permanece apenas como chave das URLs). O PDF do relatório original SHALL ficar disponível ao agendador somente após a decisão de agendamento, para casos processados por ele mesmo — por documento do relatório (o relatório pode chegar em múltiplos PDFs ordenados).
+O detalhe do caso para o agendador SHALL exibir apenas a identificação do paciente (nome, data de nascimento, número de ocorrência), o diagnóstico resumido (primeira linha do sumário, re-identificada apenas na renderização), os procedimentos com as decisões médicas (incluindo motivos das negativas), os dados de agendamento e a thread de comunicações — sem os demais artefatos do pipeline (linhas seguintes do sumário, estrutura extraída, alertas da policy, sugestão). O `<title>` e o breadcrumb do detalhe SHALL usar a **referência humana** do caso — nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel) — e o uid completo NÃO aparece em texto visível (permanece apenas como chave das URLs). O PDF do relatório original e o texto extraído SHALL ficar disponíveis ao agendador somente após a decisão de agendamento, para casos processados por ele mesmo — por documento do relatório (o relatório pode chegar em múltiplos PDFs ordenados) — nos cards `Texto Extraído do PDF` e `Visualizar PDF Original` (spec `pdf-original-viewer`).
 
 #### Scenario: Agendador vê o diagnóstico resumido re-identificado
 
@@ -224,6 +228,12 @@ O detalhe do caso para o agendador SHALL exibir apenas a identificação do paci
 - **WHEN** o agendador abre o detalhe
 - **THEN** `<title>` e breadcrumb exibem «Caso <nº>» (`uid <8 chars>` quando o nº está ausente) e o uid completo não aparece em texto visível — apenas nos hrefs
 
+#### Scenario: Texto extraído sob o mesmo gate do PDF
+
+- **GIVEN** um caso confirmado pelo agendador autenticado, com texto extraído
+- **WHEN** ele abre o detalhe do agendamento
+- **THEN** o card `Texto Extraído do PDF` exibe o texto; em caso de outro agendador ou fora do gate, nem o card de texto nem o de PDF aparecem
+
 ### Requirement: Rótulos de unidade configuráveis por ambiente
 
 O sistema SHALL exibir os nomes das unidades de agendamento a partir das variáveis de ambiente `HMD_UNIT_1_LABEL` e `HMD_UNIT_2_LABEL` (defaults "Unidade 1" e "Unidade 2"), com fonte única de resolução, em todos os pontos de exibição: choices do formulário de confirmação, resposta final ao NIR da unidade 2, painel, detail do caso e manual do usuário. O valor persistido de agendamento continua sendo o código da unidade (1 ou 2); labels não alteram validação, FSM ou dados históricos já gravados.
@@ -239,6 +249,7 @@ O sistema SHALL exibir os nomes das unidades de agendamento a partir das variáv
 - **GIVEN** as variáveis de ambiente de labels não definidas (ou vazias)
 - **WHEN** qualquer fluxo de agendamento é executado
 - **THEN** todas as exibições usam "Unidade 1"/"Unidade 2" e os textos permanecem idênticos aos atuais
+
 
 ### Requirement: Reserva de caso durante o agendamento
 

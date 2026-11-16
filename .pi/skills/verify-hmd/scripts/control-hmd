@@ -74,6 +74,34 @@ manifest_get() { # manifest_get <file> <key> (parse JSON via node)
   node -e 'const fs=require("fs");const v=JSON.parse(fs.readFileSync(process.argv[1],"utf8"))[process.argv[2]];if(v!==undefined)console.log(v);' "$1" "$2" 2>/dev/null
 }
 
+# Guarda de mídia por run (slice PVP-002 fix-1, P1-1): exige descendente
+# ESTRITO do diretório da run após resolver caminho real — inclui symlinks
+# e `..`. Prefixo textual NÃO basta: `<run>/../../../media` passa no `case`
+# mas resolve para o `media/` do checkout (apagaria fora da run no cleanup).
+# Exit 0 = dentro da run; != 0 = recusado (nunca remover/gravar).
+media_path_ok() { # $1 candidato $2 run
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 1
+  local run_canon candidate_parent candidate_base candidate_real
+  run_canon="$(cd -- "$2" 2>/dev/null && pwd -P)" || return 1
+  # Normaliza `..`/`.` sem exigir existência (realpath -m).
+  candidate_parent="$(dirname -- "$1")"
+  candidate_base="$(basename -- "$1")"
+  if [ -d "$candidate_parent" ]; then
+    candidate_parent="$(cd -- "$candidate_parent" 2>/dev/null && pwd -P)" || return 1
+  else
+    candidate_parent="$(realpath -m -- "$candidate_parent")" || return 1
+  fi
+  candidate_real="$candidate_parent/$candidate_base"
+  # Se existe (arquivo, dir ou symlink), resolve o alvo real final.
+  if [ -e "$1" ] || [ -L "$1" ]; then
+    candidate_real="$(realpath -- "$1" 2>/dev/null)" || return 1
+  fi
+  case "$candidate_real" in
+    "$run_canon"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 process_ticks() { # process_ticks <pid> -> starttime ou vazio
   local stat rest
   stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 0
@@ -124,7 +152,7 @@ launch() {
   # validado, e nenhum drop antes de criar — colisão de nome falha fechado
   # em vez de apagar um banco que esta run não criou.
   validate_pg_endpoint "$PG_HOST" "$PG_PORT"
-  local hex run_id run_dir db_name port py build_id marker static_root
+  local hex run_id run_dir db_name port py build_id marker static_root media_root
   hex="$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   run_id="hmd-verify-$hex"
   run_dir="$RUN_ROOT/$run_id"
@@ -135,8 +163,11 @@ launch() {
   # STATIC_ROOT por-run (nunca o staticfiles/ compartilhado do checkout):
   # cada instância coleta e serve do seu próprio diretório sob a run.
   static_root="$run_dir/staticfiles"
+  # MEDIA_ROOT por-run (slice PVP-002, R5): os PDFs criados pela jornada
+  # vivem sob a run; o cleanup remove só a mídia desta run (com guarda).
+  media_root="$run_dir/media"
   mkdir -p "$RUN_ROOT"
-  mkdir -p "$run_dir/artifacts" "$static_root"
+  mkdir -p "$run_dir/artifacts" "$static_root" "$media_root"
   port="$(free_port)" || die "nenhuma porta livre em 18765-18850" 2
 
   PGPASSWORD="$PG_PASSWORD" psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d postgres \
@@ -161,6 +192,7 @@ launch() {
   "build": "$build_id",
   "marker": "$marker",
   "staticRoot": "$static_root",
+  "mediaRoot": "$media_root",
   "settings": "config.settings.verify",
   "seedPassword": "hmd-verificacao-ficticia-2026",
   "users": ["verify-nir", "verify-doctor", "verify-scheduler", "verify-manager", "verify-admin"]
@@ -170,6 +202,7 @@ EOF
   export_verify_env "$db_name" "$port"
   export HMD_VERIFY_MARKER="$marker" HMD_VERIFY_BUILD="$build_id"
   export HMD_VERIFY_STATIC_ROOT="$static_root"
+  export HMD_VERIFY_MEDIA_ROOT="$media_root"
   py="$ROOT/.venv/bin/python"
   [ -x "$py" ] || py="uv run python"
   # Estáticos reais para o WhiteNoise servir com DEBUG=False (mesmos assets
@@ -207,6 +240,7 @@ EOF
   "build": "$build_id",
   "marker": "$marker",
   "staticRoot": "$static_root",
+  "mediaRoot": "$media_root",
   "settings": "config.settings.verify",
   "seedPassword": "hmd-verificacao-ficticia-2026",
   "users": ["verify-nir", "verify-doctor", "verify-scheduler", "verify-manager", "verify-admin"]
@@ -234,6 +268,7 @@ doctor() {
   url="$(manifest_get "$run/manifest.json" url)"
   marker="$(manifest_get "$run/manifest.json" marker)"
   static_root="$(manifest_get "$run/manifest.json" staticRoot)"
+  media_root="$(manifest_get "$run/manifest.json" mediaRoot)"
   # A origem verificada é EXATAMENTE a URL que o driver usa (manifest.url):
   # qualquer divergência entre url e porta do manifest recusa o drive.
   [ "$url" = "http://127.0.0.1:$port" ] \
@@ -263,6 +298,15 @@ doctor() {
   case "$static_root" in "$run"/*) ;; *) die "staticRoot fora do diretório da run: $static_root — recuso dirigir" 2 ;; esac
   tr '\0' '\n' <"/proc/$pid/environ" | grep -Fxq "HMD_VERIFY_STATIC_ROOT=$static_root" \
     || die "processo $pid não serve do static root desta run — recuso dirigir" 2
+  # MEDIA_ROOT por-run (slice PVP-002, R5): presente, sob o diretório da run
+  # e no ambiente do processo servidor (o subprocesso da jornada recebe o
+  # mesmo root validado aqui).
+  [ -n "$media_root" ] \
+    || die "mediaRoot ausente no manifest — recuso dirigir" 2
+  media_path_ok "$media_root" "$run" \
+    || die "mediaRoot fora do diretório da run (caminho real): $media_root — recuso dirigir" 2
+  tr '\0' '\n' <"/proc/$pid/environ" | grep -Fxq "HMD_VERIFY_MEDIA_ROOT=$media_root" \
+    || die "processo $pid não usa o media root desta run — recuso dirigir" 2
   # Posse do socket: o inode do LISTEN na porta precisa pertencer ao PID
   # (cmdline casando não prova posse do socket).
   pid_owns_listener "$pid" "$port" \
@@ -323,12 +367,30 @@ cleanup_run() {
     write_cleanup_record "$run" "$db_name" false $',\n  "error": "não foi possível confirmar a remoção em '"$db_host:$db_port"'"'
     die "não confirmei a remoção de $db_name em $db_host:$db_port — cleanup incompleto" 1
   fi
+  # Mídia da run (slice PVP-002, R5): remove SÓ o mediaRoot registrado,
+  # com guarda — nunca fora do diretório da run, nunca outra run, nunca o
+  # checkout. Falha aqui não falha o cleanup do banco (registrada no JSON).
+  local media_root media_remove_error=""
+  media_root="$(manifest_get "$run/manifest.json" mediaRoot)"
+  if [ -n "$media_root" ]; then
+    if media_path_ok "$media_root" "$run"; then
+      rm -rf -- "$media_root" 2>/dev/null \
+        || media_remove_error="falha ao remover mediaRoot $media_root"
+    else
+      media_remove_error="mediaRoot fora da run, preservado: $media_root"
+    fi
+  fi
   if [ "$remaining" != "0" ]; then
     write_cleanup_record "$run" "$db_name" false $',\n  "error": "'"$db_name"' ainda existe após dropdb"'
     die "banco $db_name ainda existe após dropdb — cleanup incompleto (databaseDropped=false)" 1
   fi
-  write_cleanup_record "$run" "$db_name" true ""
-  echo "cleanup OK: $run"
+  if [ -n "$media_remove_error" ]; then
+    write_cleanup_record "$run" "$db_name" true $',\n  "mediaRemoved": false,\n  "mediaError": "'"$media_remove_error"'"'
+    echo "cleanup OK (banco removido; mídia: $media_remove_error): $run"
+  else
+    write_cleanup_record "$run" "$db_name" true $',\n  "mediaRemoved": true'
+    echo "cleanup OK: $run"
+  fi
 }
 
 CMD="${1:-}"

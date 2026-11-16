@@ -54,6 +54,7 @@ da contagem de "em andamento".
   período, esses casos não aparecem como "em andamento" e seguem contados
   como encerrados
 
+
 ### Requirement: Quebra por tipo de procedimento e unidade
 
 O sistema SHALL quebrar as métricas por tipo de procedimento (total, aprovados, negados, sem decisão, na ordem canônica do catálogo) e por unidade de agendamento (unidade 1 e unidade 2), além do tempo médio do caso até a decisão médica no período.
@@ -76,6 +77,7 @@ O sistema SHALL quebrar as métricas por tipo de procedimento (total, aprovados,
 - **WHEN** o painel é aberto
 - **THEN** exibe o tempo médio do início do caso até a decisão médica de forma legível
 
+
 ### Requirement: Acesso ao painel
 
 O painel SHALL ser acessível apenas a usuários com papel ativo `manager` ou `admin`, por link na navbar visível somente para esses papéis, com o período preservado entre seleções. Outros papéis ativos autenticados recebem HTTP 403 na rota do painel; anônimo é redirecionado ao login.
@@ -97,6 +99,7 @@ O painel SHALL ser acessível apenas a usuários com papel ativo `manager` ou `a
 - **GIVEN** um usuário autenticado com papel ativo `nir` (ou `doctor`, ou `scheduler`)
 - **WHEN** abre a rota do painel diretamente pela URL
 - **THEN** recebe HTTP 403 e o link do painel não aparece na sua navbar
+
 
 ### Requirement: Lista de casos no painel
 
@@ -195,17 +198,10 @@ ordenada por data de criação decrescente e paginada.
 - **WHEN** a lista é renderizada
 - **THEN** o card exibe nome, `84 a`, unidade de origem, exames declarados, fase (status + próximo passo), data/hora de inserção e o botão [Detalhes]
 
+
 ### Requirement: Detalhe do caso no painel com trilha legível
 
-O painel SHALL exibir o detalhe de um caso (manager/admin) com a
-identificação completa do paciente (nome, idade, sexo, raça/cor, unidade
-de origem, nº de ocorrência, data/hora de inserção e fase/status) e os
-procedimentos declarados, hospedando a ação de encerramento administrativo
-para casos não concluídos. O detalhe SHALL incluir a **trilha de eventos
-com rótulos legíveis** — mapa dos tipos de evento do sistema para
-português claro (molde ats-web `EVENT_LABELS`; tipos fora do mapa exibem o
-valor bruto), com data/hora e ator — em card **collapsible fechado por
-padrão** (Bootstrap). Caso inexistente → 404 sem vazar informação.
+O painel SHALL exibir o detalhe de um caso (manager/admin) com a identificação completa do paciente (nome, idade, sexo, raça/cor, unidade de origem, nº de ocorrência, data/hora de inserção e fase/status) e os procedimentos declarados, hospedando a ação de encerramento administrativo para casos não concluídos. O detalhe SHALL incluir a **trilha de eventos com rótulos legíveis** — mapa dos tipos de evento do sistema para português claro (molde ats-web `EVENT_LABELS`; tipos fora do mapa exibem o valor bruto), com data/hora e ator — em card **collapsible fechado por padrão** (Bootstrap). O detalhe SHALL incluir ainda os cards `Texto Extraído do PDF` e `Visualizar PDF Original` (spec `pdf-original-viewer`), servidos por rotas próprias do painel sob o mesmo guard `manager`/`admin`. Caso inexistente → 404 sem vazar informação.
 
 #### Scenario: Detalhe com identificação completa
 
@@ -230,3 +226,9 @@ padrão** (Bootstrap). Caso inexistente → 404 sem vazar informação.
 - **GIVEN** um identificador inexistente
 - **WHEN** o detalhe é acessado
 - **THEN** retorna 404 sem informação de outros casos
+
+#### Scenario: Detalhe do painel exibe documentos e texto
+
+- **GIVEN** um caso com texto extraído e documentos
+- **WHEN** o manager abre o detalhe
+- **THEN** os cards `Texto Extraído do PDF` e `Visualizar PDF Original` aparecem fechados por padrão, com serve e viewer sob rotas próprias do painel

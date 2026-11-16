@@ -39,24 +39,27 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable, Mapping
 from datetime import date
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db.models import Q, QuerySet
-from django.http import HttpRequest, HttpResponse
+from django.http import FileResponse, Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
+from apps.attachments.models import CaseAttachment
 from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS, administratively_close_case
 from apps.cases.events import CaseEventType
-from apps.cases.models import Case, CaseEvent, CaseStatus, SchedulingUnit
+from apps.cases.models import Case, CaseDocument, CaseEvent, CaseStatus, SchedulingUnit
+from apps.cases.navigation import resolve_safe_next_url
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.units import unit_label
 
@@ -111,6 +114,9 @@ _PRESERVED_FILTERS: tuple[str, ...] = (
     "date_from",
     "date_to",
 )
+
+# Content-type dos documentos do relatório (mesmo padrão dos demais papéis).
+PDF_CONTENT_TYPE = "application/pdf"
 
 # Resultado do card quando não há desfecho atribuível (mesmo travessão das métricas).
 RESULT_NONE_LABEL = "—"
@@ -418,6 +424,25 @@ def home(request: HttpRequest) -> HttpResponse:
     return render(request, "dashboard/home.html", context)
 
 
+def _build_pdf_items(case: Case, documents: list[CaseDocument]) -> list[dict[str, object]]:
+    """Itens do card do PDF original (slice PVP-005, R2/D1).
+
+    A view monta ``pdf_items`` (position/filename/size/serve/viewer) com
+    ``reverse`` das rotas do painel — o template apenas itera, sem lógica de
+    URL (mesma regra dos slices PVP-002/003/004).
+    """
+    return [
+        {
+            "position": document.position,
+            "filename": document.original_filename,
+            "size": document.size_bytes,
+            "serve_url": reverse("dashboard:case_pdf", args=[case.case_id, document.position]),
+            "viewer_url": reverse("dashboard:pdf_viewer", args=[case.case_id, document.position]),
+        }
+        for document in documents
+    ]
+
+
 def _case_detail_context(case: Case, *, filters: Mapping[str, str]) -> dict[str, Any]:
     """Contexto do detalhe do caso no painel (R2/D2).
 
@@ -427,10 +452,24 @@ def _case_detail_context(case: Case, *, filters: Mapping[str, str]) -> dict[str,
     ``event_labels``, ator e timestamp localizado) e o destino do encerramento
     administrativo (casos ≠ ``CLEANED``) com os filtros da lista preservados no
     retorno.
+
+    Slice PVP-005 (R2/D1): o contexto expõe também os documentos do relatório
+    (``documents``/``pdf_items`` com reverse das rotas do painel + ``detail_url``)
+    — o template (D8) monta os dois cards do relatório após "Procedimentos
+    declarados", antes da trilha; texto vazio omite o card de texto.
     """
     declared_types = [row.procedure_type for row in case.procedures.all() if row.declared_by_nir]
+    detail_url = reverse("dashboard:case_detail", args=[case.case_id])
+    documents: list[CaseDocument] = list(case.documents.all())
+    attachments: list[CaseAttachment] = list(case.attachments.all())
     return {
         "case_id": case.case_id,
+        "case": case,
+        "documents": documents,
+        "pdf_items": _build_pdf_items(case, documents),
+        "detail_url": detail_url,
+        "attachments": attachments,
+        "attachment_items": _build_attachment_items(case, attachments),
         "short_id": str(case.case_id)[:8],
         "patient_name": case.patient_name,
         "patient_age": case.patient_age,
@@ -470,12 +509,198 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     manager/admin → 403 (``role_required``); anônimo → redirect ao login.
     """
     filters = _resolve_filters(request.GET)
-    case = get_object_or_404(Case.objects.prefetch_related("procedures"), case_id=case_id)
+    case = get_object_or_404(
+        Case.objects.prefetch_related("procedures", "documents", "attachments"),
+        case_id=case_id,
+    )
     return render(
         request,
         "dashboard/case_detail.html",
         _case_detail_context(case, filters=filters),
     )
+
+
+def _build_attachment_items(
+    case: Case, attachments: list[CaseAttachment]
+) -> list[dict[str, object]]:
+    """Itens da seção de anexos (slice PVP-007, R2/D1).
+
+    A view monta ``attachment_items`` (pk/nome/size/serve/viewer/is_pdf)
+    com ``reverse`` das rotas do painel — o template apenas itera, sem lógica
+    de URL (mesma regra do ``_build_pdf_items`` do slice PVP-005 e dos
+    ``_build_attachment_items`` de NIR/médico do slice PVP-006).
+    """
+    return [
+        {
+            "attachment": attachment,
+            "position": position,
+            "is_pdf": attachment.content_type == "application/pdf",
+            "serve_url": reverse("dashboard:serve_attachment", args=[case.case_id, attachment.pk]),
+            "viewer_url": reverse(
+                "dashboard:attachment_pdf_viewer", args=[case.case_id, attachment.pk]
+            ),
+        }
+        for position, attachment in enumerate(attachments, start=1)
+    ]
+
+
+def _dashboard_serve_case(request: HttpRequest, case_id: uuid.UUID) -> tuple[User, Case]:
+    """Caso do serve/viewer do painel (slice PVP-005, R1).
+
+    Guard = guard do detalhe (``role_required("manager", "admin")``): sem
+    gate por caso (o painel enxerga todos os casos); caso inexistente → 404.
+    """
+    user = _require_user(request)
+    case = get_object_or_404(
+        Case.objects.only("case_id", "status"),
+        case_id=case_id,
+    )
+    return user, case
+
+
+@role_required("manager", "admin")
+def pdf_viewer(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    position: int,
+) -> HttpResponse:
+    """Viewer mobile do PDF original do caso (slice PVP-005, R1).
+
+    Mesmo guard do detalhe (papel ativo manager/admin; outro papel → 403;
+    anônimo → login). Position inexistente ou documento sem arquivo → 404.
+    O ``?next=`` passa por ``resolve_safe_next_url`` (fallback ao detalhe do
+    painel); o template ``pdf_viewer/mobile_pdf_viewer.html`` recebe título,
+    URLs do PDF e volta.
+    """
+    _require_user(request)
+    _, case = _dashboard_serve_case(request, case_id)
+    document = get_object_or_404(
+        CaseDocument.objects.only("pk", "case_id", "file"),
+        case=case,
+        position=position,
+    )
+    if not document.file:
+        raise Http404
+    detail_url = reverse("dashboard:case_detail", args=[case.case_id])
+    serve_url = reverse("dashboard:case_pdf", args=[case.case_id, position])
+    back_url = resolve_safe_next_url(request, detail_url)
+    return render(
+        request,
+        "pdf_viewer/mobile_pdf_viewer.html",
+        {
+            "viewer_title": "PDF Original",
+            "pdf_url": serve_url,
+            "fallback_pdf_url": serve_url,
+            "back_url": back_url,
+        },
+    )
+
+
+@role_required("manager", "admin")
+@xframe_options_sameorigin
+def case_pdf(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    position: int,
+) -> HttpResponse:
+    """Serve o PDF do documento do relatório na ``position`` (slice PVP-005, R1).
+
+    Espelho de ``apps.scheduler.views.case_pdf`` (molde: serve por position,
+    no-store): papel ativo manager/admin (outro papel → 403) e o painel
+    enxerga todos os casos — sem gate por caso. Documento/position
+    inexistente → 404. Entrega via ``FileResponse`` com content-type
+    ``application/pdf``, nome original e ``Cache-Control: no-store``.
+    """
+    _require_user(request)
+    _, case = _dashboard_serve_case(request, case_id)
+    document = get_object_or_404(
+        CaseDocument.objects.only("pk", "case_id", "file", "original_filename"),
+        case=case,
+        position=position,
+    )
+    if not document.file:
+        raise Http404
+    response = FileResponse(
+        document.file.open("rb"),
+        content_type=PDF_CONTENT_TYPE,
+        filename=document.original_filename or "documento.pdf",
+    )
+    response["Cache-Control"] = "no-store"
+    return cast(HttpResponse, response)
+
+
+@role_required("manager", "admin")
+def attachment_pdf_viewer(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    attachment_id: int,
+) -> HttpResponse:
+    """Viewer mobile do anexo PDF do caso (slice PVP-007, R1).
+
+    Mesmo guard do detalhe (papel ativo manager/admin; outro papel → 403;
+    anônimo → login). SOMENTE para ``application/pdf`` (D3): imagens e outros
+    tipos usam link direto + ``<img loading=lazy>`` (sem viewer dedicado) →
+    404. Anexo de outro caso, inexistente ou sem arquivo → 404 fail-closed
+    (lição P1-4). O ``?next=`` passa por ``resolve_safe_next_url`` (fallback
+    ao detalhe do painel); o template ``pdf_viewer/mobile_pdf_viewer.html``
+    recebe título, URLs do PDF e volta.
+    """
+    _require_user(request)
+    _, case = _dashboard_serve_case(request, case_id)
+    attachment = get_object_or_404(
+        CaseAttachment.objects.only("pk", "case_id", "file", "content_type"),
+        case=case,
+        pk=attachment_id,
+    )
+    if attachment.content_type != "application/pdf" or not attachment.file:
+        raise Http404
+    detail_url = reverse("dashboard:case_detail", args=[case.case_id])
+    serve_url = reverse("dashboard:serve_attachment", args=[case.case_id, attachment_id])
+    back_url = resolve_safe_next_url(request, detail_url)
+    return render(
+        request,
+        "pdf_viewer/mobile_pdf_viewer.html",
+        {
+            "viewer_title": "Anexo",
+            "pdf_url": serve_url,
+            "fallback_pdf_url": serve_url,
+            "back_url": back_url,
+        },
+    )
+
+
+@role_required("manager", "admin")
+@xframe_options_sameorigin
+def serve_attachment(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    attachment_id: int,
+) -> HttpResponse:
+    """Serve o arquivo do anexo do caso (slice PVP-007, R1).
+
+    Espelho do serve de anexo do NIR (molde PVP-006): mesmo guard do detalhe
+    (papel ativo manager/admin; outro papel → 403) e o painel enxerga todos
+    os casos — sem gate por caso. Anexo inexistente/de-outro-caso/sem arquivo
+    → 404 fail-closed (lição P1-4). Entrega via ``FileResponse`` com o
+    content-type ORIGINAL do upload, nome original do arquivo e
+    ``Cache-Control: no-store``.
+    """
+    _require_user(request)
+    _, case = _dashboard_serve_case(request, case_id)
+    attachment = get_object_or_404(
+        CaseAttachment.objects.only("pk", "case_id", "file", "original_filename", "content_type"),
+        case=case,
+        pk=attachment_id,
+    )
+    if not attachment.file:
+        raise Http404
+    response = FileResponse(
+        attachment.file.open("rb"),
+        content_type=attachment.content_type or "application/octet-stream",
+        filename=attachment.original_filename or "anexo",
+    )
+    response["Cache-Control"] = "no-store"
+    return cast(HttpResponse, response)
 
 
 @role_required("manager", "admin")

@@ -76,12 +76,13 @@ def _detail_body(client: Client, case: Case) -> str:
 
 
 def _visible_text(body: str) -> str:
-    """HTML sem os atributos de rota (``href``/``action``) — só texto visível.
+    """HTML sem os atributos de rota (``href``/``action``/``data-src``).
 
-    O uid permanece como chave técnica das URLs (D5 do design); remover os
+    O uid permanece como chave técnica das URLs (D5 do design + PVP-002 R2:
+    o embed lazy carrega a rota de serve em ``data-src``); remover os
     atributos permite pinar que ele NÃO aparece em texto visível.
     """
-    return re.sub(r'(?:href|action)="[^"]*"', "", body)
+    return re.sub(r'(?:href|action|data-src)="[^"]*"', "", body)
 
 
 def _identification_card(body: str) -> str:

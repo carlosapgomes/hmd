@@ -1,13 +1,21 @@
-// Drive Playwright pinado do verify-hmd — ui-parity-intake-detail slice 004.
+// Drive Playwright pinado do verify-hmd — ui-parity-intake-detail slice 004 + PVP-005.
 // Jornada painel-visual: painel gerencial no padrão ats-web (toolbar de
 // período, cards de métrica e lista em case-card) com os mesmos números e
 // filtros do HMD. Login real pelo form como verify-manager (e verify-admin),
 // leitura da toolbar/cards/lista, troca de período pela toolbar e filtro de
-// busca server-side. Sem mutação de banco nem de seed. Evidência em
-// <run>/artifacts/. Exit: 0 PASS · 1 falha observada · 2 infra/driver.
+// busca server-side. PARTE NOVA PVP-005 (seção 6, APÓS a seção admin e os
+// asserts de exatamente 2 casos): fixture VERIFY-101 criada NO DRIVE via
+// runVerifyPy (2 PDFs válidos PyMuPDF + extracted_text + AWAITING_DOCTOR +
+// criador verify-nir; mídia no mediaRoot da run validado) e detalhe do
+// painel de VERIFY-101 com os 2 cards em 1280/390 (lazy por URL EXATA de
+// serve desde ANTES do goto como GATE; mobile 390 = 0 fetch + viewer JÁ no
+// 390 com Voltar topo/rodapé e ?next= inseguro → fallback); PNG/snapshot/JSON.
+// Sem mutação do seed compartilhado. Evidência em <run>/artifacts/.
+// Exit: 0 PASS · 1 falha observada · 2 infra/driver.
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { chromium } from 'playwright';
@@ -85,6 +93,112 @@ function assertOwnedInstance() {
 }
 assertOwnedInstance();
 
+const MEDIA_ROOT = manifest.mediaRoot;
+if (!MEDIA_ROOT) {
+  console.error('infra: mediaRoot ausente no manifest — recuso dirigir.');
+  process.exit(2);
+}
+// Guarda de mídia por run (espelho de drive-detalhe-papeis.mjs, slice
+// PVP-002): descendente ESTRITO do diretório da run pelo caminho real.
+function isMediaUnderRun(candidate, runDir) {
+  if (!candidate || !runDir) return false;
+  let runReal;
+  try {
+    runReal = realpathSync(runDir);
+  } catch {
+    return false;
+  }
+  let candidateReal;
+  try {
+    candidateReal = realpathSync(candidate);
+  } catch {
+    return false;
+  }
+  return candidateReal !== runReal && candidateReal.startsWith(runReal + path.sep);
+}
+if (!isMediaUnderRun(MEDIA_ROOT, runDir)) {
+  console.error(`infra: mediaRoot inválido ou fora da run: ${MEDIA_ROOT} — recuso dirigir.`);
+  process.exit(2);
+}
+
+// runVerifyPy com HMD_VERIFY_MEDIA_ROOT=mediaRoot VALIDADO sob a run
+// (padrão PVP-002): o subprocesso grava no mesmo root do servidor; path
+// fora da run é recusado antes de qualquer execução.
+const runVerifyPy = (code) => {
+  if (!isMediaUnderRun(MEDIA_ROOT, runDir)) {
+    throw new Error(`infra: mediaRoot fora da run, recuso executar: ${MEDIA_ROOT}`);
+  }
+  const py = existsSync('.venv/bin/python') ? '.venv/bin/python' : 'uv run python';
+  return execSync(`${py} manage.py shell --settings=config.settings.verify -c "${code.replace(/"/g, '\\"')}"`, {
+    env: {
+      ...process.env,
+      DJANGO_SETTINGS_MODULE: 'config.settings.verify',
+      VERIFY_DB_HOST: manifest.dbHost || '127.0.0.1',
+      VERIFY_DB_PORT: String(manifest.dbPort || process.env.TEST_DB_PORT || '55435'),
+      VERIFY_DB_NAME: manifest.database,
+      VERIFY_DB_USER: process.env.VERIFY_DB_USER || 'hmd',
+      VERIFY_DB_PASSWORD: process.env.VERIFY_DB_PASSWORD || 'hmd_dev',
+      HMD_VERIFY_MEDIA_ROOT: MEDIA_ROOT,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf8',
+  });
+};
+
+// Contagem de requisições na URL de serve por caminho EXATO (padrão
+// PVP-002/PVP-004; bundle PVP-007: conta QUALQUER status — só ' 200'
+// cegava os gates para 403/404 do serve, P2 recorrente da review PVP-005).
+// O server.log do runserver registra cada GET como `"GET <path>
+// HTTP/1.1" <status>`. Verificações diretas usam `?probe=1` e são
+// EXCLUÍDAS da contagem. `markPhase()` retorna a posição da próxima linha
+// nova do server.log; falhas de leitura do log lançam (fail-loud).
+function readServerLogLines(logFile) {
+  return readFileSync(logFile, 'utf8').split('\n');
+}
+function serverLogPath() {
+  return path.join(artifacts, 'server.log');
+}
+function markPhase() {
+  return readServerLogLines(serverLogPath()).length - 1;
+}
+function countEmbedFetchesFromFile(logFile, since, servePath) {
+  let count = 0;
+  for (const line of readServerLogLines(logFile).slice(since)) {
+    // Bundle PVP-007: QUALQUER status (' 200', ' 403', ' 404', ...) — um
+    // embed que busca e recebe 403/404 deixa de ser invisível ao gate; a
+    // exclusão continua valendo só para probes (`?probe=1`). Comparação por
+    // PATHNAME integral (extraído do alvo de "GET <alvo> HTTP/"): sufixos
+    // como `.../viewer/` não casam com o servePath; a exclusão do probe lê
+    // só a query do alvo, não a linha inteira.
+    const match = line.match(/"GET\s+(\S+)\s+HTTP\//);
+    if (!match || !/" \d{3} /.test(line)) continue;
+    const target = match[1];
+    const pathOnly = target.split('?')[0];
+    if (pathOnly !== servePath) continue;
+    const query = target.includes('?') ? target.slice(target.indexOf('?') + 1) : '';
+    if (new URLSearchParams(query).get('probe') === '1') continue;
+    count += 1;
+  }
+  return count;
+}
+function countEmbedFetches(since, servePath) {
+  return countEmbedFetchesFromFile(serverLogPath(), since, servePath);
+}
+// Verificação direta (NÃO é prova do embed — usa ?probe=1, excluído da
+// contagem): confirma que a URL de serve responde 200 application/pdf.
+async function probeServesPdf(page, servePath) {
+  const response = await page.request.get(`${base}${servePath}?probe=1`);
+  const contentType = String(response.headers()['content-type'] || '');
+  const ok = response.status() === 200 && contentType.includes('application/pdf');
+  check('panel105-probe-serve-pdf', ok, `${response.status()} ${contentType} ${servePath}?probe=1`);
+  return ok;
+}
+// O plugin de PDF do Chromium headless shell NÃO busca nem renderiza
+// <embed type="application/pdf"> (prova P1-2 do PVP-002): a prova de rede do
+// embed exige o Chromium headed — sob Xvfb quando houver DISPLAY, senão
+// BLOCKED honesto (exit 2).
+let pdfPluginMode = 'headless-shell (sem prova de rede do embed)';
+
 const REQUIRED_ASSETS = ['/static/css/app.css', '/static/js/sw.js', '/static/js/work_lock.js'];
 const failedAssets = [];
 const checks = [];
@@ -119,13 +233,18 @@ async function loginAs(browser, username, label, opts = {}) {
 
 let browser;
 try {
-  browser = await chromium.launch({ headless: true });
+  if (!process.env.DISPLAY) {
+    console.error('infra BLOCKED: sem DISPLAY — o plugin de PDF do headless não busca/renderiza <embed>; rode sob Xvfb (DISPLAY=:99) para prova de rede/render do embed. Nenhum motor substituto foi usado.');
+    process.exit(2);
+  }
+  browser = await chromium.launch({ headless: false, args: ['--no-sandbox'] });
+  pdfPluginMode = `headed-xvfb (DISPLAY=${process.env.DISPLAY})`;
 } catch (err) {
   console.error(`infra BLOCKED: Chromium pinado do Playwright indisponível (${err.message}) — nenhum motor substituto foi usado.`);
   process.exit(2);
 }
 
-const observed = { runId: manifest.runId, base, database: manifest.database, steps: [] };
+const observed = { runId: manifest.runId, base, database: manifest.database, pdfPluginMode, steps: [] };
 
 try {
   // 1) Manager: painel no padrão ats-web (toolbar + cards + case-cards).
@@ -199,6 +318,491 @@ try {
     observed.steps.push({ step: 'admin-painel', url: page.url() });
     await context.close();
   }
+
+  // ══ 6) PARTE NOVA PVP-005 — detalhe do painel de VERIFY-101 (manager) ══
+  // ORDEM OBRIGATÓRIA (§8): TODOS os passos/asserts existentes acima (com os
+  // 2 casos do seed, incl. reset com exatamente 2 case-cards) rodam ANTES;
+  // SÓ DEPOIS a fixture VERIFY-101 é criada via runVerifyPy. VERIFY-101:
+  // criador verify-nir, AWAITING_DOCTOR, 2 documentos com PDFs VÁLIDOS
+  // (PyMuPDF, 1 página com texto "VERIFY-101 doc N") gravados no storage da
+  // run + extracted_text populado. Seed compartilhado intocado; nenhum
+  // assert de contagem de exatamente 2 casos é repetido após a criação.
+  runVerifyPy(
+    "from django.conf import settings\n" +
+    "assert str(settings.MEDIA_ROOT).startswith('" + runDir + "'), settings.MEDIA_ROOT\n" +
+    "import pymupdf\n" +
+    "from django.contrib.auth import get_user_model\n" +
+    "from apps.cases.models import Case, CaseDocument, CaseProcedure\n" +
+    "from django.core.files.base import ContentFile\n" +
+    "u = get_user_model().objects.get(username='verify-nir')\n" +
+    "c, _ = Case.objects.get_or_create(created_by=u, agency_record_number='VERIFY-101', defaults={'patient_name': 'Paciente Sintetico Cento e Um', 'patient_age': 57})\n" +
+    "Case.objects.filter(pk=c.pk).update(patient_name='Paciente Sintetico Cento e Um', patient_age=57, extracted_text='TEXTO SINTETICO VERIFY-101 PARTE 1.\\nTEXTO SINTETICO VERIFY-101 PARTE 2.')\n" +
+    "c.refresh_from_db()\n" +
+    "CaseProcedure.objects.get_or_create(case=c, procedure_type='art_perif', defaults={'declared_by_nir': True})\n" +
+    "CaseProcedure.objects.get_or_create(case=c, procedure_type='cat_cardiaco', defaults={'declared_by_nir': True})\n" +
+    "c.refresh_from_db()\n" +
+    "if c.status != 'AWAITING_DOCTOR':\n" +
+    "    c.start_pdf_extraction(user=None, role='system')\n" +
+    "    c.complete_pdf_extraction(user=None, role='system')\n" +
+    "    c.complete_anonymization(user=None, role='system')\n" +
+    "    c.complete_llm_extraction(user=None, role='system')\n" +
+    "    c.complete_llm_summarization(user=None, role='system')\n" +
+    "    Case.objects.filter(pk=c.pk).update(status='AWAITING_DOCTOR')\n" +
+    "    c.refresh_from_db()\n" +
+    "existing = {d.position: d for d in c.documents.all()}\n" +
+    "for pos, name in ((1, 'relatorio-verify101-parte1.pdf'), (2, 'relatorio-verify101-parte2.pdf')):\n" +
+    "    if pos in existing:\n" +
+    "        continue\n" +
+    "    doc = pymupdf.open()\n" +
+    "    pg = doc.new_page()\n" +
+    "    pg.insert_text((72, 720), 'VERIFY-101 doc %d' % pos, fontsize=24)\n" +
+    "    pdf = bytes(doc.tobytes())\n" +
+    "    doc.close()\n" +
+    "    d = CaseDocument(case=c, position=pos, original_filename=name, content_type='application/pdf', size_bytes=len(pdf), uploaded_by=u)\n" +
+    "    d.file.save(name, ContentFile(pdf), save=False)\n" +
+    "    d.save()\n" +
+    "print('VERIFY-101 ok', str(c.case_id), c.documents.count())",
+  );
+  const out101 = runVerifyPy(
+    "from apps.cases.models import Case\n" +
+    "c = Case.objects.get(agency_record_number='VERIFY-101')\n" +
+    "print(str(c.case_id))\n" +
+    "print(str(c.status))",
+  );
+  const out101Lines = String(out101).trim().split('\n');
+  const caseId101 = out101Lines[out101Lines.length - 2].trim();
+  const status101 = out101Lines[out101Lines.length - 1].trim();
+  // Rota própria do painel (PVP-005, R1/D1): serve por position.
+  const doc1PanelServe = `/dashboard/case/${caseId101}/pdf/1/`;
+  const doc2PanelServe = `/dashboard/case/${caseId101}/pdf/2/`;
+  check('panel105-verify101-fixture', /^[0-9a-f-]{36}$/.test(caseId101) && status101 === 'AWAITING_DOCTOR', `caseId=${caseId101} status=${status101}`);
+  // R5: os PDFs da fixture estão no root da run (mediaRoot do manifest).
+  const fixture101Files = execSync(`find ${JSON.stringify(MEDIA_ROOT)} -type f -name '*.pdf' | sort`, { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+  check('panel105-verify101-media-in-run-root', fixture101Files.length >= 2 && fixture101Files.every((f) => isMediaUnderRun(f, runDir)), `${fixture101Files.length} pdf(s) sob ${MEDIA_ROOT}`);
+  const pdf101Magic = execSync(
+    `python3 -c "import sys; data=open(sys.argv[1],'rb').read(); print(data[:5] == b'%PDF-' and b'/Type' in data and b'/Page' in data)" ${JSON.stringify(fixture101Files[0])}`,
+    { encoding: 'utf8' },
+  ).trim();
+  check('panel105-verify101-pdf-valid', pdf101Magic === 'True', String(fixture101Files[0]));
+  observed.verify101 = { caseId: caseId101, status: status101, fixtureFiles: fixture101Files };
+
+  // 6a) Desktop 1280: detalhe do painel de VERIFY-101 — 2 cards na posição
+  // D8 (após Procedimentos declarados, antes da Trilha), lazy com contagem
+  // por URL EXATA de serve desde ANTES do goto como GATE.
+  {
+    const { context, page } = await loginAs(browser, 'verify-manager', 'panel-101', { viewport: { width: 1280, height: 900 } });
+    observed.pdfPluginMode = pdfPluginMode;
+    // Marco ANTES da navegação: um fetch iniciado no goto escaparia de um
+    // contador marcado depois (P2-b do PVP-003) — cobre o carregamento inicial.
+    const markPanelClosedGoto = markPhase();
+    await page.goto(`${base}/dashboard/case/${caseId101}/`, { waitUntil: 'domcontentloaded' });
+    const panelGotoFetches = countEmbedFetches(markPanelClosedGoto, doc1PanelServe)
+      + countEmbedFetches(markPanelClosedGoto, doc2PanelServe);
+    observed.steps.push({ step: 'painel-101-detalhe-1280-goto-info', url: page.url(), gotoFetches: panelGotoFetches });
+    const body = await page.locator('body').innerText();
+    check('panel105-detail-heading', body.includes('Detalhes do caso'), page.url());
+    check('panel105-text-card', body.includes('Texto Extraído do PDF'));
+    const preText = await page.locator('#text-collapse pre').evaluate((el) => el.textContent).catch(() => '');
+    check('panel105-text-content', preText.includes('TEXTO SINTETICO VERIFY-101 PARTE 1'), preText.slice(0, 60));
+    check('panel105-pdf-card', body.includes('Visualizar PDF Original'));
+    // Posição D8: Procedimentos → texto → PDF → trilha (headers em sequência).
+    const headers = await page.locator('.card-header').evaluateAll((els) => els.map((el) => el.textContent.replace(/\s+/g, ' ').trim()));
+    const wanted = ['Procedimentos declarados', 'Texto Extraído do PDF', 'Visualizar PDF Original', 'Trilha de eventos'];
+    const positions = wanted.map((t) => headers.findIndex((x) => x.includes(t)));
+    check('panel105-card-position', positions.every((p, i) => p >= 0 && (i === 0 || p > positions[i - 1])), headers.join(' | '));
+    check('panel105-collapses-closed', (await page.locator('.collapse.show').count()) === 0, `${await page.locator('.collapse.show').count()} abertos`);
+    const embeds = await page.locator('embed.pdf-lazy-embed').count();
+    const srcs = await page.locator('embed.pdf-lazy-embed[src]').count();
+    const dataSrcs = await page.locator('embed.pdf-lazy-embed[data-src]').count();
+    check('panel105-embeds-lazy', embeds === 2 && srcs === 0 && dataSrcs === 2, `embeds=${embeds} src=${srcs} data-src=${dataSrcs}`);
+    check('panel105-doc-collapse-attr', (await page.locator('[data-pdf-doc-collapse]').count()) === 2);
+    check('panel105-mobile-links', (await page.locator('a.d-md-none[href*="/viewer/"]').count()) === 2);
+    const mobileTexts = await page.locator('a.d-md-none[href*="/viewer/"]').evaluateAll((els) => els.map((el) => el.textContent.replace(/\s+/g, ' ').trim()));
+    check('panel105-mobile-links-identify-docs', mobileTexts[0].includes('PDF 1') && mobileTexts[1].includes('PDF 2'), mobileTexts.join(' | '));
+    check('panel105-new-tab-links', (await page.locator('a[target="_blank"]').count()) >= 2);
+    check('panel105-lazy-script', (await page.locator('script[src*="pdf-lazy-embed.js"]').count()) >= 1);
+    // GATE do lazy: fechado = 0 fetch nas URLs exatas DESDE ANTES DO GOTO
+    // (revisão PVP-005 P1 — cobre o carregamento inicial em ambos os docs).
+    await page.waitForTimeout(800);
+    const closedFetches = countEmbedFetches(markPanelClosedGoto, doc1PanelServe) + countEmbedFetches(markPanelClosedGoto, doc2PanelServe);
+    check('panel105-zero-fetch-closed', closedFetches === 0, `${closedFetches} fetch(es) de embed`);
+    await snap(page, 'painel-101-detalhe-1280-fechado');
+    observed.steps.push({ step: 'painel-101-detalhe-1280-fechado', url: page.url(), embedFetches: closedFetches });
+
+    // Abrir o card externo: continua 0 fetch do embed (lazy é por sub-collapse).
+    // Mesmo marco pré-goto (revisão PVP-005 P1 — inclui a navegação).
+    await page.getByRole('button', { name: /Visualizar PDF Original/ }).click();
+    await page.waitForTimeout(800);
+    const cardFetches = countEmbedFetches(markPanelClosedGoto, doc1PanelServe) + countEmbedFetches(markPanelClosedGoto, doc2PanelServe);
+    check('panel105-zero-fetch-card-open', cardFetches === 0, `${cardFetches} fetch(es) de embed`);
+    await snap(page, 'painel-101-card-externo-aberto');
+
+    // Expandir o sub-collapse do doc 1: só o alvo busca, 1 única vez.
+    const markDoc1 = markPhase();
+    await page.locator('button[data-bs-target="#pdf-collapse-1"]').click();
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#pdf-collapse-1 embed.pdf-lazy-embed');
+      return el && el.getAttribute('src');
+    }, { timeout: 10000 });
+    await page.waitForTimeout(2500);
+    const doc1Src = await page.locator('#pdf-collapse-1 embed.pdf-lazy-embed').getAttribute('src');
+    check('panel105-doc1-loaded', !!doc1Src && doc1Src === doc1PanelServe, String(doc1Src));
+    const doc2Src = await page.locator('#pdf-collapse-2 embed.pdf-lazy-embed').getAttribute('src');
+    check('panel105-doc2-still-lazy', !doc2Src, String(doc2Src));
+    const doc1Fetches = countEmbedFetches(markDoc1, doc1PanelServe);
+    check('panel105-embed-fetch-doc1', doc1Fetches >= 1, `${doc1Fetches} GET(s) sem marcador em ${doc1PanelServe}`);
+    const doc2Fetches = countEmbedFetches(markDoc1, doc2PanelServe);
+    check('panel105-no-embed-fetch-doc2', doc2Fetches === 0, `${doc2Fetches} GET(s) de embed em ${doc2PanelServe}`);
+    await probeServesPdf(page, doc1PanelServe);
+    await snap(page, 'painel-101-doc1-expandido');
+    observed.steps.push({ step: 'painel-101-doc1-expandido', url: page.url(), unmarkedGetsDoc1: doc1Fetches, unmarkedGetsDoc2: doc2Fetches });
+    await context.close();
+  }
+
+  // 6b) Mobile 390: só link, 0 fetch de embed; viewer aberto JÁ no 390 com
+  // Voltar topo/rodapé; ?next= inseguro cai no detalhe do painel.
+  {
+    const { context, page } = await loginAs(browser, 'verify-manager', 'panel-101-mobile', { viewport: { width: 390, height: 844 } });
+    const markMobileGoto = markPhase();
+    await page.goto(`${base}/dashboard/case/${caseId101}/`, { waitUntil: 'domcontentloaded' });
+    observed.steps.push({ step: 'painel-101-mobile-goto-info', url: page.url(), gotoFetches: countEmbedFetches(markMobileGoto, doc1PanelServe) + countEmbedFetches(markMobileGoto, doc2PanelServe) });
+    // Mesmo marco pré-goto até o fim da seção mobile (revisão PVP-005 P1):
+    // nenhuma expansão no mobile inicia busca em nenhum dos docs.
+    await page.getByRole('button', { name: /Visualizar PDF Original/ }).click();
+    await page.waitForTimeout(800);
+    await page.locator('button[data-bs-target="#pdf-collapse-1"]').click().catch(() => {});
+    await page.waitForTimeout(800);
+    const mobileSrcs = await page.locator('embed.pdf-lazy-embed[src]').count();
+    const mobileFetches = countEmbedFetches(markMobileGoto, doc1PanelServe) + countEmbedFetches(markMobileGoto, doc2PanelServe);
+    check('panel105-mobile-zero-embed-fetch', mobileFetches === 0 && mobileSrcs === 0, `fetches=${mobileFetches} srcs=${mobileSrcs}`);
+    await snap(page, 'painel-101-detalhe-390');
+    observed.steps.push({ step: 'painel-101-detalhe-390', url: page.url(), embedFetches: mobileFetches });
+    // O viewer mobile abre JÁ no viewport 390 (P2 do PVP-003).
+    const viewerHref = await page.locator('a.d-md-none[href*="/viewer/"]').first().getAttribute('href');
+    check('panel105-mobile-viewer-link', !!viewerHref && String(viewerHref).includes(`/dashboard/case/${caseId101}/pdf/1/viewer/`), viewerHref);
+    const mobileViewport = page.viewportSize();
+    check('panel105-mobile-viewport-390', mobileViewport?.width === 390, JSON.stringify(mobileViewport));
+    await page.goto(`${base}${viewerHref}`, { waitUntil: 'domcontentloaded' });
+    const backLinks = await page.locator('a:has-text("← Voltar")').count();
+    check('panel105-viewer-voltar-topo-rodape', backLinks >= 2, `${backLinks} links Voltar`);
+    const viewerBody = await page.locator('body').innerText();
+    check('panel105-viewer-title', viewerBody.includes('PDF Original') || (await page.title()).includes('PDF Original'), await page.title());
+    await page.waitForFunction(() => document.querySelectorAll('#pdf-pages canvas').length >= 1, { timeout: 20000 });
+    const canvasCount = await page.locator('#pdf-pages canvas').count();
+    check('panel105-viewer-pdfjs-rendered', canvasCount >= 1, `${canvasCount} canvas(es) PDF.js`);
+    const canvasPixels = await page.locator('#pdf-pages canvas').first().evaluate((el) => {
+      const thumb = document.createElement('canvas');
+      thumb.width = 64; thumb.height = 64;
+      thumb.getContext('2d').drawImage(el, 0, 0, 64, 64);
+      const d = thumb.getContext('2d').getImageData(0, 0, 64, 64).data;
+      let nonwhite = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] < 250 || d[i + 1] < 250 || d[i + 2] < 250) nonwhite += 1;
+      }
+      return { w: el.width, h: el.height, nonwhite64: nonwhite };
+    });
+    check('panel105-viewer-canvas-nonblank', canvasPixels.nonwhite64 > 0, JSON.stringify(canvasPixels));
+    await snap(page, 'painel-101-viewer-mobile');
+    observed.steps.push({ step: 'painel-101-viewer-mobile', url: page.url() });
+    // ?next= inseguro cai no detalhe do painel.
+    const detailUrl = `${base}/dashboard/case/${caseId101}/`;
+    await page.goto(`${base}${viewerHref.split('?')[0]}?next=https://evil.example/`, { waitUntil: 'domcontentloaded' });
+    const evilBack = await page.locator('a:has-text("← Voltar")').first().getAttribute('href');
+    check('panel105-viewer-next-inseguro-fallback', !!evilBack && !String(evilBack).includes('evil.example') && String(evilBack).includes(`/dashboard/case/${caseId101}/`), evilBack);
+    await context.close();
+  }
+
+  // 6c) Resize 390→1280 com o sub-collapse do doc 2 aberto carrega o alvo
+  // (revisão PVP-005 P2 — espelha o padrão nir101-resize do
+  // drive-detalhe-papeis.mjs).
+  {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    page.on('response', (res) => {
+      if (res.url().includes('/static/') && res.status() >= 400) failedAssets.push(`${res.status()} ${res.url()}`);
+    });
+    await page.goto(`${base}/login/`, { waitUntil: 'domcontentloaded' });
+    await page.getByLabel('Usuário').fill('verify-manager');
+    await page.getByLabel('Senha', { exact: true }).fill(PASSWORD);
+    await page.getByRole('button', { name: 'Entrar' }).click();
+    await page.waitForFunction(() => !location.pathname.endsWith('/login/'), { timeout: 15000 });
+    await page.goto(`${base}/dashboard/case/${caseId101}/`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: /Visualizar PDF Original/ }).click();
+    await page.waitForTimeout(500);
+    // Abrir o sub-collapse do doc 2 em mobile (embed permanece sem src).
+    await page.locator('#pdf-collapse-2').evaluate((el) => el.classList.add('show'));
+    await page.waitForTimeout(500);
+    const beforeResizeSrc = await page.locator('#pdf-collapse-2 embed.pdf-lazy-embed').getAttribute('src');
+    check('panel105-resize-before-no-src', !beforeResizeSrc, String(beforeResizeSrc));
+    const markResize = markPhase();
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#pdf-collapse-2 embed.pdf-lazy-embed');
+      return el && el.getAttribute('src');
+    }, { timeout: 10000 });
+    await page.waitForTimeout(2500);
+    const afterResizeSrc = await page.locator('#pdf-collapse-2 embed.pdf-lazy-embed').getAttribute('src');
+    check('panel105-resize-loads-target', !!afterResizeSrc && afterResizeSrc === doc2PanelServe, String(afterResizeSrc));
+    const resizeFetches = countEmbedFetches(markResize, doc2PanelServe);
+    check('panel105-resize-embed-fetch', resizeFetches >= 1, `${resizeFetches} GET(s) sem marcador em ${doc2PanelServe} (o plugin busca o embed no headed-Xvfb)`);
+    await snap(page, 'painel-101-resize-1280-carregado');
+    observed.steps.push({ step: 'painel-101-resize-1280-carregado', url: page.url(), embedFetchesDoc2: resizeFetches });
+    await context.close();
+  }
+
+  // ══ 7) PARTE NOVA PVP-007 — seção de anexos do painel de VERIFY-103 (manager) ══
+  // ORDEM OBRIGATÓRIA (§8): TODOS os passos/asserts acima (manager/admin com
+  // os 2 casos do seed + VERIFY-101 com seus asserts completos) rodam ANTES;
+  // SÓ DEPOIS a fixture VERIFY-103 é criada via runVerifyPy — nenhum assert
+  // de contagem de casos é repetido após a criação. VERIFY-103: criador
+  // verify-nir, AWAITING_DOCTOR, 2 PDFs de relatório VÁLIDOS (PyMuPDF, texto
+  // "VERIFY-103 doc N") + 1 anexo PDF válido ("VERIFY-103 anexo PDF") +
+  // 1 anexo JPEG real (pixmap PyMuPDF de "VERIFY-103 anexo JPEG"), rows
+  // diretas com os paths seguros por UUID; seed compartilhado intocado.
+  runVerifyPy(
+    "from django.conf import settings\n" +
+    "assert str(settings.MEDIA_ROOT).startswith('" + runDir + "'), settings.MEDIA_ROOT\n" +
+    "import pymupdf\n" +
+    "from django.contrib.auth import get_user_model\n" +
+    "from apps.attachments.models import CaseAttachment\n" +
+    "from apps.cases.models import Case, CaseDocument, CaseProcedure\n" +
+    "from django.core.files.base import ContentFile\n" +
+    "u = get_user_model().objects.get(username='verify-nir')\n" +
+    "c, _ = Case.objects.get_or_create(created_by=u, agency_record_number='VERIFY-103', defaults={'patient_name': 'Paciente Sintetico Cento e Tres', 'patient_age': 59})\n" +
+    "Case.objects.filter(pk=c.pk).update(patient_name='Paciente Sintetico Cento e Tres', patient_age=59, extracted_text='TEXTO SINTETICO VERIFY-103.')\n" +
+    "c.refresh_from_db()\n" +
+    "CaseProcedure.objects.get_or_create(case=c, procedure_type='art_perif', defaults={'declared_by_nir': True})\n" +
+    "CaseProcedure.objects.get_or_create(case=c, procedure_type='cat_cardiaco', defaults={'declared_by_nir': True})\n" +
+    "c.refresh_from_db()\n" +
+    "if c.status != 'AWAITING_DOCTOR':\n" +
+    "    c.start_pdf_extraction(user=None, role='system')\n" +
+    "    c.complete_pdf_extraction(user=None, role='system')\n" +
+    "    c.complete_anonymization(user=None, role='system')\n" +
+    "    c.complete_llm_extraction(user=None, role='system')\n" +
+    "    c.complete_llm_summarization(user=None, role='system')\n" +
+    "    Case.objects.filter(pk=c.pk).update(status='AWAITING_DOCTOR')\n" +
+    "    c.refresh_from_db()\n" +
+    "existing = {d.position: d for d in c.documents.all()}\n" +
+    "for pos, name in ((1, 'relatorio-verify103-parte1.pdf'), (2, 'relatorio-verify103-parte2.pdf')):\n" +
+    "    if pos in existing:\n" +
+    "        continue\n" +
+    "    doc = pymupdf.open()\n" +
+    "    pg = doc.new_page()\n" +
+    "    pg.insert_text((72, 720), 'VERIFY-103 doc %d' % pos, fontsize=24)\n" +
+    "    pdf = bytes(doc.tobytes())\n" +
+    "    doc.close()\n" +
+    "    d = CaseDocument(case=c, position=pos, original_filename=name, content_type='application/pdf', size_bytes=len(pdf), uploaded_by=u)\n" +
+    "    d.file.save(name, ContentFile(pdf), save=False)\n" +
+    "    d.save()\n" +
+    "pdf_doc = pymupdf.open()\n" +
+    "pg = pdf_doc.new_page()\n" +
+    "pg.insert_text((72, 720), 'VERIFY-103 anexo PDF', fontsize=24)\n" +
+    "pdf_anexo = bytes(pdf_doc.tobytes())\n" +
+    "pdf_doc.close()\n" +
+    "pix_doc = pymupdf.open()\n" +
+    "pg = pix_doc.new_page()\n" +
+    "pg.insert_text((72, 720), 'VERIFY-103 anexo JPEG', fontsize=24)\n" +
+    "pix = pg.get_pixmap()\n" +
+    "jpeg = bytes(pix.tobytes('jpg'))\n" +
+    "pix_doc.close()\n" +
+    "by_name = {a.original_filename: a for a in c.attachments.all()}\n" +
+    "if 'evidencia-verify103.pdf' not in by_name:\n" +
+    "    a = CaseAttachment(case=c, content_type='application/pdf', original_filename='evidencia-verify103.pdf', size_bytes=len(pdf_anexo), uploaded_by=u)\n" +
+    "    a.file.save('evidencia-verify103.pdf', ContentFile(pdf_anexo), save=False)\n" +
+    "    a.save()\n" +
+    "if 'foto-verify103.jpg' not in by_name:\n" +
+    "    j = CaseAttachment(case=c, content_type='image/jpeg', original_filename='foto-verify103.jpg', size_bytes=len(jpeg), uploaded_by=u)\n" +
+    "    j.file.save('foto-verify103.jpg', ContentFile(jpeg), save=False)\n" +
+    "    j.save()\n" +
+    "print('VERIFY-103 ok', str(c.case_id), c.documents.count(), c.attachments.count())",
+  );
+  const out103 = runVerifyPy(
+    "from apps.cases.models import Case\n" +
+    "c = Case.objects.get(agency_record_number='VERIFY-103')\n" +
+    "print(str(c.case_id))\n" +
+    "print(c.status)\n" +
+    "print(','.join(str(a.pk) + ':' + a.content_type + ':' + a.original_filename for a in c.attachments.order_by('pk')))",
+  );
+  const out103Lines = String(out103).trim().split('\n');
+  const caseId103 = out103Lines[out103Lines.length - 3].trim();
+  const status103 = out103Lines[out103Lines.length - 2].trim();
+  const attachmentTriples = out103Lines[out103Lines.length - 1].trim().split(',').map((triple) => {
+    const [pk, contentType, ...rest] = triple.split(':');
+    return { pk, contentType, filename: rest.join(':') };
+  });
+  const pdfAttachment103 = attachmentTriples.find((a) => a.contentType === 'application/pdf');
+  const jpegAttachment103 = attachmentTriples.find((a) => a.contentType === 'image/jpeg');
+  // Rotas próprias do painel (PVP-007, R1/D6): serve de anexo por pk.
+  const panelServePdf103 = `/dashboard/case/${caseId103}/attachments/${pdfAttachment103.pk}/`;
+  const panelViewerPdf103 = `${panelServePdf103}viewer/`;
+  const panelServeJpeg103 = `/dashboard/case/${caseId103}/attachments/${jpegAttachment103.pk}/`;
+  check('panel107-verify103-fixture', /^[0-9a-f-]{36}$/.test(caseId103) && status103 === 'AWAITING_DOCTOR' && !!pdfAttachment103 && !!jpegAttachment103, `caseId=${caseId103} status=${status103} anexos=${JSON.stringify(attachmentTriples)}`);
+  // R5: PDFs + JPEG da fixture no root da run (mediaRoot do manifest).
+  const fixture103Files = execSync(`find ${JSON.stringify(MEDIA_ROOT)} -type f -name '*.pdf' -o -type f -name '*.jpg' | sort`, { encoding: 'utf8' }).trim().split('\n').filter((f) => f.includes(caseId103));
+  check('panel107-verify103-media-in-run-root', fixture103Files.length >= 4 && fixture103Files.every((f) => isMediaUnderRun(f, runDir)), `${fixture103Files.length} arquivo(s) sob ${MEDIA_ROOT}`);
+  const pdf103Magic = execSync(
+    `python3 -c "import sys; data=open(sys.argv[1],'rb').read(); print(data[:5] == b'%PDF-')" ${JSON.stringify(fixture103Files.find((f) => f.endsWith('.pdf')))}`,
+    { encoding: 'utf8' },
+  ).trim();
+  check('panel107-verify103-pdf-valid', pdf103Magic === 'True', String(fixture103Files));
+  const jpeg103Magic = execSync(
+    `python3 -c "import sys; data=open(sys.argv[1],'rb').read(); print(data[:2] == b'\\xff\\xd8')" ${JSON.stringify(fixture103Files.find((f) => f.endsWith('.jpg')))}`,
+    { encoding: 'utf8' },
+  ).trim();
+  check('panel107-verify103-jpeg-valid', jpeg103Magic === 'True', String(fixture103Files));
+  observed.verify103 = { caseId: caseId103, status: status103, attachments: attachmentTriples, fixtureFiles: fixture103Files };
+
+  // 7a) Desktop 1280: detalhe do painel de VERIFY-103 — seção de anexos na
+  // posição D8 (após os cards de documento, antes da trilha), lazy com
+  // contagem por URL EXATA de serve desde ANTES do goto como GATE.
+  {
+    const { context, page } = await loginAs(browser, 'verify-manager', 'panel-103', { viewport: { width: 1280, height: 900 } });
+    const markPanel103Goto = markPhase();
+    await page.goto(`${base}/dashboard/case/${caseId103}/`, { waitUntil: 'domcontentloaded' });
+    const gotoFetches = countEmbedFetches(markPanel103Goto, panelServePdf103) + countEmbedFetches(markPanel103Goto, panelServeJpeg103);
+    observed.steps.push({ step: 'painel-103-detalhe-1280-goto-info', url: page.url(), gotoFetches });
+    const body = await page.locator('body').innerText();
+    check('panel107-detail-heading', body.includes('Detalhes do caso'), page.url());
+    check('panel107-anexos-section', body.includes('Anexos'), page.url());
+    check('panel107-anexos-names', body.includes('evidencia-verify103.pdf') && body.includes('foto-verify103.jpg'));
+    check('panel107-anexos-status', body.includes('Pendente') || body.includes('Processando') || body.includes('Processado') || body.includes('Falhou'));
+    check('panel107-abrir-anexo', (await page.locator('a:has-text("Abrir anexo")').count()) === 2);
+    // Posição D8: cards de documento → anexos → trilha (headers em sequência).
+    const headers = await page.locator('.card-header').evaluateAll((els) => els.map((el) => el.textContent.replace(/\s+/g, ' ').trim()));
+    const docHeader = headers.findIndex((x) => x.includes('Visualizar PDF Original'));
+    const anexosHeader = headers.findIndex((x) => x.includes('Anexos'));
+    const trailHeader = headers.findIndex((x) => x.includes('Trilha de eventos'));
+    check('panel107-anexos-position', docHeader >= 0 && anexosHeader > docHeader && trailHeader > anexosHeader, headers.join(' | '));
+    // GATE pré-goto real AMBOS os anexos (revisão PVP-007 P1): o marco
+    // markPanel103Goto cobre a janela de navegação; a contagem é avaliada
+    // após a espera, antes de qualquer expansão.
+    await page.waitForTimeout(800);
+    const closedPdf = countEmbedFetches(markPanel103Goto, panelServePdf103);
+    const closedJpeg = countEmbedFetches(markPanel103Goto, panelServeJpeg103);
+    check('panel107-zero-fetch-fechado', closedPdf === 0 && closedJpeg === 0, `pdf=${closedPdf} jpeg=${closedJpeg}`);
+    const pdfEmbedLazy = await page.locator(`#attachment-collapse-${pdfAttachment103.pk} embed.pdf-lazy-embed`).count();
+    const pdfSrcs = await page.locator(`#attachment-collapse-${pdfAttachment103.pk} embed.pdf-lazy-embed[src]`).count();
+    const pdfDataSrcs = await page.locator(`#attachment-collapse-${pdfAttachment103.pk} embed.pdf-lazy-embed[data-src]`).count();
+    check('panel107-anexo-pdf-lazy', pdfEmbedLazy === 1 && pdfSrcs === 0 && pdfDataSrcs === 1, `embeds=${pdfEmbedLazy} src=${pdfSrcs} data-src=${pdfDataSrcs}`);
+    check('panel107-anexo-pdf-collapse-attr', (await page.locator(`#attachment-collapse-${pdfAttachment103.pk}[data-pdf-doc-collapse]`).count()) === 1);
+    const mobileLinks = await page.locator('a.d-md-none[href*="/attachments/"][href*="/viewer/"]').count();
+    check('panel107-mobile-links-pdf-only', mobileLinks === 1, `${mobileLinks} link(s) mobile ao viewer`);
+    const mobileText = await page.locator('a.d-md-none[href*="/attachments/"][href*="/viewer/"]').first().innerText();
+    check('panel107-mobile-link-identifies-file', mobileText.replace(/\s+/g, ' ').includes('Anexo 1') && mobileText.includes('evidencia-verify103.pdf'), mobileText.replace(/\s+/g, ' '));
+    const jpegImg = await page.locator(`#attachment-collapse-${jpegAttachment103.pk} img`).count();
+    const jpegLoading = await page.locator(`#attachment-collapse-${jpegAttachment103.pk} img`).getAttribute('loading');
+    check('panel107-anexo-jpeg-lazy', jpegImg === 1 && jpegLoading === 'lazy', `imgs=${jpegImg} loading=${jpegLoading}`);
+    const jpegViewerLeak = panelViewerPdf103.replace(`/attachments/${pdfAttachment103.pk}/`, `/attachments/${jpegAttachment103.pk}/`);
+    const jpegViewerLinks = await page.locator(`a[href*="${jpegViewerLeak}"]`).count();
+    check('panel107-jpeg-sem-viewer', jpegViewerLinks === 0, `${jpegViewerLinks} link(s) viewer do JPEG`);
+    await snap(page, 'painel-103-detalhe-1280-fechado');
+    observed.steps.push({ step: 'painel-103-detalhe-1280-fechado', url: page.url(), pdfFetches: closedPdf, jpegFetches: closedJpeg });
+    // Expandir o anexo PDF: ≥1 GET sem marcador SÓ no alvo; JPEG segue 0.
+    const markPanel103Doc = markPhase();
+    await page.locator(`button[data-bs-target="#attachment-collapse-${pdfAttachment103.pk}"]`).click();
+    await page.waitForFunction((pk) => {
+      const el = document.querySelector(`#attachment-collapse-${pk} embed.pdf-lazy-embed`);
+      return el && el.getAttribute('src');
+    }, pdfAttachment103.pk, { timeout: 10000 });
+    await page.waitForTimeout(2500);
+    const panel103PdfSrc = await page.locator(`#attachment-collapse-${pdfAttachment103.pk} embed.pdf-lazy-embed`).getAttribute('src');
+    check('panel107-anexo-pdf-loaded', !!panel103PdfSrc && panel103PdfSrc === panelServePdf103, String(panel103PdfSrc));
+    const panel103PdfFetches = countEmbedFetches(markPanel103Doc, panelServePdf103);
+    check('panel107-embed-fetch-anexo-pdf', panel103PdfFetches >= 1, `${panel103PdfFetches} GET(s) sem marcador em ${panelServePdf103}`);
+    const panel103JpegFetches = countEmbedFetches(markPanel103Doc, panelServeJpeg103);
+    check('panel107-no-embed-fetch-anexo-jpeg', panel103JpegFetches === 0, `${panel103JpegFetches} GET(s) de embed em ${panelServeJpeg103}`);
+    // Verificação direta do serve JPEG (marcada, ?probe=1 fora da contagem):
+    // content-type image/jpeg — o probe genérico de PDF não se aplica aqui.
+    {
+      const jpegProbe = await page.request.get(`${base}${panelServeJpeg103}?probe=1`);
+      const jpegContentType = String(jpegProbe.headers()['content-type'] || '');
+      const jpegProbeOk = jpegProbe.status() === 200 && jpegContentType.includes('image/jpeg');
+      check('panel107-probe-serve-jpeg', jpegProbeOk, `${jpegProbe.status()} ${jpegContentType} ${panelServeJpeg103}?probe=1`);
+    }
+    await snap(page, 'painel-103-anexo-pdf-expandido');
+    observed.steps.push({ step: 'painel-103-anexo-pdf-expandido', url: page.url(), unmarkedGetsPdf: panel103PdfFetches, unmarkedGetsJpeg: panel103JpegFetches });
+    // Anexo JPEG por CLIQUE no controle real: fecha o PDF e abre o JPEG.
+    await page.locator(`button[data-bs-target="#attachment-collapse-${pdfAttachment103.pk}"]`).click();
+    await page.waitForFunction((pk) => !document.querySelector(`#attachment-collapse-${pk}`).classList.contains('show'), pdfAttachment103.pk, { timeout: 10000 });
+    const panel103JpegToggle = page.locator(`button[data-bs-target="#attachment-collapse-${jpegAttachment103.pk}"]`);
+    await panel103JpegToggle.scrollIntoViewIfNeeded();
+    await panel103JpegToggle.click();
+    await page.waitForFunction((pk) => document.querySelector(`#attachment-collapse-${pk}`).classList.contains('show'), jpegAttachment103.pk, { timeout: 10000 });
+    await page.waitForTimeout(800);
+    const panel103ImgSrc = await page.locator(`#attachment-collapse-${jpegAttachment103.pk} img`).getAttribute('src');
+    const panel103ImgLoading = await page.locator(`#attachment-collapse-${jpegAttachment103.pk} img`).getAttribute('loading');
+    check('panel107-anexo-jpeg-loaded', !!panel103ImgSrc && panel103ImgSrc === panelServeJpeg103 && panel103ImgLoading === 'lazy', `src=${panel103ImgSrc} loading=${panel103ImgLoading}`);
+    await snap(page, 'painel-103-anexo-jpeg-expandido');
+    await context.close();
+  }
+
+  // 7b) Mobile 390: fechado/mobile = 0 via gates pré-goto URL-exatos AMBOS
+  // os anexos; viewer mobile do anexo aberto JÁ no 390 com Voltar.
+  {
+    const { context, page } = await loginAs(browser, 'verify-manager', 'panel-103-mobile', { viewport: { width: 390, height: 844 } });
+    const markPanel103MobileGoto = markPhase();
+    await page.goto(`${base}/dashboard/case/${caseId103}/`, { waitUntil: 'domcontentloaded' });
+    const mobileGotoPdf = countEmbedFetches(markPanel103MobileGoto, panelServePdf103);
+    const mobileGotoJpeg = countEmbedFetches(markPanel103MobileGoto, panelServeJpeg103);
+    check('panel107-mobile-zero-fetch-goto', mobileGotoPdf === 0 && mobileGotoJpeg === 0, `pdf=${mobileGotoPdf} jpeg=${mobileGotoJpeg}`);
+    observed.steps.push({ step: 'painel-103-mobile-goto-info', url: page.url(), pdfFetches: mobileGotoPdf, jpegFetches: mobileGotoJpeg });
+    const markPanel103Mobile = markPhase();
+    await page.getByRole('button', { name: /Visualizar PDF Original/ }).click().catch(() => {});
+    await page.waitForTimeout(800);
+    const mobileSrcs = await page.locator('embed.pdf-lazy-embed[src]').count();
+    const mobileFetches = countEmbedFetches(markPanel103Mobile, panelServePdf103) + countEmbedFetches(markPanel103Mobile, panelServeJpeg103);
+    check('panel107-mobile-zero-embed-fetch', mobileFetches === 0 && mobileSrcs === 0, `fetches=${mobileFetches} srcs=${mobileSrcs}`);
+    await snap(page, 'painel-103-detalhe-390');
+    observed.steps.push({ step: 'painel-103-detalhe-390', url: page.url(), embedFetches: mobileFetches });
+    // Viewer mobile do anexo PDF aberto JÁ no viewport 390, com Voltar.
+    const panel103ViewerHref = await page.locator(`a.d-md-none[href*="/attachments/${pdfAttachment103.pk}/viewer/"]`).getAttribute('href');
+    check('panel107-anexo-viewer-link', !!panel103ViewerHref && panel103ViewerHref.includes('/viewer/'), panel103ViewerHref);
+    const panel103MobileViewport = page.viewportSize();
+    check('panel107-anexo-viewport-390', panel103MobileViewport?.width === 390, JSON.stringify(panel103MobileViewport));
+    await page.goto(`${base}${panel103ViewerHref}`, { waitUntil: 'domcontentloaded' });
+    const panel103ViewerBacks = await page.locator('a:has-text("← Voltar")').count();
+    check('panel107-anexo-viewer-voltar', panel103ViewerBacks >= 2, `${panel103ViewerBacks} links Voltar`);
+    const panel103ViewerBody = await page.locator('body').innerText();
+    check('panel107-anexo-viewer-title', panel103ViewerBody.includes('Anexo') || (await page.title()).includes('Anexo'), await page.title());
+    await page.waitForFunction(() => document.querySelectorAll('#pdf-pages canvas').length >= 1, { timeout: 20000 });
+    const panel103ViewerCanvas = await page.locator('#pdf-pages canvas').count();
+    check('panel107-anexo-viewer-pdfjs-rendered', panel103ViewerCanvas >= 1, `${panel103ViewerCanvas} canvas(es) PDF.js`);
+    await snap(page, 'painel-103-viewer-mobile');
+    observed.steps.push({ step: 'painel-103-viewer-mobile', url: page.url() });
+    const panel103DetailUrl = `${base}/dashboard/case/${caseId103}/`;
+    await page.goto(`${base}${panel103ViewerHref.split('?')[0]}?next=https://evil.example/`, { waitUntil: 'domcontentloaded' });
+    const panel103EvilBack = await page.locator('a:has-text("← Voltar")').first().getAttribute('href');
+    check('panel107-anexo-viewer-next-inseguro', !!panel103EvilBack && !String(panel103EvilBack).includes('evil.example') && String(panel103EvilBack).includes(`/dashboard/case/${caseId103}/`), panel103EvilBack);
+    await context.close();
+  }
+
+  // 7c) Cleanup imediato da fixture VERIFY-103: apaga anexos/documentos
+  // (FK PROTECT — ordem obrigatória) + caso + arquivos da run.
+  runVerifyPy(
+    "import shutil\n" +
+    "from pathlib import Path\n" +
+    "from django.conf import settings\n" +
+    "from apps.cases.models import Case\n" +
+    "c = Case.objects.get(agency_record_number='VERIFY-103')\n" +
+    "pk = c.pk\n" +
+    "c.attachments.all().delete()\n" +
+    "c.documents.all().delete()\n" +
+    "c.delete()\n" +
+    "media = Path(str(settings.MEDIA_ROOT))\n" +
+    "assert str(media).startswith('" + runDir + "')\n" +
+    "removed = []\n" +
+    "for sub in ('case_documents', 'case_attachments'):\n" +
+    "    target = media / sub / str(c.case_id)\n" +
+    "    if target.exists():\n" +
+    "        shutil.rmtree(target)\n" +
+    "        removed.append(str(target))\n" +
+    "print('cleanup-103', pk, removed)",
+  );
+  const verify103Gone = runVerifyPy(
+    "from apps.cases.models import Case\n" +
+    "print(Case.objects.filter(agency_record_number='VERIFY-103').count())",
+  );
+  check('panel107-verify103-cleanup', String(verify103Gone).trim().split('\n').pop() === '0', String(verify103Gone).trim().split('\n').pop());
 } catch (err) {
   console.error(`infra/driver: ${err.message}`);
   writeFileSync(path.join(artifacts, 'observed-state.json'), JSON.stringify(observed, null, 2));

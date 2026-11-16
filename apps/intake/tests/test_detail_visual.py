@@ -46,10 +46,14 @@ def _create_case(
         file=pdf_factory(),
         procedure_type="art_perif",
     )
+    # PVP-002 R2: casos reais carregam o texto extraído do pipeline — sem
+    # ele o card de texto é omitido por contrato (a ausência é coberta em
+    # test_case_detail_cards.py).
     Case.objects.filter(pk=case.pk).update(
         patient_name=patient_name,
         agency_record_number=record_number,
         patient_age=84,
+        extracted_text="Texto extraído sintético do relatório",
     )
     case.refresh_from_db()
     return case
@@ -77,5 +81,8 @@ def test_intake_detail_uses_ats_web_report_layout(
     assert "5040778" in body
     assert "Procedimentos do caso" in body
     assert "Arteriografia periférica" in body
-    assert "Documentos" in body
+    # PVP-002 R2: a tabela "Documentos" foi substituída pelos cards do
+    # relatório (texto extraído em <pre> + PDF original lazy).
+    assert "Texto Extraído do PDF" in body
+    assert "Visualizar PDF Original" in body
     assert "Comunicações" in body

@@ -4,6 +4,28 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.19] — 2026-11-16
+
+**Visualização do PDF original e dos anexos nos 4 papéis (paridade ats-web)**
+— 1 change (`pdf-original-viewer-parity`), 7 slices TDD com revisão
+independente por slice. Suíte 1762 → **1958** (+196 testes). Sem
+migrations (deploy direto).
+
+- Cards colapsáveis padronizados nos detalhes de caso dos 4 papéis (NIR,
+  médico, agendador, supervisor/painel): `Texto Extraído do PDF` (`<pre>`
+  com `Case.extracted_text`) e `Visualizar PDF Original` (embed lazy no
+  desktop com botão "Abrir em nova aba"); supervisor passa a ter acesso
+  ao PDF (rotas novas, guards manager/admin); agendador sob o gate
+  pós-decisão vigente, inalterado.
+- Viewer mobile dedicado por papel (PDF.js vendored, nav sticky com
+  `← Voltar`, `?next=` resolvido com helper seguro); cada `CaseDocument`
+  ganha seu sub-collapse lazy (HMD tem 1–N documentos por caso).
+- Anexos de evidência com arquivo servido e visualizável (embed lazy para
+  PDF, imagem lazy para JPEG/PNG) nos cards de anexo do NIR, médico e
+  painel — rotas de serve por papel com os guards já vigentes.
+- Infra compartilhada: helper `next` seguro, template mobile, lazy-embed
+  e `SAMEORIGIN` nos serves.
+
 ## [0.1.18] — 2026-11-15
 
 **Listas operacionais na paridade geométrica + ícone no molde do CHD** —

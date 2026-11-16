@@ -8,7 +8,7 @@ Processar anexos de evidência dos casos com OCR híbrido (local para PDFs com t
 
 ### Requirement: Upload e listagem de anexos pelo NIR
 
-O sistema SHALL permitir ao NIR anexar arquivos (JPEG, PNG ou PDF) no momento da criação do caso e no reenvio corrigido, respeitando limites de contagem e tamanho por arquivo, com rejeição nomeada antes de qualquer gravação; anexos são aceitos SOMENTE quando o envio contém exatamente 1 PDF de relatório (com múltiplos PDFs a vinculação seguro entre relatórios e anexos é impossível) — nesse caso os casos do lote são criados sem anexos e o erro informa a restrição; com exatamente 1 PDF, anexo inválido aborta o envio inteiro. Anexos aceitos ficam listados no detalhe do caso para o criador com nome e status de processamento legível. O caso sem anexos SHALL seguir idêntico ao fluxo atual.
+O sistema SHALL permitir ao NIR anexar arquivos (JPEG, PNG ou PDF) no momento da criação do caso e no reenvio corrigido, respeitando limites de contagem e tamanho por arquivo, com rejeição nomeada antes de qualquer gravação; anexos são aceitos SOMENTE quando o envio contém exatamente 1 PDF de relatório (com múltiplos PDFs a vinculação seguro entre relatórios e anexos é impossível) — nesse caso os casos do lote são criados sem anexos e o erro informa a restrição; com exatamente 1 PDF, anexo inválido aborta o envio inteiro. Anexos aceitos ficam listados no detalhe do caso para o criador com nome, status de processamento legível e **visualização do arquivo** (link de abertura + embed/imagem colapsável, padrão `pdf-original-viewer`), servida por rota própria do NIR sob o guard de criador. O caso sem anexos SHALL seguir idêntico ao fluxo atual.
 
 #### Scenario: Anexos criados junto com o caso
 
@@ -33,6 +33,13 @@ O sistema SHALL permitir ao NIR anexar arquivos (JPEG, PNG ou PDF) no momento da
 - **GIVEN** um upload com 2 PDFs de relatório válidos e dois anexos
 - **WHEN** a criação é submetida
 - **THEN** os dois casos são criados sem anexos e o erro nomeado informa que anexos exigem exatamente 1 relatório
+
+#### Scenario: NIR visualiza o arquivo do anexo
+
+- **GIVEN** um caso do NIR com um anexo PDF e um JPEG
+- **WHEN** ele abre o detalhe do caso
+- **THEN** cada anexo tem link de abertura do arquivo e visualização colapsável (embed lazy para PDF, imagem lazy para JPEG); anexo de caso alheio responde 404
+
 
 ### Requirement: Extração híbrida com auditoria de OCR externo
 
@@ -62,6 +69,7 @@ O sistema SHALL extrair o texto de cada anexo de forma assíncrona após a anoni
 - **WHEN** o processamento roda
 - **THEN** o anexo fica com status de falha e motivo registrado em evento, e o caso segue seu fluxo normalmente
 
+
 ### Requirement: Verificação de paciente anonimizada
 
 O texto extraído do anexo SHALL ser anonimizado antes de qualquer chamada LLM, no mesmo espaço determinístico de tokens do caso; a verificação por LLM SHALL receber apenas tokens (texto anonimizado do anexo e o pseudônimo do paciente do caso) e produzir `match`, `mismatch` ou `unknown` com resumo e evidência, persistidos na row do anexo e em evento. Falha da verificação SHALL marcar o anexo como falho sem efeito sobre o caso.
@@ -84,9 +92,10 @@ O texto extraído do anexo SHALL ser anonimizado antes de qualquer chamada LLM, 
 - **WHEN** o processamento roda
 - **THEN** o anexo fica com status de falha e motivo em evento, e o caso segue normalmente
 
+
 ### Requirement: Anexos na decisão médica
 
-A tela de decisão médica SHALL exibir, quando houver anexos, um card por anexo com status, método, resultado da verificação e resumo/evidência re-identificados apenas na renderização; divergência (`mismatch`) SHALL aparecer como alerta consultivo sem nunca descartar ou bloquear o caso. Casos sem anexos permanecem visualmente idênticos.
+A tela de decisão médica SHALL exibir, quando houver anexos, um card por anexo com status, método, resultado da verificação e resumo/evidência re-identificados apenas na renderização, acrescido da **visualização do arquivo** (embed lazy para PDF, imagem lazy para JPEG/PNG, link mobile para viewer dedicado — padrão `pdf-original-viewer`); divergência (`mismatch`) SHALL aparecer como alerta consultivo sem nunca descartar ou bloquear o caso. Casos sem anexos permanecem visualmente idênticos.
 
 #### Scenario: Card re-identificado na decisão
 
@@ -105,3 +114,26 @@ A tela de decisão médica SHALL exibir, quando houver anexos, um card por anexo
 - **GIVEN** um caso em avaliação médica com um anexo ainda pendente e outro falho
 - **WHEN** o médico abre o detalhe
 - **THEN** ambos aparecem com seus status legíveis, sem resultado de verificação
+
+#### Scenario: Card do anexo exibe o arquivo
+
+- **GIVEN** um caso em avaliação médica com um anexo PDF processado
+- **WHEN** o médico abre o detalhe
+- **THEN** o card do anexo inclui a visualização colapsável do arquivo via rota de serve do papel; médico sem acesso ao caso recebe 404 no serve
+
+
+### Requirement: Anexos visualizáveis no painel
+
+O detalhe do caso no painel (manager/admin) SHALL listar os anexos do caso com nome, status e **visualização do arquivo** (link de abertura + embed/imagem colapsável, padrão `pdf-original-viewer`), servida por rota própria do painel sob o guard `manager`/`admin`. Casos sem anexos não exibem a seção.
+
+#### Scenario: Painel lista anexos com visualização
+
+- **GIVEN** um caso com um anexo PDF processado
+- **WHEN** o manager abre o detalhe no painel
+- **THEN** a seção de anexos exibe nome, status e a visualização colapsável do arquivo
+
+#### Scenario: Painel sem anexos omite a seção
+
+- **GIVEN** um caso sem anexos
+- **WHEN** o manager abre o detalhe no painel
+- **THEN** nenhuma seção de anexos é renderizada

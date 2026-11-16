@@ -142,6 +142,27 @@ Listas operacionais aproximadas do molde ats-web sem alterar FSM, guards, regras
 
 Deltas reconciliados nas specs principais: `doctor-decision` substituiu a requirement da fila pela operacional (22 cenários), `scheduling` ampliou a fila completa (19) e `intake-nir` atualizou Meus casos/detalhe (17); `validate --specs` 15/15 e `validate --strict` do change aprovados. Gate final verde: ruff + format + mypy (282 arquivos) + **1760 testes** (`TEST_DB_PORT=55435`). Regressão `verify-hmd` na árvore final: header 180 checks, genérica/fila-médica 17, pendentes médico 60, decididos 55, agendador 85, meus casos 62, detalhe 34 e upload 72 — todos sem falhas, com PNG/snapshot/JSON, medidas 1280/390 e cleanup. Relatório consolidado: `/tmp/hmd-slice-oli-005-report.md`. Próximo: — (change arquivado; nenhum novo escopo autorizado).
 
+## Fecho do change pdf-original-viewer-parity (slices 001–007, ARQUIVADO em 2026-11-16)
+
+Paridade ats-web de visualização do PDF original nos 4 papéis, sem mudar guards/FSM/regras: dois cards colapsáveis
+(`Texto Extraído do PDF` — omitido sem texto no NIR/agendador/painel, placeholder no médico — e `Visualizar PDF
+Original`) com **embed lazy por documento** (`data-pdf-doc-collapse` + `data-src` sem `src`; gate por breakpoint
+`matchMedia(768px)`, resize carrega o aberto, mobile nunca inicia busca; fallback `<noscript>`), **viewer mobile
+dedicado** (PDF.js vendored v4.0.379, Voltar topo/rodapé, `?next=` seguro via `resolve_safe_next_url`),
+rotas de serve/viewer por papel **espelhando os guards dos detalhes** (papel errado→403; alcance/inexistente/sem
+arquivo→404; **decisão do dono**: médico fora-da-matriz→403 consolidado na spec) e **anexos visualizáveis**
+(serve/viewer por papel, só-PDF no viewer, JPEG `img loading=lazy`, seção própria — NIR/médico/painel).
+Execução em 7 slices com loop worker(muse-spark)+reviewer(gpt-6.1-terra) controlado pelo parent: 2 timeouts de
+runtime com retry único, 3 decisões do dono (opção C de evidência — fetch provado DIRETAMENTE no headed-Xvfb,
+C ficou só p/ renderização; waiver de rodada 3 no 002; 403 médico), falhas de host-gate cobertas por
+verificação parent. Harness endurecido: **MEDIA_ROOT por run** (`HMD_VERIFY_MEDIA_ROOT` + manifest + guardas
+adversariais traversal/symlink/igualdade no control-hmd e drive), contador de rede por pathname exato
+any-status com probes excluídos, fixtures VERIFY-101/102/103 por jornada via runVerifyPy (seed intocado),
+jornada VERIFY-001 restaurada, gates pré-goto fail-loud. Gate final **1958 testes** verdes; specs 16/16
+(`pdf-original-viewer` NOVA + scheduling/dashboard/attachments MODIFIED). Débitos P2 registrados nos
+checkpoints (`/tmp/pvp-loop/...`): contador any-status no drive-detalhe, rótulo mobile NIR N>1, asserções
+parser-HTML, paridade serve arquivo-vazio, guardas estruturais PVP-001. Commits b110c2a→57a5e05.
+
 ## Backlog pós-piloto (fase 2 — dono, 2026-09-15, E2E dev validado)
 
 Cada item abaixo é um change próprio (dono enumerou após validar o fluxo

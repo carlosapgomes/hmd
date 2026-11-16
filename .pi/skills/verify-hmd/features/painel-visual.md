@@ -67,6 +67,40 @@ rotas próprias do painel (serve por `position` + viewer mobile, guard
 - R5: subprocesso e servidor usam o mesmo `HMD_VERIFY_MEDIA_ROOT` validado
   (descendente estrito da run); PDFs sob o root da run; Chromium headed sob
   Xvfb (o headless não busca `<embed>`).
+- Bundle PVP-007 (higiene da review-2 do PVP-005, arquivo já no escopo): o
+  contador de rede passa a contar GETs de QUALQUER status na URL exata
+  (não só ` 200`), mantendo a exclusão de probes — corrige o P2
+  recorrente "gates ignoram 403/404" neste drive.
+
+## PVP-007 — seção de anexos do painel sobre VERIFY-103 (R1–R2)
+
+Seção "Anexos" no detalhe do painel (`dashboard:case_detail`) nas rotas
+próprias do painel (serve `attachments/<int>/` por pk + viewer mobile SÓ
+para PDF, guard `manager`/`admin`):
+
+- Fixture criada NO DRIVE via runVerifyPy (nunca no seed compartilhado),
+  SÓ DEPOIS de todos os asserts existentes de exatamente 2 casos (ordem
+  §8: VERIFY-101 e os passos das jornadas acima rodam ANTES):
+  `VERIFY-103` com criador `verify-nir`, `AWAITING_DOCTOR`, 2 PDFs VÁLIDOS
+  de relatório (PyMuPDF, 1 página com texto `VERIFY-103 doc N`) + 1 anexo
+  PDF válido (texto `VERIFY-103 anexo PDF`) + 1 anexo JPEG real (pixmap
+  PyMuPDF do texto `VERIFY-103 anexo JPEG`), rows diretas com paths
+  seguros por UUID (mesmo callable), IDs/nomes fora das demais faixas.
+- Detector: `dashboard/case/<id>/` com a seção `Anexos` APÓS os cards de
+  documento e ANTES da trilha (D8): cada anexo com nome + status legível +
+  `Abrir anexo` (serve do painel, `target=_blank`) e visualização
+  colapsável — PDF recebe collapse com `data-pdf-doc-collapse` + embed
+  lazy `data-src` sem `src` + link mobile `d-md-none` identificando
+  `Anexo N — nome` ao viewer dedicado com `?next=`; imagem recebe collapse
+  com `<img loading="lazy" src=serve>` + link direto (sem viewer);
+  `<noscript>` com links diretos por anexo; `pdf-lazy-embed.js` mantido.
+- Lazy por URL EXATA de serve desde ANTES do goto como GATE (ambos os
+  anexos, incluindo a navegação; qualquer status conta — bundle PVP-007):
+  fechado = 0 fetch; expansão do anexo PDF ⇒ ≥1 GET sem marcador SÓ no
+  alvo; anexo JPEG sem `src`/sem viewer; mobile 390 = 0 fetch + 0 src
+  (mesmo marco pré-goto até o fim da seção); viewer mobile do anexo
+  (PDF.js, Voltar topo/rodapé, `?next=` inseguro → fallback); verificação
+  direta do serve JPEG (`?probe=1`, fora da contagem).
 
 ## Gotchas
 

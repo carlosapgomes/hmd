@@ -43,4 +43,16 @@ urlpatterns: list[URLPattern] = [
         views.pdf_viewer,
         name="pdf_viewer",
     ),
+    path(
+        "case/<uuid:case_id>/attachments/<int:attachment_id>/",
+        views.serve_attachment,
+        name="serve_attachment",
+    ),
+    # Viewer do anexo PDF (slice PVP-007, R1): SÓ application/pdf (imagens
+    # usam link direto + <img loading=lazy>); mesmo guard de serve_attachment.
+    path(
+        "case/<uuid:case_id>/attachments/<int:attachment_id>/viewer/",
+        views.attachment_pdf_viewer,
+        name="attachment_pdf_viewer",
+    ),
 ]

@@ -58,7 +58,7 @@ Contract: `slices/slice-006-attachment-viewing-nir-doctor.md`
 
 Contract: `slices/slice-007-attachment-viewing-dashboard.md`
 
-- [ ] 7.1 Escrever RED do serve + viewer de anexo do painel e da seção de anexos; executar os testes focados e registrar as falhas esperadas.
-- [ ] 7.2 Implementar rotas e seção (omitida sem anexos); verificar testes focados verdes e a suíte dashboard sem regressão.
-- [ ] 7.3 Rodar `detalhe-papeis` + `painel-visual` na árvore final (4 papéis, 1280/390); no painel concluir os asserts de dois casos antes das fixtures, usando media root validado, e registrar PNG/snapshot/JSON; mapear regressões.
-- [ ] 7.4 Rodar o quality gate final, produzir `/tmp/hmd-slice-pvp-007-report.md` e submeter o slice à revisão independente (change pronta para archive).
+- [x] 7.1 Escrever RED do serve + viewer de anexo do painel e da seção de anexos; executar os testes focados e registrar as falhas esperadas.
+- [x] 7.2 Implementar rotas e seção (omitida sem anexos); verificar testes focados verdes e a suíte dashboard sem regressão.
+- [x] 7.3 Rodar `detalhe-papeis` + `painel-visual` na árvore final (4 papéis, 1280/390); no painel concluir os asserts de dois casos antes das fixtures, usando media root validado, e registrar PNG/snapshot/JSON; mapear regressões.
+- [x] 7.4 Rodar o quality gate final, produzir `/tmp/hmd-slice-pvp-007-report.md` e submeter o slice à revisão independente (change pronta para archive).

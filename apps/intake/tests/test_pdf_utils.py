@@ -169,6 +169,31 @@ def test_standalone_and_partial_lines_removed() -> None:
     assert result.report == WatermarkReport(tokens=1, mark_lines=2, swept_occurrences=0)
 
 
+def test_three_standalone_lines_removed() -> None:
+    """Pin: 3 linhas soltas do mesmo token somem (spec: linha solta conta como marca).
+
+    Pin de cobertura do comportamento já implementado (GREEN imediato, não é
+    bug): fixa o cenário da spec delta "Marca em linha solta ou com poucas
+    repetições conta como linha de marca" (design D5, "linha solta ×2"),
+    isolado de linha parcial/banda — sem record_number, sem sweep.
+    """
+    text = (
+        "Paciente: João Maria\n48291\nMotivo da Solicitação: cateterismo cardíaco\n"
+        "48291\nRelatório clínico normal\n48291\nConteúdo clínico preservado"
+    )
+
+    result = strip_watermark(text)
+
+    assert "48291" not in result.text
+    assert "Paciente: João Maria" in result.text
+    assert "Motivo da Solicitação: cateterismo cardíaco" in result.text
+    assert "Relatório clínico normal" in result.text
+    assert "Conteúdo clínico preservado" in result.text
+    assert result.report.tokens == 1
+    assert result.report.mark_lines == 3
+    assert result.report.swept_occurrences == 0
+
+
 def test_inline_occurrence_of_non_record_token_preserved() -> None:
     """Token ≠ nº: a citação inline em linha clínica permanece (sem sweep)."""
     text = (

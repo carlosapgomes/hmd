@@ -75,6 +75,7 @@ from .metrics import (
     format_duration,
     outcome_by_case,
 )
+from .presenters import build_case_summary_context
 
 # Rótulos do seletor de período (R2/R3).
 _PERIOD_LABELS: dict[str, str] = {
@@ -457,12 +458,21 @@ def _case_detail_context(case: Case, *, filters: Mapping[str, str]) -> dict[str,
     (``documents``/``pdf_items`` com reverse das rotas do painel + ``detail_url``)
     — o template (D8) monta os dois cards do relatório após "Procedimentos
     declarados", antes da trilha; texto vazio omite o card de texto.
+
+    Slice 002 do change retencao-auditoria-casos-encerrados (R2/D5/D6): o
+    contexto ganha também o card «Sumário apresentado ao médico»
+    (``summary_lines``/``sections``/``has_structure`` do presenter do painel,
+    via API compartilhada — paridade com o detalhe médico), renderizado
+    após "Procedimentos declarados", antes do texto extraído.
     """
     declared_types = [row.procedure_type for row in case.procedures.all() if row.declared_by_nir]
     detail_url = reverse("dashboard:case_detail", args=[case.case_id])
     documents: list[CaseDocument] = list(case.documents.all())
     attachments: list[CaseAttachment] = list(case.attachments.all())
     return {
+        # Card «Sumário apresentado ao médico» (slice 002, R2): presenter do
+        # painel sobre a API compartilhada — mesmas chaves do template médico.
+        **build_case_summary_context(case),
         "case_id": case.case_id,
         "case": case,
         "documents": documents,

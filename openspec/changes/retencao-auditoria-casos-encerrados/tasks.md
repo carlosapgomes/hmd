@@ -30,19 +30,19 @@
 
 ## 2. Slice 002 — Card «Sumário apresentado ao médico» no painel
 
-- [ ] 2.1 RED: testes HTTP do card (manager vê sumário clínico + estrutura
+- [x] 2.1 RED: testes HTTP do card (manager vê sumário clínico + estrutura
       extraída re-identificados e sem tokens; caso `CLEANED` retido renderiza
       conteúdo; sem artefatos → placeholders POR BLOCO; papéis fora de
       manager/admin → 403; paridade de `summary_lines`/`sections` com o
       contexto médico)
-- [ ] 2.2 GREEN: builders puros + mapas dependentes extraídos para
+- [x] 2.2 GREEN: builders puros + mapas dependentes extraídos para
       `apps/cases/presentation.py` com API pública única
       `build_structure_sections(structured)` (presenter médico importa —
       extração pura, suíte médica run-only) +
       `apps/dashboard/presenters.py::build_case_summary_context` + card
       collapsible fechado em `templates/dashboard/case_detail.html` (após
       «Procedimentos declarados», antes de «Texto Extraído do PDF»)
-- [ ] 2.3 Bateria do slice + regressão do detalhe médico sem edição de
+- [x] 2.3 Bateria do slice + regressão do detalhe médico sem edição de
       testes existentes (`pytest apps/doctor apps/dashboard`) + gate completo
 
 ## 3. Slice 003 — Purga retroativa dos dados retidos

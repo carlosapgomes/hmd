@@ -13,6 +13,8 @@ chega processada (R3/R6).
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Callable
 
 import pymupdf
@@ -163,6 +165,87 @@ def test_happy_path_anonymizing(nir_user: User) -> None:
     completion = case.events.get(event_type=CaseEventType.CASE_EXTRACTION_COMPLETED)
     assert completion.payload["record_number"] == _RECORD_NUMBER
     assert completion.payload["text_length"] == len(case.extracted_text)
+
+
+@pytest.mark.django_db
+def test_extraction_completed_event_carries_watermark_counts(nir_user: User) -> None:
+    """Slice 002 (watermark-strip-hardening): o evento de conclusão carrega as
+    contagens da remoção sob ``watermark`` (token ≠ nº, 2 linhas de marca: 1
+    token, 2 linhas descartadas, 0 ocorrências varridas — sweep assimétrico)."""
+    case = _create_case_with_pdf(nir_user, _pdf_bytes(_standard_report_lines()))
+
+    process_case_documents(case.case_id)
+    case.refresh_from_db()
+
+    completion = case.events.get(event_type=CaseEventType.CASE_EXTRACTION_COMPLETED)
+    assert completion.payload["watermark"] == {
+        "tokens": 1,
+        "mark_lines": 2,
+        "swept_occurrences": 0,
+    }
+    assert _WATERMARK_TOKEN not in case.extracted_text
+
+
+@pytest.mark.django_db
+def test_extraction_completed_event_watermark_zero_without_mark(nir_user: User) -> None:
+    """Slice 002: sem marca nomeada, ``watermark`` vem zerado PRESENTE (contrato
+    uniforme de telemetria — o consumidor não trata ausência)."""
+    case = _create_case_with_pdf(nir_user, _pdf_bytes(_standard_report_lines(with_watermark=False)))
+
+    process_case_documents(case.case_id)
+    case.refresh_from_db()
+
+    completion = case.events.get(event_type=CaseEventType.CASE_EXTRACTION_COMPLETED)
+    assert completion.payload["watermark"] == {
+        "tokens": 0,
+        "mark_lines": 0,
+        "swept_occurrences": 0,
+    }
+
+
+@pytest.mark.django_db
+def test_watermark_payload_has_no_token_value(nir_user: User) -> None:
+    """Slice 002: a telemetria carrega só contagens — nenhum valor de token."""
+    case = _create_case_with_pdf(nir_user, _pdf_bytes(_standard_report_lines()))
+
+    process_case_documents(case.case_id)
+    case.refresh_from_db()
+
+    completion = case.events.get(event_type=CaseEventType.CASE_EXTRACTION_COMPLETED)
+    assert "watermark" in completion.payload
+    # A proibição de valores vale só para a telemetria (``watermark``); o campo
+    # pré-existente ``record_number`` carrega o nº por design anterior ao change, inclusive quando coincide com o token.
+    serialized = json.dumps(completion.payload["watermark"])
+    assert re.search(rf"\b{_WATERMARK_TOKEN}\b", serialized) is None
+
+
+@pytest.mark.django_db
+def test_watermark_counts_when_mark_equals_record_number(nir_user: User) -> None:
+    """Slice 002 (caso coincidente, D2): a marca é o próprio nº de ocorrência.
+
+    Token "33345" em 2 linhas de marca + citação em ``Código: 33345`` — a
+    citação inline é varrida pelo sweep do token coincidente (swept=1), mas
+    ``record_number``/``agency_record_number`` retêm o nº (exceção deliberada:
+    referência humana do caso, fora da proibição de valores da telemetria).
+    """
+    band = f"{_RECORD_NUMBER} {_RECORD_NUMBER} {_RECORD_NUMBER} {_RECORD_NUMBER}"
+    lines = [_REPORT_HEADER, *_INSTITUTIONAL_SIGNALS, *_SECTIONS, band, band]
+    while len("\n".join(lines)) < 560:
+        lines.append(_PADDING)
+    case = _create_case_with_pdf(nir_user, _pdf_bytes(lines))
+
+    process_case_documents(case.case_id)
+    case.refresh_from_db()
+
+    completion = case.events.get(event_type=CaseEventType.CASE_EXTRACTION_COMPLETED)
+    assert completion.payload["watermark"] == {
+        "tokens": 1,
+        "mark_lines": 2,
+        "swept_occurrences": 1,
+    }
+    assert completion.payload["record_number"] == _RECORD_NUMBER
+    assert re.search(rf"\b{_RECORD_NUMBER}\b", case.extracted_text) is None
+    assert case.agency_record_number == _RECORD_NUMBER
 
 
 @pytest.mark.django_db

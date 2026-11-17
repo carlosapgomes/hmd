@@ -22,7 +22,9 @@
 
 Payload do `CASE_EXTRACTION_COMPLETED` carrega as contagens da remoção sob a
 chave `watermark` (dict plano via `asdict`); caso sem marca reporta zerado;
-nenhum valor de token em evento; docstrings da task atualizadas.
+nenhum valor de token na telemetria `watermark` (o campo pré-existente
+`record_number` permanece, inclusive no caso coincidente); docstrings da
+task atualizadas.
 
 ## Deliverables
 
@@ -43,7 +45,8 @@ nenhum valor de token em evento; docstrings da task atualizadas.
 
 ### R3 — Testes (`apps/intake/tests/test_tasks.py`)
 
-RED esperado por teste novo (falham antes da implementação):
+Quatro testes (RED esperado dos três primeiros: chave `watermark` ausente;
+o quarto pinna a decisão de contrato do P1 da revisão):
 
 - `test_extraction_completed_event_carries_watermark_counts`: PDF com marca
   (fixture pós-slice-001: token ≠ nº em 2 linhas de marca) → evento traz
@@ -51,14 +54,22 @@ RED esperado por teste novo (falham antes da implementação):
   (RED: chave `watermark` ausente no payload hoje).
 - `test_extraction_completed_event_watermark_zero_without_mark`: PDF sem
   marca → `watermark` com as 3 chaves zeradas (RED: chave ausente).
-- `test_watermark_payload_has_no_token_value`: com marca de token T,
-  `json.dumps(payload)` NÃO contém `\bT\b` (RED: chave ausente já falha;
-  GREEN trava o contrato sem valores).
+- `test_watermark_payload_has_no_token_value`: com marca de token T ≠ nº,
+  `json.dumps(payload["watermark"])` NÃO contém `\bT\b` — a proibição de
+  valores é da TELEMETRIA (o campo pré-existente `record_number` carrega o nº
+  por design anterior a este change e fica fora dela; comentário no teste
+  documenta a exceção do caso coincidente).
+- `test_watermark_counts_when_mark_equals_record_number`: marca coincidente
+  com o nº (token em ≥2 linhas de marca + `Código: <nº>`) → `watermark` com
+  contagens coerentes (tokens=1, mark_lines≥2, swept_occurrences conta a
+  citação do `Código:` varrida), `record_number` retém o nº (exceção
+  deliberada, documentada) e `extracted_text` sem o token.
 
 ## Acceptance criteria
 
 - Eventos `CASE_EXTRACTION_COMPLETED` (com e sem marca) carregam
-  `watermark` com as 3 chaves de contagem, sem valores de token.
+  `watermark` com as 3 chaves de contagem, sem valores de token NA TELEMETRIA
+  (o `record_number` pré-existente permanece, inclusive no caso coincidente).
 - `CASE_GATE_MANUAL_REVIEW` permanece sem `watermark` (Non-Goal do design).
 - Quality gate completo verde.
 
@@ -70,7 +81,11 @@ RED esperado por teste novo (falham antes da implementação):
 
 ## Allowed incidental files
 
-Nenhum.
+Nenhum de CÓDIGO. Desvio aprovado em revisão (P1 → decisão de contrato): os
+próprios artefatos `slices/slice-002-removal-telemetry.md` e
+`specs/intake-nir/spec.md` foram editados durante o slice para registrar o
+escopo da proibição de valores (telemetria `watermark` × `record_number`
+pré-existente) — manutenção de planejamento, não código.
 
 ## Verification (RED → GREEN)
 

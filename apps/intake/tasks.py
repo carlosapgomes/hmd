@@ -30,6 +30,7 @@ claim ``worker_anonymization`` conflitaria (caso wrongly FAILED).
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import tempfile
@@ -198,8 +199,13 @@ def _extract_and_decide(case: Case, *, lock: CaseLock) -> bool:
 
     Pré-condição: caso sob lock do worker em ``PDF_EXTRACTING`` (o start do NEW
     já aconteceu no chamador). Nº de ocorrência vem do TEXTO BRUTO concatenado
-    ANTES do ``strip_watermark`` (ordem obrigatória, D3); o texto armazenado é o
-    limpo. Gate ok → ``complete_pdf_extraction`` (→ ANONYMIZING) + evento
+    ANTES do ``strip_watermark`` (ordem obrigatória, D3/R5b: bruto→strip, nº
+    antes); o texto armazenado é o limpo. O sweep do strip é assimétrico (D2):
+    token nomeado coincidente com o nº é varrido globalmente, os demais só nas
+    linhas de marca. O evento ``CASE_EXTRACTION_COMPLETED`` carrega a telemetria
+    da remoção sob ``watermark`` (contagens via ``dataclasses.asdict``, sem
+    valores de token; zerado quando não há marca). Gate ok →
+    ``complete_pdf_extraction`` (→ ANONYMIZING) + evento
     ``CASE_EXTRACTION_COMPLETED``; falha do gate → retenção em ``PDF_EXTRACTING``
     com ``manual_review_required``/``manual_review_reason`` + evento
     ``CASE_GATE_MANUAL_REVIEW``. Os metadados do cabeçalho SESAB (idade/sexo/
@@ -276,6 +282,7 @@ def _extract_and_decide(case: Case, *, lock: CaseLock) -> bool:
                 payload={
                     "record_number": current.agency_record_number,
                     "text_length": len(current.extracted_text),
+                    "watermark": dataclasses.asdict(result.report),
                 },
             )
         else:

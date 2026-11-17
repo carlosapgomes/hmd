@@ -163,6 +163,27 @@ jornada VERIFY-001 restaurada, gates pré-goto fail-loud. Gate final **1958 test
 checkpoints (`/tmp/pvp-loop/...`): contador any-status no drive-detalhe, rótulo mobile NIR N>1, asserções
 parser-HTML, paridade serve arquivo-vazio, guardas estruturais PVP-001. Commits b110c2a→57a5e05.
 
+## Fecho do change watermark-strip-hardening (slices 001–002, ARQUIVADO em 2026-11-17)
+
+Endurecimento da limpeza de marca d'água do intake com **premissa de domínio corrigida** (a marca quase
+nunca coincide com o nº de ocorrência — suposição antiga persistida nas fixtures; mesmo relatório de página
+única tem ≥2 linhas de marca): nomeação unificada por **linha de marca** (linha composta exclusivamente de
+1..N repetições do token de 5–6 dígitos — cobre banda cheia, diagonal parcial do molde sarv3 e linha solta)
+com limiar `_MIN_MARK_LINES = 2`; **sweep assimétrico** (token coincidente com o nº é varrido globalmente via
+`\b`; token distinto sai só das linhas inteiras — valores clínicos inline de 5–6 dígitos preservados);
+`extract_document_text` junta páginas com `\n` explícito (endurecimento de contrato, testado via dublê do
+`pymupdf.open`); `strip_watermark(text, *, record_number=None) -> WatermarkStripResult` com
+`WatermarkReport(tokens/mark_lines/swept_occurrences)` (semântica fechada D3) e **telemetria no
+`CASE_EXTRACTION_COMPLETED`** sob `watermark` via `dataclasses.asdict` — só contagens, jamais valores de
+token na telemetria (o `record_number` pré-existente permanece, inclusive no caso coincidente: decisão de
+contrato do P1 da revisão do 002). Tamanho 5–6 dígitos e ordem bruto→strip (D3/R5b) inalterados. Execução em
+loop worker(muse-ember-1.0:max)+reviewer(gpt-6.1-terra) controlado pelo parent: P2 do 001 (pin de linhas
+soltas 3×) e P1 do 002 (escopo da proibição de valores) resolvidos com decisão documentada; incidente de
+despacho (prompt vazio → slice 002 fora de ordem) contido via stash, nada commitado indevido. Gate final
+verde: ruff + format + mypy (303 arquivos) + **1970 testes** (`TEST_DB_PORT=55435`). Spec `intake-nir`
+sincronizada (requirement Extração assíncrona: 49 cenários no total); `validate --specs` ok. Commits
+12630dc→6936a72.
+
 ## Backlog pós-piloto (fase 2 — dono, 2026-09-15, E2E dev validado)
 
 Cada item abaixo é um change próprio (dono enumerou após validar o fluxo

@@ -88,6 +88,14 @@ def _memory_storage() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _minimization_mode() -> Iterator[None]:
+    """Pino explícito do modo de minimização (ADR-0010/D7): as asserções de
+    campos zerados após o encerramento intercalado só valem nesse modo."""
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=True):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _seeded_prompts() -> None:
     """Seed idempotente dos prompts (os passos LLM montam prompts ativos)."""
     call_command("seed_prompts", stdout=StringIO())

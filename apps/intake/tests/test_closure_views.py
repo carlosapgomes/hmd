@@ -18,7 +18,7 @@ e agendamento (``confirm_case_scheduling``) — o mesmo padrão de setup do
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import timedelta
 
 import pytest
@@ -53,6 +53,14 @@ SCHEDULED_LOCATION = "HGRS — Hemodinâmica"
 # Texts exibidos pela UI (botão/flash).
 ACK_BUTTON_LABEL = "Confirmar recebimento"
 ACK_FLASH_PREFIX = "Recebimento confirmado"
+
+
+@pytest.fixture(autouse=True)
+def _minimization_mode() -> Iterator[None]:
+    """Pino explícito do modo de minimização (ADR-0010/D7) nos fluxos de
+    ciência existentes — os testes de retenção sobrescrevem com False."""
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=True):
+        yield
 
 
 def _create_case_with_rows(created_by: User) -> Case:
@@ -538,3 +546,26 @@ def test_detail_scheduling_uses_configured_unit_labels(
     body = response.content.decode()
     assert "Hemodinâmica HGRS" in body
     assert "Unidade 1" not in body
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("minimization", [False, True])
+def test_ack_text_is_truthful_in_both_modes(
+    minimization: bool,
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+) -> None:
+    """ADR-0010/D9: o texto da ciência no detalhe do NIR é neutro e verdadeiro
+    nos dois modos (sem afirmar remoção de dados clínicos)."""
+    doctor = user_factory("doctor-intake-texto-modo", DOCTOR_ROLE)
+    case = _denial_final_case(created_by=nir_user, decided_by=doctor)
+    _login(client, nir_user)
+
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=minimization):
+        body = client.get(reverse("intake:case_detail", args=[case.case_id])).content.decode()
+
+    assert ACK_BUTTON_LABEL in body
+    assert "política vigente" in body
+    assert "ADR-0010" in body
+    assert "os dados clínicos sensíveis são removidos" not in body

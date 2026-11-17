@@ -53,6 +53,18 @@ def test_known_event_label_is_the_mapped_one() -> None:
     )
 
 
+def test_cleaned_label_is_truthful_in_both_modes() -> None:
+    """ADR-0010/D9: ``CASE_STATUS_CLEANED`` é "Caso concluído" — verdadeiro
+    na retenção e na minimização (sem afirmar minimização)."""
+    assert event_label(CaseEventType.CASE_STATUS_CLEANED) == "Caso concluído"
+
+
+def test_cleaning_label_is_truthful_in_both_modes() -> None:
+    """ADR-0010/D9 (P2-3): ``CASE_STATUS_CLEANING`` é neutro nos dois modos
+    (sem afirmar limpeza que pode não ocorrer em retenção)."""
+    assert event_label(CaseEventType.CASE_STATUS_CLEANING) == ("Disposição dos dados em andamento")
+
+
 @pytest.mark.parametrize(
     "event_type",
     [CaseEventType.CASE_STATUS_FAILED, CaseEventType.CASE_ATTACHMENT_FAILED],

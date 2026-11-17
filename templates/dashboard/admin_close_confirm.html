@@ -26,10 +26,9 @@
     </div>
 
     <div class="alert alert-warning" role="alert">
-      O encerramento é terminal: o caso sai das filas operacionais, os dados
-      clínicos (documentos e anexos, inclusive os arquivos físicos) são
-      minimizados e o criador é notificado. Não inclua dados de paciente no
-      texto do motivo.
+      O encerramento é terminal: o caso sai das filas operacionais, a disposição
+      dos dados segue a política vigente — ADR-0010, e o criador é notificado.
+      Não inclua dados de paciente no texto do motivo.
     </div>
 
     <form method="post" action="{% url 'dashboard:admin_close' case.case_id %}">

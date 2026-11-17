@@ -18,6 +18,7 @@ import logging
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
+from django.conf import settings
 from django.core.files.storage import default_storage
 from django.db import transaction
 from django.utils import timezone
@@ -87,6 +88,17 @@ def _delete_files_best_effort(file_names: Iterable[str]) -> None:
             )
 
 
+def _minimization_enabled() -> bool:
+    """Modo de minimização ativo? (ADR-0010/D2 — lido no momento do serviço).
+
+    A decisão de modo mora AQUI, nos entry points — nunca dentro de
+    ``_clean_acknowledged_clinical_data``, que permanece incondicional
+    (semântica de força total reusada pela purga retroativa do slice 003;
+    se lesse o flag, a purga nasceria morta sob o default ``False``).
+    """
+    return bool(getattr(settings, "CASE_CLOSURE_MINIMIZATION_ENABLED", False))
+
+
 def _clean_acknowledged_clinical_data(case: Case) -> None:
     """Minimização do D2 no caso sob lock (D2): rows de documento/anexo e campos.
 
@@ -135,19 +147,30 @@ def acknowledge_case_receipt(case: Case, *, user: User, role: str) -> None:
             raise ValueError(
                 "confirmação de recebimento restrita ao criador do caso — caso de outro usuário"
             )
-        file_names = [
-            document.file.name for document in locked.documents.only("file") if document.file.name
-        ]
-        file_names.extend(
-            attachment.file.name
-            for attachment in locked.attachments.only("file")
-            if attachment.file.name
-        )
+        # D2/ADR-0010: retenção ativa pula a limpeza E a coleta/deleção de
+        # arquivos; minimização ativa segue o caminho original byte-a-byte.
+        # O estado transitório CLEANING percorre o fluxo sem efeito sobre
+        # dados em retenção — aceito porque o conjunto de estados é contrato.
+        minimize = _minimization_enabled()
+        file_names: list[str] = []
+        if minimize:
+            file_names = [
+                document.file.name
+                for document in locked.documents.only("file")
+                if document.file.name
+            ]
+            file_names.extend(
+                attachment.file.name
+                for attachment in locked.attachments.only("file")
+                if attachment.file.name
+            )
         locked.nir_acknowledge(user=user, role=role)
         locked.start_cleaning(user=user, role=role)
-        _clean_acknowledged_clinical_data(locked)
+        if minimize:
+            _clean_acknowledged_clinical_data(locked)
         locked.complete_cleaning(user=user, role=role)
-        transaction.on_commit(lambda: _delete_files_best_effort(file_names))
+        if minimize:
+            transaction.on_commit(lambda: _delete_files_best_effort(file_names))
 
 
 def post_doctor_denial_reply(case: Case, *, user: User, role: str) -> None:
@@ -288,15 +311,22 @@ def administratively_close_case(
             )
         lock_snapshot = _lock_snapshot(locked)
         force_release_case_lock(locked, reason=FORCED_RELEASE_REASON, user=user, role=active_role)
-        file_names = [
-            document.file.name for document in locked.documents.only("file") if document.file.name
-        ]
-        file_names.extend(
-            attachment.file.name
-            for attachment in locked.attachments.only("file")
-            if attachment.file.name
-        )
-        _clean_acknowledged_clinical_data(locked)
+        # D2/ADR-0010: retenção ativa pula a limpeza E a coleta/deleção de
+        # arquivos; minimização ativa segue o caminho original byte-a-byte.
+        minimize = _minimization_enabled()
+        file_names: list[str] = []
+        if minimize:
+            file_names = [
+                document.file.name
+                for document in locked.documents.only("file")
+                if document.file.name
+            ]
+            file_names.extend(
+                attachment.file.name
+                for attachment in locked.attachments.only("file")
+                if attachment.file.name
+            )
+            _clean_acknowledged_clinical_data(locked)
         locked.administratively_close(
             user=user,
             role=active_role,
@@ -304,7 +334,8 @@ def administratively_close_case(
             reason_text=reason_text,
             lock_snapshot=lock_snapshot,
         )
-        transaction.on_commit(lambda: _delete_files_best_effort(file_names))
+        if minimize:
+            transaction.on_commit(lambda: _delete_files_best_effort(file_names))
 
     case.refresh_from_db()
     return case

@@ -58,6 +58,7 @@ def extract_attachment_text(
     attachment: CaseAttachment,
     *,
     on_external_dispatch: Callable[[], None] | None = None,
+    pre_send_guard: Callable[[], None] | None = None,
 ) -> tuple[str, str]:
     """Extrai o texto do anexo e devolve ``(texto, método)`` (R1).
 
@@ -66,6 +67,13 @@ def extract_attachment_text(
     com as páginas transcrições concatenadas por ``\\n\\n`` (imagem direto;
     PDF rasterizado em PNG sob o teto de páginas). ``on_external_dispatch``
     (auditoria) roda uma única vez, antes da primeira chamada ao OCR externo.
+    ``pre_send_guard`` (opcional, D8/ADR-0010) roda apenas antes das
+    chamadas SEGUINTES à primeira (páginas 2..N) — a 1ª página já está
+    coberta pela transação do dispatch (lock+gate+evento na mesma
+    transação, commit antes do envio), sem transação extra no gap. O
+    chamador (worker) injeta a re-checagem de encerramento; este módulo
+    permanece puro sobre callables (não conhece Case/status) e PROPAGA a
+    exceção tipada de aborto sem capturar.
 
     Raises:
         AttachmentPageLimitExceededError: PDF-imagem acima do teto de páginas
@@ -82,7 +90,10 @@ def extract_attachment_text(
         ]
     else:
         pages = [(content, content_type)]
-    return _transcribe_pages(pages, on_external_dispatch), ExtractionMethod.VISION
+    return (
+        _transcribe_pages(pages, on_external_dispatch, pre_send_guard),
+        ExtractionMethod.VISION,
+    )
 
 
 # ── Helpers internos ──────────────────────────────────────────────────────
@@ -141,6 +152,7 @@ def _rasterize_pdf_pages(content: bytes) -> list[bytes]:
 def _transcribe_pages(
     pages: Sequence[tuple[bytes, str]],
     on_external_dispatch: Callable[[], None] | None,
+    pre_send_guard: Callable[[], None] | None = None,
 ) -> str:
     """Transcreve as páginas via OCR externo e concatena com ``\\n\\n``.
 
@@ -154,7 +166,12 @@ def _transcribe_pages(
     vision.ensure_vision_ready()
     if on_external_dispatch is not None:
         on_external_dispatch()
-    transcriptions = [
-        vision.transcribe_image(image_bytes, content_type) for image_bytes, content_type in pages
-    ]
+    transcriptions: list[str] = []
+    for index, (image_bytes, content_type) in enumerate(pages):
+        # Guard só nas páginas seguintes: a 1ª já foi coberta pela
+        # transação do dispatch (nenhuma transação extra entre o commit
+        # do evento e o 1º envio — P2-1).
+        if index > 0 and pre_send_guard is not None:
+            pre_send_guard()
+        transcriptions.append(vision.transcribe_image(image_bytes, content_type))
     return "\n\n".join(transcriptions)

@@ -47,8 +47,8 @@ EVENT_LABELS: dict[str, str] = {
     CaseEventType.CASE_STATUS_SCHEDULING_DENIED: "Agendamento negado",
     CaseEventType.CASE_STATUS_FINAL_REPLY_POSTED: "Resposta final publicada ao NIR",
     CaseEventType.CASE_STATUS_AWAITING_NIR_ACK: "Aguardando ciência do NIR",
-    CaseEventType.CASE_STATUS_CLEANING: "Limpeza dos dados iniciada",
-    CaseEventType.CASE_STATUS_CLEANED: "Caso concluído e dados minimizados",
+    CaseEventType.CASE_STATUS_CLEANING: "Disposição dos dados em andamento",
+    CaseEventType.CASE_STATUS_CLEANED: "Caso concluído",
     # Procedimentos por caso.
     CaseEventType.CASE_PROCEDURES_DECLARED: "Procedimentos declarados pelo NIR",
     CaseEventType.CASE_PROCEDURES_DETECTED: "Procedimentos detectados na análise automática",

@@ -225,8 +225,8 @@
   <div class="card-header">Encerramento administrativo</div>
   <div class="card-body">
     <p class="small text-muted mb-2">
-      O encerramento é terminal: o caso sai das filas operacionais, os dados
-      clínicos são minimizados e o criador é notificado.
+      O encerramento é terminal: o caso sai das filas operacionais, a disposição
+      dos dados segue a política vigente — ADR-0010, e o criador é notificado.
     </p>
     <a href="{% url 'dashboard:admin_close_confirm' case_id %}{% if filter_qs %}?{{ filter_qs }}{% endif %}"
        class="btn btn-sm btn-outline-danger">Encerrar administrativamente</a>

@@ -2,7 +2,7 @@
 
 Funções puras da caixa determinística de extração do relatório SESAB:
 ``extract_document_text`` (texto via PyMuPDF), ``strip_watermark`` (marca
-d'água = sequência de 5–6 dígitos do registro repetida) e
+d'água = token de 5–6 dígitos em linhas de marca) e
 ``extract_agency_record_number`` (nº de ocorrência dos padrões explícitos).
 
 Divergência marcada vs ats-web: o ats-web resolve extração do nº + remoção da
@@ -11,6 +11,19 @@ divide em duas funções com ordem explícita — o nº é extraído do TEXTO BR
 ANTES do ``strip_watermark`` (R5b/D3), senão seria perdido quando o nº também
 é a marca d'água repetida. O texto armazenado (``Case.extracted_text``) é o já
 limpo; o nº vai para ``Case.agency_record_number``.
+
+Marca d'água (watermark-strip-hardening, D1–D4): a premissa de produção é que a
+marca QUASE NUNCA coincide com o nº de ocorrência — é um token distinto. Uma
+linha de marca é uma linha composta exclusivamente de repetições (1..N) do
+mesmo token de 5–6 dígitos (banda cheia, diagonal com poucas repetições ou
+linha solta); o token é nomeado com ≥2 linhas de marca no documento
+(``_MIN_MARK_LINES``). As linhas de marca dos nomeados são descartadas; o
+sweep além dessas linhas é ASSIMÉTRICO — só o token que coincide com o
+``record_number`` é varrido globalmente (caso raro); ocorrências inline de
+outros tokens nomeados são preservadas (mais provavelmente valor clínico
+legítimo do que rastro de marca). ``strip_watermark`` devolve
+``WatermarkStripResult`` com ``WatermarkReport`` de contagens (sem valores de
+token — base da telemetria do evento de extração).
 """
 
 from __future__ import annotations
@@ -22,11 +35,16 @@ from dataclasses import dataclass
 
 import pymupdf
 
-# Linha de marca d'água: o mesmo token de 5–6 dígitos repetido 4+ vezes na
-# linha (banda típica de watermark). Espelho da detecção do ats-web.
-_REPEATED_FIVE_DIGIT_LINE_PATTERN = re.compile(r"^\s*(\d{5,6})(?:\s+\1){3,}\s*$")
-# Token residual de 5–6 dígitos solto no texto (rastro da marca d'água).
-_DIGIT_TOKEN_PATTERN = re.compile(r"\b(\d{5,6})\b")
+# Linha de marca d'água (D1): linha composta EXCLUSIVAMENTE de repetições
+# (1..N) de um mesmo token de 5–6 dígitos — unifica banda cheia (4+), diagonal
+# com poucas repetições (2–3) e linha solta (1). Nada mais na linha.
+_MARK_LINE_PATTERN = re.compile(r"^\s*(\d{5,6})(?:\s+\1)*\s*$")
+# Limiar de nomeação (D1): o token só é nomeado com ≥2 linhas de marca no
+# documento. Observação de domínio: mesmo relatórios de página única têm ao
+# menos 2 linhas com a marca — marca de linha única não ocorre no corpus; o
+# ≥2 guarda contra a linha esporânea isolada de tabela. Valor do corpus, não
+# operacional — sem setting novo.
+_MIN_MARK_LINES = 2
 
 # Padrões explícitos do nº de ocorrência (R3): rótulo "Código: XXXXX" e o
 # cabeçalho "RELATÓRIO DE OCORRÊNCIAS … XXXXX" (case/acentos/formatação
@@ -56,7 +74,7 @@ def extract_document_text(path: str) -> str:
     # untyped (ignores pontuais); a iteração usa indexação tipada (Page).
     document = pymupdf.open(path)  # type: ignore[no-untyped-call]
     try:
-        text = "".join(
+        text = "\n".join(
             document[page_number].get_text()  # type: ignore[no-untyped-call]
             for page_number in range(document.page_count)
         )
@@ -65,46 +83,80 @@ def extract_document_text(path: str) -> str:
     return text.strip()
 
 
-def strip_watermark(text: str) -> str:
-    """Remove a marca d'água: sequência de 5–6 dígitos repetida (R2).
+@dataclass(frozen=True)
+class WatermarkReport:
+    """Contagens da remoção de marca d'água, sem valores de token (D3).
 
-    Estratégia espelhada do ats-web: detecta os tokens que aparecem como linha
-    repetida (banda de marca d'água), descarta as bandas e as ocorrências
-    isoladas residuais do mesmo token e normaliza o whitespace do resultado.
-    Texto sem marca d'água permanece idêntico (retorno antecipado — "texto sem
-    marca permanece idêntico", R2).
+    Semântica fechada: ``tokens`` = tokens distintos nomeados; ``mark_lines`` =
+    linhas de marca descartadas; ``swept_occurrences`` = apenas ocorrências
+    inline removidas pelo sweep do token coincidente com o nº (exclui o
+    conteúdo das linhas de marca descartadas).
+    """
+
+    tokens: int = 0
+    mark_lines: int = 0
+    swept_occurrences: int = 0
+
+
+@dataclass(frozen=True)
+class WatermarkStripResult:
+    """Texto limpo + relatório de contagens da remoção (D3, imutável)."""
+
+    text: str
+    report: WatermarkReport
+
+
+def strip_watermark(text: str, *, record_number: str | None = None) -> WatermarkStripResult:
+    """Remove a marca d'água: linhas de marca de token de 5–6 dígitos (R2, D1–D3).
+
+    Nomeação unificada: a linha de marca tem 1..N repetições do token e nada
+    mais (banda cheia, diagonal parcial ou linha solta); o token é nomeado com
+    ≥2 linhas de marca (``_MIN_MARK_LINES``) e suas linhas de marca são
+    descartadas. Sweep assimétrico (D2): só o token nomeado que coincide com
+    ``record_number`` é varrido em qualquer ocorrência delimitada do texto
+    (caso raro — a marca quase nunca é o nº); token nomeado ≠ nº (ou nº
+    ausente) não tem sweep inline — a citação inline é preservada. Devolve
+    ``WatermarkStripResult`` com contagens fechadas (D3); sem nomeados, o texto
+    permanece byte-idêntico e o report zerado (early-return, R2).
     """
     lines = text.splitlines()
 
-    # 1. Detecta os tokens de 5–6 dígitos que formam bandas repetidas.
-    repeated_token_counts: Counter[str] = Counter()
+    # 1. Nomeia os tokens com ≥2 linhas de marca no documento.
+    mark_line_counts: Counter[str] = Counter()
     for line in lines:
-        match = _REPEATED_FIVE_DIGIT_LINE_PATTERN.match(line)
+        match = _MARK_LINE_PATTERN.match(line)
         if match:
-            repeated_token_counts[match.group(1)] += 1
+            mark_line_counts[match.group(1)] += 1
 
-    candidate_tokens = {token for token, count in repeated_token_counts.items() if count >= 1}
-    if not candidate_tokens:
-        return text
+    named_tokens = {token for token, count in mark_line_counts.items() if count >= _MIN_MARK_LINES}
+    if not named_tokens:
+        return WatermarkStripResult(text, WatermarkReport())
 
-    # 2. Remove as linhas de marca d'água (bandas do token candidato).
+    # 2. Descarta as linhas de marca dos nomeados.
     filtered_lines: list[str] = []
+    mark_lines = 0
     for line in lines:
-        match = _REPEATED_FIVE_DIGIT_LINE_PATTERN.match(line)
-        if match and match.group(1) in candidate_tokens:
+        match = _MARK_LINE_PATTERN.match(line)
+        if match and match.group(1) in named_tokens:
+            mark_lines += 1
             continue
         filtered_lines.append(line)
     partially_cleaned = "\n".join(filtered_lines)
 
-    # 3. Remove os tokens residuais isolados do mesmo registro (rastros).
-    token_counts = Counter(_DIGIT_TOKEN_PATTERN.findall(partially_cleaned))
-    removable_tokens = {token for token in candidate_tokens if token_counts.get(token, 0) >= 1}
+    # 3. Sweep assimétrico: só o token == nº é varrido inline (D2).
     result = partially_cleaned
-    for token in removable_tokens:
-        result = re.sub(rf"\b{re.escape(token)}\b", " ", result)
+    swept_occurrences = 0
+    if record_number is not None and record_number in named_tokens:
+        result, swept_occurrences = re.subn(rf"\b{re.escape(record_number)}\b", " ", result)
 
     # 4. Normaliza o whitespace do texto limpo.
-    return _normalize_whitespace(result)
+    cleaned = _normalize_whitespace(result)
+    report = WatermarkReport(
+        tokens=len(named_tokens),
+        mark_lines=mark_lines,
+        swept_occurrences=swept_occurrences,
+    )
+    return WatermarkStripResult(cleaned, report)
 
 
 def extract_agency_record_number(text: str) -> str | None:

@@ -34,7 +34,12 @@ from apps.intake.tasks import process_case_documents
 NIR_ROLE = "nir"
 DOCTOR_ROLE = "doctor"
 
-_WATERMARK_BAND = "33345 33345 33345 33345"
+# Premissa corrigida (watermark-strip-hardening): a marca quase nunca é o nº de
+# ocorrência — é um token DISTINTO ("48291") em ao menos 2 linhas de marca; o
+# nº ("33345") citado em "Código:" permanece no texto limpo (tokenizado depois
+# pela anonimização determinística) e vive em agency_record_number.
+_WATERMARK_BAND = "48291 48291 48291 48291"
+_WATERMARK_TOKEN = "48291"
 _RECORD_NUMBER = "33345"
 
 _REPORT_HEADER = "RELATÓRIO DE OCORRÊNCIAS"
@@ -82,6 +87,7 @@ def _standard_report_lines(*, with_watermark: bool = True) -> list[str]:
     lines = [_REPORT_HEADER, *_INSTITUTIONAL_SIGNALS, *_SECTIONS]
     if with_watermark:
         lines.append(_WATERMARK_BAND)
+        lines.append(_WATERMARK_BAND)
     while len("\n".join(lines)) < 560:
         lines.append(_PADDING)
     return lines
@@ -128,9 +134,9 @@ def _event_types(case: Case) -> list[str]:
 def test_happy_path_anonymizing(nir_user: User) -> None:
     """R2/R6/cenário feliz: relatório padrão → ANONYMIZING com texto, nº e eventos.
 
-    O nº aparece como marca d'água repetida E como padrão (``Código:``): é
-    extraído do TEXTO BRUTO (antes do strip) e a sequência não vaza para o
-    ``extracted_text`` armazenado (cenário "Marca d'água não vaza").
+    A marca (token distinto, em 2 linhas de marca) não vaza para o
+    ``extracted_text`` (cenário "Marca d'água não vaza"); o nº vem do padrão
+    (``Código:``) no TEXTO BRUTO (antes do strip) e segue citado no texto limpo.
     """
     case = _create_case_with_pdf(nir_user, _pdf_bytes(_standard_report_lines()))
 
@@ -142,7 +148,8 @@ def test_happy_path_anonymizing(nir_user: User) -> None:
     assert case.agency_record_extracted_at is not None
     assert case.extracted_text
     assert "Motivo da Solicitação" in case.extracted_text
-    assert _RECORD_NUMBER not in case.extracted_text
+    assert _WATERMARK_TOKEN not in case.extracted_text
+    assert f"Código: {_RECORD_NUMBER}" in case.extracted_text
     assert case.manual_review_required is False
     assert case.manual_review_reason == ""
 

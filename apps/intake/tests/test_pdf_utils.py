@@ -22,14 +22,17 @@ import pymupdf
 import pytest
 
 from apps.intake.pdf_utils import (
+    WatermarkReport,
     extract_agency_record_number,
     extract_document_text,
     strip_watermark,
 )
 
-# Banda de marca d'água típica: o registro (5–6 dígitos) repetido na página.
-_WATERMARK_BAND = "33345 33345 33345 33345"
-_WATERMARK_TOKEN = "33345"
+# Banda de marca d'água típica (premissa corrigida, watermark-strip-hardening):
+# a marca quase nunca é o nº de ocorrência — é um token DISTINTO ("48291"),
+# presente em ao menos 2 linhas de marca no documento.
+_WATERMARK_BAND = "48291 48291 48291 48291"
+_WATERMARK_TOKEN = "48291"
 
 
 @pytest.fixture
@@ -97,9 +100,9 @@ def test_corrupt_pdf_raises(tmp_path: Path) -> None:
 
 def test_watermark_stripped() -> None:
     """R2: a sequência repetida de dígitos (marca d'água) some; o texto normal fica."""
-    text = f"Paciente: João Maria\n{_WATERMARK_BAND}\nRelatório de ocorrências"
+    text = f"Paciente: João Maria\n{_WATERMARK_BAND}\n{_WATERMARK_BAND}\nRelatório de ocorrências"
 
-    cleaned = strip_watermark(text)
+    cleaned = strip_watermark(text).text
 
     assert _WATERMARK_TOKEN not in cleaned
     assert "Paciente: João Maria" in cleaned
@@ -110,9 +113,11 @@ def test_watermark_removed_from_extracted_pdf_text(
     write_pdf: Callable[[list[str]], Path],
 ) -> None:
     """R6: marca d'água presente no texto extraído de um PDF gerado também some."""
-    path = write_pdf([f"RELATÓRIO DE OCORRÊNCIAS\nPaciente: João Maria\n{_WATERMARK_BAND}"])
+    path = write_pdf(
+        [f"RELATÓRIO DE OCORRÊNCIAS\nPaciente: João Maria\n{_WATERMARK_BAND}\n{_WATERMARK_BAND}"]
+    )
 
-    cleaned = strip_watermark(extract_document_text(str(path)))
+    cleaned = strip_watermark(extract_document_text(str(path))).text
 
     assert _WATERMARK_TOKEN not in cleaned
     assert "Paciente: João Maria" in cleaned
@@ -122,7 +127,135 @@ def test_text_without_watermark_intact() -> None:
     """R2: texto sem marca d'água repetida permanece idêntico (sem normalização indevida)."""
     text = "Código: 12345\nMotivo da Solicitação: cateterismo cardíaco\nPaciente: Maria"
 
-    assert strip_watermark(text) == text
+    result = strip_watermark(text)
+
+    assert result.text == text
+    assert result.report == WatermarkReport(tokens=0, mark_lines=0, swept_occurrences=0)
+
+
+# ── Hardening da marca (watermark-strip-hardening, slice 001, R1–R4) ────────
+
+
+def test_single_mark_line_is_kept() -> None:
+    """Linha de marca única não nomeia (≥2 linhas exigidas): permanece, report zerado."""
+    text = "Paciente: João Maria\n48291 48291 48291 48291\nRelatório clínico normal"
+
+    result = strip_watermark(text)
+
+    assert result.text == text
+    assert result.report == WatermarkReport(tokens=0, mark_lines=0, swept_occurrences=0)
+
+
+def test_two_full_band_lines_removed() -> None:
+    """Duas linhas de banda cheia do mesmo token nomeiam e são descartadas."""
+    text = (
+        "Paciente: João Maria\n48291 48291 48291 48291\n48291 48291 48291 48291\nRelatório clínico"
+    )
+
+    result = strip_watermark(text)
+
+    assert "48291" not in result.text
+    assert "Paciente: João Maria" in result.text
+    assert result.report == WatermarkReport(tokens=1, mark_lines=2, swept_occurrences=0)
+
+
+def test_standalone_and_partial_lines_removed() -> None:
+    """Linha solta + linha parcial (2 linhas de marca) também nomeiam e somem."""
+    text = "48291\n48291 48291\nConteúdo clínico preservado"
+
+    result = strip_watermark(text)
+
+    assert result.text == "Conteúdo clínico preservado"
+    assert result.report == WatermarkReport(tokens=1, mark_lines=2, swept_occurrences=0)
+
+
+def test_inline_occurrence_of_non_record_token_preserved() -> None:
+    """Token ≠ nº: a citação inline em linha clínica permanece (sem sweep)."""
+    text = (
+        "48291 48291 48291 48291\n48291 48291 48291 48291\n"
+        "Protocolo 48291 encaminhado para avaliação\nConteúdo clínico"
+    )
+
+    result = strip_watermark(text)
+
+    assert "Protocolo 48291 encaminhado para avaliação" in result.text
+    assert result.report == WatermarkReport(tokens=1, mark_lines=2, swept_occurrences=0)
+
+
+def test_record_coincident_token_swept_globally() -> None:
+    """Token == nº: linhas de marca E ocorrências inline são varridas (sweep D2)."""
+    text = (
+        "Código: 33345\n33345 33345 33345 33345\n33345 33345 33345 33345\n"
+        "Protocolo 33345 encaminhado para avaliação"
+    )
+
+    result = strip_watermark(text, record_number="33345")
+
+    assert "33345" not in result.text
+    assert "Protocolo encaminhado para avaliação" in result.text
+    assert result.report == WatermarkReport(tokens=1, mark_lines=2, swept_occurrences=2)
+
+
+def test_report_counts_mixed() -> None:
+    """Contagens (D3): 3 linhas de marca mistas → tokens=1, mark_lines=3, swept=0."""
+    text = "48291\n48291 48291\n48291 48291 48291 48291\nConteúdo clínico"
+
+    result = strip_watermark(text)
+
+    assert "48291" not in result.text
+    assert result.report.tokens == 1
+    assert result.report.mark_lines == 3
+    assert result.report.swept_occurrences == 0
+
+
+class _FakePage:
+    """Página falsa cujo get_text() NÃO termina em \\n (fronteira de página, D4)."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def get_text(self) -> str:
+        return self._text
+
+
+class _FakeDocument:
+    """Documento falso no seam do pymupdf.open (páginas sem \\n final)."""
+
+    def __init__(self, pages: list[str]) -> None:
+        self._pages = [_FakePage(page_text) for page_text in pages]
+
+    @property
+    def page_count(self) -> int:
+        return len(self._pages)
+
+    def __getitem__(self, index: int) -> _FakePage:
+        return self._pages[index]
+
+    def close(self) -> None:
+        pass
+
+
+def test_page_join_separates_lines_without_trailing_newline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fronteira de página (D4): sem \\n final, as páginas não fundem linhas de marca."""
+
+    def _fake_open(path: str) -> _FakeDocument:
+        return _FakeDocument(
+            [
+                "Cabeçalho clínico\n48291 48291",
+                "48291 48291\nSegunda página de conteúdo",
+            ]
+        )
+
+    monkeypatch.setattr(pymupdf, "open", _fake_open)
+
+    result = strip_watermark(extract_document_text("relatorio-falso.pdf"))
+
+    assert "48291" not in result.text
+    assert "Cabeçalho clínico" in result.text
+    assert "Segunda página de conteúdo" in result.text
+    assert result.report == WatermarkReport(tokens=1, mark_lines=2, swept_occurrences=0)
 
 
 # ── R3: nº de ocorrência (padrões explícitos) ─────────────────────────────
@@ -168,15 +301,19 @@ def test_record_extracted_from_raw_text_before_strip() -> None:
     a extração aconteceu antes do ``strip_watermark`` (D3 — divergência HMD: o
     ats-web resolve numa função combinada; aqui a ordem é explícita).
     """
+    # Caso raro pinado por este teste: a marca COINCIDE com o nº ("33345" em 2
+    # linhas de marca, com sweep global via record_number — D2); a forma
+    # observada (marca distinta do nº) é a das demais fixtures.
     raw = (
         "RELATÓRIO DE OCORRÊNCIAS\n"
         "Código: 33345\n"
         "Motivo da Solicitação: cateterismo cardíaco\n"
-        f"{_WATERMARK_BAND}\n"
+        "33345 33345 33345 33345\n"
+        "33345 33345 33345 33345\n"
     )
 
     record_number = extract_agency_record_number(raw)
-    cleaned = strip_watermark(raw)
+    cleaned = strip_watermark(raw, record_number=record_number).text
 
     assert record_number == "33345"
     assert "33345" not in cleaned

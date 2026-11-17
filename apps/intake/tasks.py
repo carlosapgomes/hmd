@@ -226,7 +226,8 @@ def _extract_and_decide(case: Case, *, lock: CaseLock) -> bool:
 
     # Ordem obrigatória (D3/R5b): o nº é extraído do bruto, antes do strip.
     record_number = extract_agency_record_number(raw_text)
-    cleaned_text = strip_watermark(raw_text)
+    result = strip_watermark(raw_text, record_number=record_number)
+    cleaned_text = result.text
     gate = evaluate_regulation_report(cleaned_text)
     # Metadados do cabeçalho padrão SESAB (sesab-header-extraction, slice 001,
     # D3/D4): extração PURA sobre o texto limpo, fora do atomic; a

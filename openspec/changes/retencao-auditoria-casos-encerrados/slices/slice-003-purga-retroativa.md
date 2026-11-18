@@ -42,21 +42,27 @@ idempotente, auditável, com `--dry-run` e com falha física reportada.
 
 ## Deliverables
 
-### R1 — Evento auditável (D4)
+### R1 — Eventos auditáveis (D4)
 
-- `CASE_RETAINED_DATA_PURGED` em `CaseEventType` + rótulo legível e badge
-  em `apps/dashboard/event_labels.py` (trilha do painel exibe a purga;
-  anti-drift do mapa puxa o RED naturalmente).
+- `CASE_RETAINED_DATA_PURGED` em `CaseEventType` (fase 1, atômico com a
+  limpeza) + `CASE_RETAINED_DATA_PURGE_OUTCOME` (fase 2, desfecho físico
+  condicional) + rótulos legíveis e badges em `apps/dashboard/event_labels.py`
+  (o desfecho é CONSCIENTE DO PAYLOAD: `files_failed > 0` → badge de
+  perigo — purga incompleta visível na trilha; anti-drift do mapa puxa o
+  RED naturalmente).
 
 ### R2 — Serviço + comando (D4)
 
 - **Serviço puro** `purge_closed_case_data(case, ...) -> resultado` em
   `apps/cases/closure.py`: reusa `_clean_acknowledged_clinical_data` +
-  coleta pré-delete + deleção física em `on_commit`, no MESMO atomic por
-  caso do closure; registra `CASE_RETAINED_DATA_PURGED` (ator "Sistema",
-  payload = NOMES dos 7 campos zerados + CONTAGENS de rows/arquivos —
-  nunca conteúdo clínico nem nomes de arquivo); devolve contagens
-  `files_attempted/files_deleted/files_failed` para o comando reportar.
+  coleta pré-delete, em `transaction.atomic(durable=True)` (commit real
+  obrigatório — recusa transação externa; a deleção física roda
+  SINCRONAMENTE APÓS o atomic durável, mesma ordem banco→arquivos),
+  registrando o evento de purga DENTRO do atomic e o evento de desfecho
+  (tipo próprio, somente quando `files_attempted > 0`) após a deleção,
+  com contagens `files_attempted/files_deleted/files_failed` para o
+  comando reportar; payload SEM PHI (nomes de campos + contagens, nunca
+  filenames).
 - **Comando fino** `manage.py purge_closed_case_data [--dry-run]`: seleciona
   SOMENTE casos `CLEANED` com dados retidos (≥1 campo clínico/LLM
   não-vazio OU rows de documento/anexo); laço por caso (atomic por caso —
@@ -82,12 +88,16 @@ idempotente, auditável, com `--dry-run` e com falha física reportada.
 
 1. A seleção é à prova de erro operacional: comando com caso ativo
    populado no fixture NÃO o altera (teste explícito), cada caso é um
-   atomic próprio (falha no meio não deixa meia-purga) e o payload/saída
-   não contêm filename nem conteúdo clínico.
-2. A trilha prova a destruição E as falhas: cada caso purgado tem
-   exatamente UM `CASE_RETAINED_DATA_PURGED` (re-execução não duplica),
-   com rótulo legível, e caso com falha física aparece como incompleto na
-   saída com exit code não-zero.
+   atomic DURÁVEL próprio (`durable=True` — recusa transação externa com
+   erro nomeado; deleção física só após commit real) e o payload/saída/
+   LOG não contêm filename nem conteúdo clínico.
+2. A trilha prova a destruição E as falhas em duas fases: evento de purga
+   ATÔMICO com a limpeza (sempre 1 por execução que purga — payload com
+   nomes dos campos + rows + files_attempted) + evento complementar de
+   desfecho físico quando houve arquivos (payload files_deleted/
+   files_failed); re-execução não adiciona eventos (idempotência), e a
+   falha física aparece no evento complementar, na saída e no exit code
+   não-zero.
 
 ## Out of scope
 

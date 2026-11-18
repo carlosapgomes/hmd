@@ -59,6 +59,51 @@ def test_cleaned_label_is_truthful_in_both_modes() -> None:
     assert event_label(CaseEventType.CASE_STATUS_CLEANED) == "Caso concluído"
 
 
+def test_purged_retained_data_label_and_badge() -> None:
+    """Slice 003 (R1): a purga retroativa exibe rótulo legível e badge de sistema."""
+    assert event_label(CaseEventType.CASE_RETAINED_DATA_PURGED) == "Dados retidos purgados"
+    assert event_badge_css(CaseEventType.CASE_RETAINED_DATA_PURGED) == "text-bg-secondary"
+
+
+def test_purge_outcome_label_and_payload_aware_badge() -> None:
+    """Slice 003 (R1, P2): o desfecho físico exibe rótulo distinto e badge
+    CONSCIENTE DO PAYLOAD — perigo quando houve falha, neutro quando 0."""
+    assert event_label(CaseEventType.CASE_RETAINED_DATA_PURGE_OUTCOME) == (
+        "Remoção dos arquivos da purga"
+    )
+    assert (
+        event_badge_css(
+            CaseEventType.CASE_RETAINED_DATA_PURGE_OUTCOME,
+            {"files_deleted": 0, "files_failed": 1},
+        )
+        == "text-bg-danger"
+    )
+    assert (
+        event_badge_css(
+            CaseEventType.CASE_RETAINED_DATA_PURGE_OUTCOME,
+            {"files_deleted": 1, "files_failed": 0},
+        )
+        == "text-bg-secondary"
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"files_deleted": 0, "files_failed": 2}, "text-bg-danger"),
+        ({"files_deleted": 2, "files_failed": 0}, "text-bg-secondary"),
+        (None, "text-bg-secondary"),
+        ({}, "text-bg-secondary"),
+    ],
+)
+def test_purge_outcome_badge_is_payload_aware(
+    payload: dict[str, object] | None, expected: str
+) -> None:
+    """P2: badge do outcome reflete ``files_failed`` — purga incompleta é
+    visível em vermelho na trilha, desfecho completo fica neutro."""
+    assert event_badge_css(CaseEventType.CASE_RETAINED_DATA_PURGE_OUTCOME, payload) == expected
+
+
 def test_cleaning_label_is_truthful_in_both_modes() -> None:
     """ADR-0010/D9 (P2-3): ``CASE_STATUS_CLEANING`` é neutro nos dois modos
     (sem afirmar limpeza que pode não ocorrer em retenção)."""

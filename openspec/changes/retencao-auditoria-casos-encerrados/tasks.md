@@ -47,19 +47,19 @@
 
 ## 3. Slice 003 — Purga retroativa dos dados retidos
 
-- [ ] 3.1 RED: testes do comando (minimiza `CLEANED` com dados retidos;
+- [x] 3.1 RED: testes do comando (minimiza `CLEANED` com dados retidos;
       casos ativos intocados; idempotente sem eventos duplicados; `--dry-run`
       reporta sem alterar; evento `CASE_RETAINED_DATA_PURGED` por caso com
       payload de NOMES de campos + contagens — sem filename — e rótulo
       legível; falha física de arquivo → caso reportado incompleto + exit
       code não-zero)
-- [ ] 3.2 GREEN: `CASE_RETAINED_DATA_PURGED` no enum `CaseEventType` +
+- [x] 3.2 GREEN: `CASE_RETAINED_DATA_PURGED` no enum `CaseEventType` +
       rótulo em `apps/dashboard/event_labels.py` + serviço
       `purge_closed_case_data` em `apps/cases/closure.py` (reusa
       `_clean_acknowledged_clinical_data`, atomic por caso, contagens
       `files_attempted/files_deleted/files_failed`) + comando fino
       `manage.py purge_closed_case_data [--dry-run]`
-- [ ] 3.3 Bateria do slice + gate completo
+- [x] 3.3 Bateria do slice + gate completo
 
 ## 4. Encerramento
 

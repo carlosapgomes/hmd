@@ -114,17 +114,39 @@ de documento/anexo); por caso, no mesmo padrão transacional do closure
 auditável **novo** `CASE_RETAINED_DATA_PURGED` (extensão aditiva do enum
 fechado `CaseEventType`; verificado: todos os receivers de
 `CaseEvent.post_save` filtram por `event_type` — nenhum dispara
-comunicação/notificação/enqueue para o tipo novo). **Payload do evento e
-saída SEM PHI**: apenas os NOMES dos 7 campos zerados (constantes) e
-CONTAGENS de rows/arquivos — nunca conteúdo clínico nem nomes de arquivo
-(filename de anexo pode conter nome de paciente). **Falha física de
-arquivo é reportada, não engolida**: contagens
+comunicação/notificação/enqueue para o tipo novo). **Payload do evento e saída SEM
+PHI**: apenas os NOMES dos 7 campos zerados (constantes) e CONTAGENS de
+rows/arquivos — nunca conteúdo clínico nem nomes de arquivo (filename de
+anexo pode conter nome de paciente). **Trilha em duas fases** (review 1
+do slice 003): (1) evento `CASE_RETAINED_DATA_PURGED` DENTRO do atomic
+durável, junto com a limpeza — payload = nomes dos campos + rows zeradas
++ `files_attempted`; prova a destruição do banco atomicamente com ela
+(crash entre commit e evento é impossível); (2) após a deleção física,
+evento COMPLEMENTAR de TIPO PRÓPRIO `CASE_RETAINED_DATA_PURGE_OUTCOME`
+(somente quando `files_attempted > 0`)
+com payload `files_deleted`/`files_failed` — o desfecho físico fica na
+trilha; crash antes dele deixa a destruição provada com desfecho
+desconhecido (aceito e documentado). Re-execução é no-op (sem eventos).
+**Commit real obrigatório**: o atomic do serviço usa `durable=True`
+(recusa transação externa com `RuntimeError` nomeado — a deleção física
+só pode ocorrer após commit real, nunca sob savepoint cujo rollback
+externo deixaria o banco apontando arquivos apagados); o comando roda em
+autocommit; testes usam `TransactionTestCase` com commits reais.
+O evento complementar usa TIPO PRÓPRIO `CASE_RETAINED_DATA_PURGE_OUTCOME`
+(rótulo «Remoção dos arquivos da purga») com badge CONSCIENTE DO PAYLOAD:
+`files_failed > 0` → badge de perigo (purga incompleta visível na trilha
+do painel), senão badge neutro de sistema — a fase de purga e o desfecho
+físico ficam DISTINTOS e legíveis na apresentação (review 2 do slice 003).
+**Falha física de arquivo é reportada, não engolida**: contagens
 `files_attempted/files_deleted/files_failed` por caso e no resumo; caso
 com `files_failed > 0` é sinalizado como purga incompleta (o banco
 commitou, mas o órfão com PHI precisa de tratamento — a reexecução não
 redescobre o caso pelo critério de seleção, então a falha TEM que
-aparecer na saída e em log) e o comando encerra com exit code não-zero
-listando os casos afetados. Idempotência natural: caso sem dados retidos
+aparecer na saída, no evento complementar e em log) e o comando encerra
+com exit code não-zero listando os casos afetados. **Log sem PHI**: em
+falha de arquivo, registra referência do caso + contagem + TIPO da
+exceção — sem caminho, sem mensagem da exceção e sem `exc_info` (o
+traceback carrega o filename). Idempotência natural: caso sem dados retidos
 é pulado, sem evento. `--dry-run` lista referência + contagens sem tocar
 nada. **Ordem operacional da reversão** (runbook registrado no ADR-0010):
 1) `CASE_CLOSURE_MINIMIZATION_ENABLED=true` no ambiente (nova disposição

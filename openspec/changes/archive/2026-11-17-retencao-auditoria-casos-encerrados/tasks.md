@@ -68,5 +68,5 @@
       do flag → `--dry-run` da purga → purga real (campos zerados, docs →
       404, evento na trilha) → conferir card do painel com placeholders
       pós-purga; registro da execução no runbook
-- [ ] 4.2 Archive do change (sync specs main + PROJECT_CONTEXT.md — ADR-0010
+- [x] 4.2 Archive do change (sync specs main + PROJECT_CONTEXT.md — ADR-0010
       já contém as respostas do dono)

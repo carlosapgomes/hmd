@@ -63,7 +63,7 @@
 
 ## 4. Encerramento
 
-- [ ] 4.1 E2E no dev seguindo o runbook do ADR: encerrar caso por ciência e
+- [x] 4.1 E2E no dev seguindo o runbook do ADR: encerrar caso por ciência e
       por admin com retenção e conferir preservação + card no painel; flip
       do flag → `--dry-run` da purga → purga real (campos zerados, docs →
       404, evento na trilha) → conferir card do painel com placeholders

@@ -90,3 +90,10 @@ administrativo e o benchmark só corpus sintético.
   e sob aprovação da gerência de TI.
 - **Casos já `CLEANED` antes desta decisão** permanecem minimizados:
   a purga retroativa nunca precisa tocá-los (não têm dados retidos).
+
+## Registro de execuções do runbook
+
+| Data | Ambiente | Escopo | Resultado | Responsável |
+|---|---|---|---|---|
+| 2026-11-17 | dev (validação E2E da task 4.1) | 2 casos sintéticos (ciência + encerramento administrativo, ambos retidos) | Retenção confirmada nos dois caminhos (campos/rows/arquivos preservados + card do painel re-identizado); purga `--dry-run` revisada; purga real: 2 purgados, 4 arquivos removidos, 0 falhas, trilha em duas fases (`CASE_RETAINED_DATA_PURGED` + `CASE_RETAINED_DATA_PURGE_OUTCOME`) nos dois casos; cards com placeholders pós-purga. Dev deixado limpo (casos/Usuários/artefatos removidos). | Agente implementador (parent do loop), sob decisão do dono |
+| (pendente) | produção (piloto) | a definir pela gerência de TI no gatilho v1.0 | — | Gerência de TI do hospital |

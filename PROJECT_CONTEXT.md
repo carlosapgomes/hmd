@@ -163,6 +163,27 @@ jornada VERIFY-001 restaurada, gates pré-goto fail-loud. Gate final **1958 test
 checkpoints (`/tmp/pvp-loop/...`): contador any-status no drive-detalhe, rótulo mobile NIR N>1, asserções
 parser-HTML, paridade serve arquivo-vazio, guardas estruturais PVP-001. Commits b110c2a→57a5e05.
 
+## Fecho do change watermark-strip-hardening (slices 001–002, ARQUIVADO em 2026-11-17)
+
+Endurecimento da limpeza de marca d'água do intake com **premissa de domínio corrigida** (a marca quase
+nunca coincide com o nº de ocorrência — suposição antiga persistida nas fixtures; mesmo relatório de página
+única tem ≥2 linhas de marca): nomeação unificada por **linha de marca** (linha composta exclusivamente de
+1..N repetições do token de 5–6 dígitos — cobre banda cheia, diagonal parcial do molde sarv3 e linha solta)
+com limiar `_MIN_MARK_LINES = 2`; **sweep assimétrico** (token coincidente com o nº é varrido globalmente via
+`\b`; token distinto sai só das linhas inteiras — valores clínicos inline de 5–6 dígitos preservados);
+`extract_document_text` junta páginas com `\n` explícito (endurecimento de contrato, testado via dublê do
+`pymupdf.open`); `strip_watermark(text, *, record_number=None) -> WatermarkStripResult` com
+`WatermarkReport(tokens/mark_lines/swept_occurrences)` (semântica fechada D3) e **telemetria no
+`CASE_EXTRACTION_COMPLETED`** sob `watermark` via `dataclasses.asdict` — só contagens, jamais valores de
+token na telemetria (o `record_number` pré-existente permanece, inclusive no caso coincidente: decisão de
+contrato do P1 da revisão do 002). Tamanho 5–6 dígitos e ordem bruto→strip (D3/R5b) inalterados. Execução em
+loop worker(muse-ember-1.0:max)+reviewer(gpt-6.1-terra) controlado pelo parent: P2 do 001 (pin de linhas
+soltas 3×) e P1 do 002 (escopo da proibição de valores) resolvidos com decisão documentada; incidente de
+despacho (prompt vazio → slice 002 fora de ordem) contido via stash, nada commitado indevido. Gate final
+verde: ruff + format + mypy (303 arquivos) + **1970 testes** (`TEST_DB_PORT=55435`). Spec `intake-nir`
+sincronizada (requirement Extração assíncrona: 49 cenários no total); `validate --specs` ok. Commits
+12630dc→6936a72.
+
 ## Fecho do change retencao-auditoria-casos-encerrados (slices 001–003, ARQUIVADO em 2026-11-17)
 
 Decisão do dono (fase de estabilização): o encerramento RETÉM tudo (7 campos clínicos/LLM + rows/arquivos de documentos/anexos) para benchmark com corpus real e auditoria supervisora — política temporária do ADR-0010 (base jurídica: execução íntegra no perímetro do hospital com autorização expressa dos gestores; gatilho de reversão: versão 1.0; responsável: gerência de TI; runbook flip→`--dry-run`→purga→registro com E2E dev validado e registrado). **Slice 001**: flag `CASE_CLOSURE_MINIMIZATION_ENABLED` (default `false`=retenção, passthrough no `web` do compose prod) + gate de modo NOS entry points do closure (função interna `_clean_acknowledged_clinical_data` INCONDICIONAL — reusada pela purga; `test_header_persistence` verde sem pino); worker de anexos blindado (gates `CLEANED` + transações curtas com `select_for_update` + **dispatch durável** — lock+gate+evento `DISPATCHED` no mesmo atomic com commit ANTES do envio + guard por página 2..N — e verificação com API pública única `request_verification_outcome`/`VERIFICATION_FAILURE_EXCEPTIONS`; janela residual commit→envio documentada na D8); textos/trilha verdadeiros nos dois modos (rótulos CLEANED "Caso concluído"/CLEANING "Disposição dos dados em andamento"). **Slice 002**: card «Sumário apresentado ao médico» no detalhe do painel (manager/admin) — builders extraídos para `apps/cases/presentation.py` (API única `build_structure_sections`; paridade médico×painel provada por teste), re-identificado sem tokens, cobre casos ativos e `CLEANED` retidos (placeholders independentes por bloco). **Slice 003**: purga retroativa — serviço `purge_closed_case_data` em `closure.py` (`atomic(durable=True)`, commit real obrigatório, deleção física síncrona pós-commit) + comando `purge_closed_case_data [--dry-run]` (só `CLEANED` com dados, idempotente, atomic por caso, exit não-zero com falha física) + **trilha em duas fases** (`CASE_RETAINED_DATA_PURGED` atômico com a limpeza + `CASE_RETAINED_DATA_PURGE_OUTCOME` com badge de perigo quando `files_failed>0`; payload/log/saída sem PHI). Execução em loop worker(muse-ember-1.0:max)+reviewer(gpt-6.1-terra:high) controlado pelo parent (11 rodadas ao todo; desvios de boundary para `extraction.py`/`verification.py` autorizados e registrados). Suíte 1972→2019. Specs: `case-closure` (requirement renomeado p/ «encerramento e disposição de dados» + MODIFIED ×2 + ADDED purga — 6 reqs) e `dashboard` (ADDED card — 6 reqs); `validate --specs --strict` 16/16. Débitos P2/P3: seleção da purga varre todos os `CLEANED` com `exists()` por caso (volume grande → mover p/ queryset `Exists`); badge do outcome neutro só muda com `files_failed` int>0 (defesa de apresentação); janela residual commit→envio do OCR (D8, alternativas rejeitadas registradas).

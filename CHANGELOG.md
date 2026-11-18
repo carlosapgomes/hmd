@@ -4,6 +4,28 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.20] — 2026-11-18
+
+**Retenção temporária no encerramento + auditoria do painel (ADR-0010) +
+endurecimento do strip de marca d'água** — 2 changes
+(`retencao-auditoria-casos-encerrados`, `watermark-strip-hardening`),
+5 slices TDD com revisão independente por slice. Suíte 1958 → **2031**
+(+73 testes). Sem migrations (deploy direto).
+
+- **retencao-auditoria-casos-encerrados** — durante a fase de
+  estabilização (`CASE_CLOSURE_MINIMIZATION_ENABLED=false`, default), a
+  ciência do NIR e o encerramento administrativo **preservam** os 7
+  campos clínicos/LLM, as rows e os arquivos físicos (corpus real para
+  benchmark de anonimização/modelos); estados, eventos, guards, locks e
+  notificações idênticos. Detalhe do painel ganha o card «Sumário
+  apresentado ao médico» (inclusive em casos encerrados). Purga retroativa
+  em duas fases (serviço + comando + trilha de auditoria).
+- **watermark-strip-hardening** — remoção passa a nomear marca em linhas
+  soltas e poucas repetições por linha (antes, só banda intra-linha
+  cheia atravessava marcas diagonais); sweep residual assimétrico
+  preserva valores legítimos de 5–6 dígitos em linha mista (CBO,
+  protocolos) e telemetria da remoção no evento de extração.
+
 ## [0.1.19] — 2026-11-16
 
 **Visualização do PDF original e dos anexos nos 4 papéis (paridade ats-web)**

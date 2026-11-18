@@ -172,6 +172,15 @@ def _memory_storage() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _minimization_mode() -> Iterator[None]:
+    """Pino explícito do modo de minimização (ADR-0010/D7): nenhuma asserção
+    deste módulo depende do default do ambiente — os testes de retenção
+    abaixo sobrescrevem com ``False`` explicitamente."""
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=True):
+        yield
+
+
 @pytest.fixture
 def client() -> Client:
     """Client Django isolado por teste."""
@@ -874,3 +883,97 @@ def test_public_op_rejects_cleaned_case(nir_user: User, manager_user: User) -> N
             reason_text="já encerrado",
             lock_snapshot={},
         )
+
+
+# ── Retenção (ADR-0010, slice 001): encerramento administrativo preserva ───
+
+
+@pytest.mark.django_db(transaction=True)
+def test_close_retention_preserves_fields_rows_and_files(
+    monkeypatch: pytest.MonkeyPatch,
+    nir_user: User,
+    manager_user: User,
+) -> None:
+    """Retenção (flag False): o encerramento administrativo vai a CLEANED com
+    o evento de auditoria normal, mas preserva os 7 campos clínicos/LLM,
+    as rows de documentos e de anexos E os arquivos físicos."""
+    _silence_pipeline_enqueues(monkeypatch)
+    case = _case_in_state("FAILED", created_by=nir_user)
+    _seed_clinical_data(case)
+    document = _attach_documents(case, nir_user, "relatorio-sesab.pdf")[0]
+    attachment = _attach_attachment(case, nir_user, "anexo-ecg.jpg")
+    attachment.refresh_from_db()
+    attachment_snapshot = {
+        field_name: getattr(attachment, field_name)
+        for field_name in (
+            "pseudonym_map",
+            "anonymized_text",
+            "extracted_text",
+            "status",
+            "verification_summary",
+            "verification_evidence",
+            "patient_match",
+        )
+    }
+    assert attachment_snapshot["extracted_text"] != ""
+    file_names = [name for name in (document.file.name, attachment.file.name) if name]
+    assert all(default_storage.exists(name) for name in file_names)
+    events_before = case.events.count()
+
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=False):
+        _close(case, user=manager_user)
+
+    fresh = Case.objects.get(pk=case.case_id)
+    assert fresh.status == CaseStatus.CLEANED
+    assert fresh.events.count() == events_before + 2
+    assert _event_types(fresh)[-2:] == [
+        case_status_event_type(CaseStatus.CLEANED),
+        CaseEventType.CASE_ADMINISTRATIVELY_CLOSED,
+    ]
+    event = CaseEvent.objects.get(case=case, event_type=CaseEventType.CASE_ADMINISTRATIVELY_CLOSED)
+    assert event.payload["reason_code"] == REASON_CODE
+    assert event.payload["reason_text"] == REASON_TEXT
+    assert fresh.extracted_text == EXTRACTED_TEXT
+    assert fresh.anonymized_text == ANONYMIZED_TEXT
+    assert fresh.pseudonym_map == {"<PESSOA_1>": "MARIA DA SILVA SOUZA"}
+    assert fresh.structured_data == STRUCTURED_DATA
+    assert fresh.summary_text == SUMMARY_TEXT
+    assert fresh.suggested_action == SUGGESTED_ACTION
+    assert fresh.policy_result == POLICY_RESULT
+    assert fresh.documents.count() == 1
+    assert fresh.attachments.count() == 1
+    # P2-4: igualdade exata campo a campo do anexo populado (snapshot antes).
+    retained_attachment = fresh.attachments.get()
+    for field_name in (
+        "pseudonym_map",
+        "anonymized_text",
+        "extracted_text",
+        "status",
+        "verification_summary",
+        "verification_evidence",
+        "patient_match",
+    ):
+        assert getattr(retained_attachment, field_name) == attachment_snapshot[field_name], (
+            field_name
+        )
+    assert all(default_storage.exists(name) for name in file_names)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("minimization", [False, True])
+def test_manual_texts_are_truthful_in_both_modes(
+    minimization: bool,
+    client: Client,
+    nir_user: User,
+) -> None:
+    """Manual (ADR-0010/D9): nos dois modos o texto é neutro e verdadeiro —
+    sem afirmar limpeza/minimização que pode não ocorrer."""
+    client.force_login(nir_user)
+
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=minimization):
+        body = client.get(reverse("manual")).content.decode()
+
+    assert "política vigente" in body
+    assert "ADR-0010" in body
+    assert "os dados clínicos são limpos" not in body
+    assert "limpa os dados clínicos" not in body

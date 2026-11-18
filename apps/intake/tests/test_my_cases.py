@@ -39,6 +39,14 @@ RETENTION_REASON = "documento fora do padrão SESAB do relatório (motivo: missi
 
 
 @pytest.fixture(autouse=True)
+def _minimization_mode() -> Iterator[None]:
+    """Pino explícito do modo de minimização (ADR-0010/D7) nos fluxos de
+    encerramento existentes — o teste de retenção sobrescreve com False."""
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=True):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _creation_without_processing() -> Iterator[None]:
     """Criação sem processamento (slice 004): estados controlados pelo teste.
 
@@ -943,3 +951,27 @@ def test_oli004_empty_without_filters_closed_offers_novo_encaminhamento(
     assert "Novo Encaminhamento" in body
     assert reverse("intake:home") in body
     assert "Limpar filtros" not in body
+
+
+@pytest.mark.django_db
+def test_administrative_closure_retention_serve_document_200_for_creator(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """Retenção (flag False): documento de caso encerrado administrativamente
+    segue servido (200) ao criador no intake."""
+    case = _create_case(nir_user, pdf_factory, "relatorio-sesab.pdf")
+    document = list(case.documents.all())[0]
+    url = reverse("intake:serve_document", args=[case.case_id, document.pk])
+    manager = user_factory("gestor-retencao-serve", MANAGER_ROLE)
+
+    client.force_login(nir_user)
+    assert client.get(url).status_code == 200
+
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=False):
+        _close_administratively(case, manager)
+
+    assert case.status == CaseStatus.CLEANED
+    assert client.get(url).status_code == 200

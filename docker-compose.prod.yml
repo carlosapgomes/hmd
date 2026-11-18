@@ -93,6 +93,9 @@ services:
       # Fase 1 do piloto: intake DESLIGADO (fail-closed — o default de
       # config.settings.prod é false e aqui ele fica explícito).
       INTAKE_ENABLED: ${INTAKE_ENABLED:-false}
+      # Disposição dos dados no encerramento (ADR-0010, política temporária):
+      # false (default) = retenção total; true = minimização no encerramento.
+      CASE_CLOSURE_MINIMIZATION_ENABLED: ${CASE_CLOSURE_MINIMIZATION_ENABLED:-false}
       # Limites do envio em lote (change intake-batch-semantics): 1 PDF = 1
       # caso; o total default de 100 MB é o limite prático do request body no
       # túnel Cloudflare do piloto (~100 MB no plano free). Sempre com

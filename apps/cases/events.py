@@ -135,6 +135,22 @@ class CaseEventType(models.TextChoices):
         "Caso encerrado administrativamente",
     )
 
+    # Purga retroativa dos dados retidos (change retencao-auditoria-casos-encerrados,
+    # slice 003, D4): eventos não-transicionais gravados pelo serviço
+    # ``apps/cases/closure.py::purge_closed_case_data`` ao reaplicar a minimização
+    # a casos CLEANED retidos — PURGED (fase 1, atômica com a limpeza;
+    # payload enxuto: nomes de campos + rows + files_attempted) e
+    # PURGE_OUTCOME (fase 2, desfecho físico condicional a files_attempted > 0;
+    # payload files_deleted/files_failed).
+    CASE_RETAINED_DATA_PURGED = (
+        "CASE_RETAINED_DATA_PURGED",
+        "Dados retidos purgados",
+    )
+    CASE_RETAINED_DATA_PURGE_OUTCOME = (
+        "CASE_RETAINED_DATA_PURGE_OUTCOME",
+        "Desfecho da remoção dos arquivos da purga",
+    )
+
 
 def case_status_event_type(state: str) -> str:
     """Resolve o tipo canônico do evento de transição para o estado-alvo.

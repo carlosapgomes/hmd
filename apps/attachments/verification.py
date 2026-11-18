@@ -86,6 +86,17 @@ class AttachmentVerificationError(ValueError):
     """Resposta LLM fora do contrato (schema/parse/validação) — vira ``failed``."""
 
 
+# Falhas tipadas da verificação que viram ``failed`` (fonte única — D8):
+# consumida por ``verify_attachment`` (referência sem gate) e pelo worker
+# (``apps.attachments.tasks``, com gates entre request e persist).
+VERIFICATION_FAILURE_EXCEPTIONS: tuple[type[Exception], ...] = (
+    LlmError,
+    LlmJsonParseError,
+    AttachmentVerificationError,
+    ActivePromptNotFoundError,
+)
+
+
 def patient_token(case: Case) -> str | None:
     """Token do paciente do caso no ``pseudonym_map`` (reverse lookup, R2).
 
@@ -111,6 +122,11 @@ def patient_token(case: Case) -> str | None:
 def verify_attachment(case: Case, attachment: CaseAttachment) -> None:
     """Verifica o anexo anonimizado contra o paciente do caso (R4, sem efeito no caso).
 
+    Referência sem gate que orquestra as peças públicas
+    (``request_verification_outcome`` → ``VERIFICATION_FAILURE_EXCEPTIONS`` →
+    persist_failure / persist_outcome). O worker
+    (``apps.attachments.tasks``) chama as MESMAS peças públicas com gates
+    de encerramento entre request e persist (D8) — sem duplicar o pipeline.
     LLM de texto (``settings.LLM1_MODEL``) vê apenas o texto anonimizado do
     anexo + o token do paciente; o resultado é persistido na row + evento
     ``CASE_ATTACHMENT_PROCESSED`` (processed). Falha tipada (LLM/parse/schema)
@@ -119,17 +135,27 @@ def verify_attachment(case: Case, attachment: CaseAttachment) -> None:
     R2). Qualquer outra exceção propaga — o worker (tasks.py) é a rede de
     segurança fail-closed por anexo.
     """
-    token = patient_token(case)
     try:
-        outcome = _request_and_decode(attachment, token)
-    except (
-        LlmError,
-        LlmJsonParseError,
-        AttachmentVerificationError,
-        ActivePromptNotFoundError,
-    ) as exc:
-        _mark_failed(attachment, exc)
+        outcome = request_verification_outcome(attachment)
+    except VERIFICATION_FAILURE_EXCEPTIONS as exc:
+        persist_verification_failure(attachment, exc)
         return
+    persist_processed_outcome(attachment, outcome)
+
+
+def request_verification_outcome(attachment: CaseAttachment) -> VerificationOutcome:
+    """UMA operação pública de request/normalização/classificação (D8).
+
+    Token (``patient_token`` sobre o caso do anexo) → request → decode →
+    força ``UNKNOWN`` sem token (modo sem-comparação R2, regra em UM lugar).
+    API pública consumida por ``verify_attachment`` (referência sem gate) e
+    por ``apps.attachments.tasks`` (worker, com gates de encerramento entre
+    request e persist — D8). Falhas tipadas propagam
+    (``VERIFICATION_FAILURE_EXCEPTIONS``) — o chamador decide o destino
+    (``failed``).
+    """
+    token = patient_token(attachment.case)
+    outcome = _request_and_decode(attachment, token)
     if token is None:
         # Modo sem-comparação: mesmo que o modelo responda match/mismatch, sem
         # token do caso não há comparação possível (R2) — o documento segue
@@ -139,7 +165,7 @@ def verify_attachment(case: Case, attachment: CaseAttachment) -> None:
             summary=outcome.summary,
             evidence=outcome.evidence,
         )
-    _persist_processed(attachment, outcome)
+    return outcome
 
 
 def _request_and_decode(attachment: CaseAttachment, token: str | None) -> VerificationOutcome:
@@ -147,8 +173,8 @@ def _request_and_decode(attachment: CaseAttachment, token: str | None) -> Verifi
 
     Falhas tipadas propagam (LlmError de transporte, LlmJsonParseError do
     parser tolerante, AttachmentVerificationError de resposta fora do
-    contrato, ActivePromptNotFoundError de prompt não seedado) — o chamador
-    decide o destino (``failed``).
+    contrato, ActivePromptNotFoundError de prompt não seedado) —
+    ``request_verification_outcome`` as deixa propagar para o chamador.
     """
     template = PromptTemplate.get_active_prompt(ATTACHMENT_VERIFICATION).content
     user_content = template.replace("{{attachment_text}}", attachment.anonymized_text).replace(
@@ -187,8 +213,13 @@ def _decode_outcome(raw_response: str) -> VerificationOutcome:
     )
 
 
-def _persist_processed(attachment: CaseAttachment, outcome: VerificationOutcome) -> None:
-    """Persiste o resultado + fecha o anexo + evento, num único atomic (R4)."""
+def persist_processed_outcome(attachment: CaseAttachment, outcome: VerificationOutcome) -> None:
+    """Persiste o resultado + fecha o anexo + evento, num único atomic (R4).
+
+    API pública consumida por ``verify_attachment`` e por
+    ``apps.attachments.tasks`` (que a chama dentro de transação curta
+    gateada por encerramento — D8).
+    """
     with transaction.atomic():
         current = _reload(attachment)
         if current is None:
@@ -220,8 +251,13 @@ def _persist_processed(attachment: CaseAttachment, outcome: VerificationOutcome)
         )
 
 
-def _mark_failed(attachment: CaseAttachment, exc: Exception) -> None:
-    """Marca ``failed`` + motivo + evento de falha (fail-closed por anexo)."""
+def persist_verification_failure(attachment: CaseAttachment, exc: Exception) -> None:
+    """Marca ``failed`` + motivo + evento de falha (fail-closed por anexo).
+
+    API pública consumida por ``verify_attachment`` e por
+    ``apps.attachments.tasks`` (que a chama dentro de transação curta
+    gateada por encerramento — D8).
+    """
     reason = f"falha na verificação do anexo: {exc}"
     with transaction.atomic():
         current = _reload(attachment)

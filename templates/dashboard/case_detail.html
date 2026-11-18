@@ -55,6 +55,53 @@
   </ul>
 </div>
 
+<!-- Card «Sumário apresentado ao médico» (slice 002, R3/D6): o MESMO sumário
+     clínico e a MESMA estrutura extraída apresentados ao médico — re-
+     identificados na renderização via API compartilhada (paridade D5),
+     collapsible FECHADO por padrão (mesmo molde dos collapses existentes),
+     entre «Procedimentos declarados» e o texto extraído. Dentro, os blocos
+     «Sumário clínico» e «Estrutura extraída» com o MESMO markup dos cards
+     médicos (<p> por linha; <h3> por seção + <ul> de linhas) e placeholders
+     explícitos INDEPENDENTES por bloco. O comentário evita a grafia exata
+     do título do card de texto (que é omitido quando vazio). -->
+<div class="card mb-3">
+  <div class="card-header d-flex flex-wrap align-items-center gap-2">
+    <span>
+      <button class="btn btn-link text-decoration-none p-0 collapsed" type="button"
+              data-bs-toggle="collapse" data-bs-target="#summary-collapse"
+              aria-expanded="false" aria-controls="summary-collapse">
+        Sumário apresentado ao médico
+      </button>
+    </span>
+  </div>
+  <div class="collapse" id="summary-collapse">
+    <div class="card-body">
+      <h3 class="h6">Sumário clínico</h3>
+      {% if summary_lines %}
+      {% for line in summary_lines %}
+      <p class="mb-2{% if forloop.last %} mb-0{% endif %}">{{ line }}</p>
+      {% endfor %}
+      {% else %}
+      <p class="text-muted mb-0">Sumário clínico não disponível para este caso.</p>
+      {% endif %}
+      <h3 class="h6 mt-3">Estrutura extraída</h3>
+      {% for section in sections %}
+      {% if section.lines %}
+      <h3 class="h6 text-muted text-uppercase mt-3{% if forloop.first %} mt-0{% endif %}">{{ section.title }}</h3>
+      <ul class="mb-0">
+        {% for line in section.lines %}
+        <li>{{ line }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% endfor %}
+      {% if not has_structure %}
+      <p class="text-muted mb-0">Nenhuma estrutura extraída.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
 <!-- Card de texto do relatório (slice PVP-005, R2/D1/D2/D8): OMITIDO quando
      vazio (padrão NIR/agendador — diferença contratual vs médico, que exibe
      placeholder). Renderiza APÓS "Procedimentos declarados", ANTES da trilha. -->
@@ -225,8 +272,8 @@
   <div class="card-header">Encerramento administrativo</div>
   <div class="card-body">
     <p class="small text-muted mb-2">
-      O encerramento é terminal: o caso sai das filas operacionais, os dados
-      clínicos são minimizados e o criador é notificado.
+      O encerramento é terminal: o caso sai das filas operacionais, a disposição
+      dos dados segue a política vigente — ADR-0010, e o criador é notificado.
     </p>
     <a href="{% url 'dashboard:admin_close_confirm' case_id %}{% if filter_qs %}?{{ filter_qs }}{% endif %}"
        class="btn btn-sm btn-outline-danger">Encerrar administrativamente</a>

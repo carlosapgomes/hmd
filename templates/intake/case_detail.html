@@ -191,8 +191,8 @@
       <div class="card-footer bg-white">
         <p class="small text-muted mb-2">
           A resposta final deste caso foi publicada. Ao confirmar o recebimento,
-          o caso é <strong>encerrado</strong> e os dados clínicos sensíveis são
-          removidos — a ciência fica registrada na trilha.
+          o caso é <strong>encerrado</strong> e a disposição dos dados segue a
+          política vigente — ADR-0010; a ciência fica registrada na trilha.
         </p>
         <form method="post" action="{% url 'intake:case_ack' case.case_id %}" class="d-inline">
           {% csrf_token %}

@@ -109,6 +109,15 @@ def _memory_storage() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _minimization_mode() -> Iterator[None]:
+    """Pino explícito do modo de minimização (ADR-0010/D7): nenhuma asserção
+    deste módulo depende do default do ambiente — os testes de retenção
+    abaixo sobrescrevem com ``False`` explicitamente."""
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=True):
+        yield
+
+
 @pytest.fixture
 def client() -> Client:
     """Client Django isolado por teste."""
@@ -762,3 +771,98 @@ def test_ack_events_append_only(
         case_status_event_type(CaseStatus.CLEANING),
         case_status_event_type(CaseStatus.CLEANED),
     ]
+
+
+# ── Retenção (ADR-0010, slice 001): ciência preserva tudo ───────────────────
+
+
+@pytest.mark.django_db(transaction=True)
+def test_ack_retention_preserves_fields_rows_and_files(
+    monkeypatch: pytest.MonkeyPatch,
+    nir_user: User,
+    doctor_user: User,
+) -> None:
+    """Retenção (flag False): a ciência encerra em CLEANED com os 3 eventos
+    normais, mas preserva os 7 campos clínicos/LLM, as rows de documentos e
+    de anexos processados E os arquivos físicos (nada é deletado)."""
+    _silence_pipeline_enqueues(monkeypatch)
+    case = _denial_final_case(created_by=nir_user, decided_by=doctor_user)
+    _attach_documents(case, nir_user, "relatorio-sesab.pdf")
+    attachments = _attach_processed_attachments(case, nir_user, "anexo-ecg.jpg")
+    attachments[0].refresh_from_db()
+    attachment_snapshot = {
+        field_name: getattr(attachments[0], field_name)
+        for field_name in (
+            "pseudonym_map",
+            "anonymized_text",
+            "extracted_text",
+            "status",
+            "verification_summary",
+            "verification_evidence",
+            "patient_match",
+        )
+    }
+    assert attachment_snapshot["extracted_text"] != ""
+    assert attachment_snapshot["patient_match"] is not None
+    document_names = [d.file.name for d in case.documents.all() if d.file.name]
+    attachment_names = [a.file.name for a in attachments if a.file.name]
+    assert all(default_storage.exists(name) for name in document_names + attachment_names)
+    events_before = case.events.count()
+
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=False):
+        acknowledge_case_receipt(case, user=nir_user, role=NIR_ROLE)
+
+    fresh = Case.objects.get(pk=case.case_id)
+    assert fresh.status == CaseStatus.CLEANED
+    assert fresh.events.count() == events_before + 3
+    assert _event_types(fresh)[-3:] == [
+        case_status_event_type(CaseStatus.AWAITING_NIR_ACK),
+        case_status_event_type(CaseStatus.CLEANING),
+        case_status_event_type(CaseStatus.CLEANED),
+    ]
+    assert fresh.extracted_text == EXTRACTED_TEXT
+    assert fresh.anonymized_text == ANONYMIZED_TEXT
+    assert fresh.pseudonym_map == {"<PESSOA_1>": "MARIA DA SILVA SOUZA"}
+    assert fresh.structured_data == STRUCTURED_DATA
+    assert fresh.summary_text == SUMMARY_TEXT
+    assert fresh.suggested_action == SUGGESTED_ACTION
+    assert fresh.policy_result == POLICY_RESULT
+    assert fresh.documents.count() == 1
+    assert fresh.attachments.count() == 1
+    # P2-4: igualdade exata campo a campo do anexo populado (snapshot antes).
+    retained_attachment = fresh.attachments.get()
+    for field_name in (
+        "pseudonym_map",
+        "anonymized_text",
+        "extracted_text",
+        "status",
+        "verification_summary",
+        "verification_evidence",
+        "patient_match",
+    ):
+        assert getattr(retained_attachment, field_name) == attachment_snapshot[field_name], (
+            field_name
+        )
+    assert all(default_storage.exists(name) for name in document_names + attachment_names)
+
+
+@pytest.mark.django_db
+def test_ack_retention_serve_document_200_for_creator(
+    client: Client,
+    nir_user: User,
+    doctor_user: User,
+) -> None:
+    """Retenção (flag False): documento de caso CLEANED retido segue servido
+    (200) ao criador no intake — o 404 só vale no modo de minimização."""
+    case = _denial_final_case(created_by=nir_user, decided_by=doctor_user)
+    document = _attach_documents(case, nir_user, "relatorio-sesab.pdf")[0]
+    url = reverse("intake:serve_document", args=[case.case_id, document.pk])
+
+    client.force_login(nir_user)
+    assert client.get(url).status_code == 200
+
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=False):
+        acknowledge_case_receipt(case, user=nir_user, role=NIR_ROLE)
+
+    assert Case.objects.get(pk=case.case_id).status == CaseStatus.CLEANED
+    assert client.get(url).status_code == 200

@@ -16,15 +16,25 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from django.conf import settings
 from django.core.files.storage import default_storage
 from django.db import transaction
 from django.utils import timezone
 
 from apps.cases.communications import post_user_communication
+from apps.cases.events import CaseEventType
 from apps.cases.locks import case_has_lock, force_release_case_lock
-from apps.cases.models import Case, CaseProcedure, CaseStatus, DoctorDisposition
+from apps.cases.models import (
+    ActorType,
+    Case,
+    CaseEvent,
+    CaseProcedure,
+    CaseStatus,
+    DoctorDisposition,
+)
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES, get_procedure_profile
 
 if TYPE_CHECKING:
@@ -87,6 +97,17 @@ def _delete_files_best_effort(file_names: Iterable[str]) -> None:
             )
 
 
+def _minimization_enabled() -> bool:
+    """Modo de minimização ativo? (ADR-0010/D2 — lido no momento do serviço).
+
+    A decisão de modo mora AQUI, nos entry points — nunca dentro de
+    ``_clean_acknowledged_clinical_data``, que permanece incondicional
+    (semântica de força total reusada pela purga retroativa do slice 003;
+    se lesse o flag, a purga nasceria morta sob o default ``False``).
+    """
+    return bool(getattr(settings, "CASE_CLOSURE_MINIMIZATION_ENABLED", False))
+
+
 def _clean_acknowledged_clinical_data(case: Case) -> None:
     """Minimização do D2 no caso sob lock (D2): rows de documento/anexo e campos.
 
@@ -135,19 +156,30 @@ def acknowledge_case_receipt(case: Case, *, user: User, role: str) -> None:
             raise ValueError(
                 "confirmação de recebimento restrita ao criador do caso — caso de outro usuário"
             )
-        file_names = [
-            document.file.name for document in locked.documents.only("file") if document.file.name
-        ]
-        file_names.extend(
-            attachment.file.name
-            for attachment in locked.attachments.only("file")
-            if attachment.file.name
-        )
+        # D2/ADR-0010: retenção ativa pula a limpeza E a coleta/deleção de
+        # arquivos; minimização ativa segue o caminho original byte-a-byte.
+        # O estado transitório CLEANING percorre o fluxo sem efeito sobre
+        # dados em retenção — aceito porque o conjunto de estados é contrato.
+        minimize = _minimization_enabled()
+        file_names: list[str] = []
+        if minimize:
+            file_names = [
+                document.file.name
+                for document in locked.documents.only("file")
+                if document.file.name
+            ]
+            file_names.extend(
+                attachment.file.name
+                for attachment in locked.attachments.only("file")
+                if attachment.file.name
+            )
         locked.nir_acknowledge(user=user, role=role)
         locked.start_cleaning(user=user, role=role)
-        _clean_acknowledged_clinical_data(locked)
+        if minimize:
+            _clean_acknowledged_clinical_data(locked)
         locked.complete_cleaning(user=user, role=role)
-        transaction.on_commit(lambda: _delete_files_best_effort(file_names))
+        if minimize:
+            transaction.on_commit(lambda: _delete_files_best_effort(file_names))
 
 
 def post_doctor_denial_reply(case: Case, *, user: User, role: str) -> None:
@@ -288,15 +320,22 @@ def administratively_close_case(
             )
         lock_snapshot = _lock_snapshot(locked)
         force_release_case_lock(locked, reason=FORCED_RELEASE_REASON, user=user, role=active_role)
-        file_names = [
-            document.file.name for document in locked.documents.only("file") if document.file.name
-        ]
-        file_names.extend(
-            attachment.file.name
-            for attachment in locked.attachments.only("file")
-            if attachment.file.name
-        )
-        _clean_acknowledged_clinical_data(locked)
+        # D2/ADR-0010: retenção ativa pula a limpeza E a coleta/deleção de
+        # arquivos; minimização ativa segue o caminho original byte-a-byte.
+        minimize = _minimization_enabled()
+        file_names: list[str] = []
+        if minimize:
+            file_names = [
+                document.file.name
+                for document in locked.documents.only("file")
+                if document.file.name
+            ]
+            file_names.extend(
+                attachment.file.name
+                for attachment in locked.attachments.only("file")
+                if attachment.file.name
+            )
+            _clean_acknowledged_clinical_data(locked)
         locked.administratively_close(
             user=user,
             role=active_role,
@@ -304,7 +343,195 @@ def administratively_close_case(
             reason_text=reason_text,
             lock_snapshot=lock_snapshot,
         )
-        transaction.on_commit(lambda: _delete_files_best_effort(file_names))
+        if minimize:
+            transaction.on_commit(lambda: _delete_files_best_effort(file_names))
 
     case.refresh_from_db()
     return case
+
+
+# ── Purga retroativa dos dados retidos (change retencao-auditoria-casos-encerrados, D4) ──
+
+
+@dataclass(frozen=True)
+class RetainedDataCounts:
+    """O que seria purgado de um caso — contagens puras, sem alterar nada.
+
+    Fonte do ``--dry-run`` e do serviço: nomes dos campos clínicos/LLM ainda não
+    zerados (subconjunto dos 7 de ``_CLEANED_EMPTY_VALUES``) + rows de
+    documento/anexo + arquivos físicos coletáveis. Nunca carrega conteúdo
+    clínico nem nomes de arquivo — só contagens.
+    """
+
+    cleaned_fields: tuple[str, ...]
+    documents: int
+    attachments: int
+    files: int
+
+
+@dataclass(frozen=True)
+class PurgeResult:
+    """Resultado da purga de um caso — contagens para o comando reportar.
+
+    ``files_attempted/files_deleted/files_failed`` distinguem a purga completa
+    da incompleta (``files_failed > 0`` = órfão com PHI a tratar). ``cleaned_fields``
+    são os nomes dos 7 campos zerados, na ordem de ``_CLEANED_EMPTY_VALUES``.
+    """
+
+    documents_deleted: int
+    attachments_deleted: int
+    files_attempted: int
+    files_deleted: int
+    files_failed: int
+    cleaned_fields: tuple[str, ...]
+
+
+def _retained_field_names(case: Case) -> list[str]:
+    """Nomes dos campos clínicos/LLM ainda não zerados (D4, sem PHI).
+
+    Cada entrada de ``_CLEANED_EMPTY_VALUES`` tem valor vazio ``""`` (texto)
+    ou ``{}`` (JSON) — ambos falsy; qualquer valor truthy é dado retido.
+    """
+    return [name for name in _CLEANED_EMPTY_VALUES if getattr(case, name)]
+
+
+def _retained_file_names(case: Case) -> list[str]:
+    """Nomes de storage das rows de documento/anexo (coleta pré-delete do closure).
+
+    Mesma coleta dos entry points de encerramento: só nomes de storage
+    (UUID, sem PHI) das rows com ``file.name`` preenchido.
+    """
+    file_names = [
+        document.file.name for document in case.documents.only("file") if document.file.name
+    ]
+    file_names.extend(
+        attachment.file.name for attachment in case.attachments.only("file") if attachment.file.name
+    )
+    return file_names
+
+
+def retained_data_counts(case: Case) -> RetainedDataCounts:
+    """Contagens do que seria purgado do caso, sem alterar nada (``--dry-run``)."""
+    return RetainedDataCounts(
+        cleaned_fields=tuple(_retained_field_names(case)),
+        documents=case.documents.count(),
+        attachments=case.attachments.count(),
+        files=len(_retained_file_names(case)),
+    )
+
+
+def case_has_retained_data(case: Case) -> bool:
+    """O caso ainda tem dados retidos? (≥1 campo clínico/LLM ou row de anexo/documento).
+
+    Critério de seleção do comando e guarda de idempotência do serviço: caso
+    sem nada retido (já minimizado) é pulado, sem evento.
+    """
+    if _retained_field_names(case):
+        return True
+    return case.documents.exists() or case.attachments.exists()
+
+
+def purge_closed_case_data(case: Case) -> PurgeResult:
+    """Reaplica a minimização a um caso ``CLEANED`` retido (D4, slice 003).
+
+    Serviço puro do módulo (uma fonte de semântica, sem duplicação contra
+    ``_CLEANED_EMPTY_VALUES``): no MESMO atomic por caso do closure
+    (``select_for_update`` + coleta pré-delete + ``_clean_acknowledged_clinical_data``)
+    — falha no meio não deixa meia-purga do banco. Caso fora de ``CLEANED`` é
+    recusado com ``ValueError`` nomeado; caso sem dados retidos é no-op
+    (idempotência: devolve zeros, sem evento).
+
+    **Commit real obrigatório** (D4): o atomic é ``durable=True`` — chamada
+    dentro de transação externa levanta ``RuntimeError`` nomeado, porque a
+    deleção física só pode ocorrer após commit real, nunca sob savepoint.
+    O comando roda em autocommit; testes usam ``TransactionTestCase``.
+
+    **Trilha em duas fases** (D4, ator Sistema: ``actor=None`` → trilha exibe
+    "Sistema", ``actor_role="system"`` como os workers):
+
+    1. evento de purga DENTRO do atomic durável, junto com a limpeza — payload
+       NOMES dos campos zerados + ``documents_deleted``/``attachments_deleted``
+       + ``files_attempted`` (nomes já coletados pré-delete); prova a destruição
+       do banco atomicamente com ela (crash entre commit e evento é impossível);
+    2. após a deleção física síncrona (ordem banco → arquivos), evento
+       complementar de TIPO PRÓPRIO (``CASE_RETAINED_DATA_PURGE_OUTCOME``)
+       SOMENTE quando ``files_attempted > 0`` — payload ``files_deleted``/``files_failed``. Crash antes dele deixa a
+       destruição provada com desfecho desconhecido (aceito e documentado na D4).
+       O ``on_commit`` não serve aqui: impede conhecer ``files_deleted``/
+       ``files_failed`` no retorno e no payload. ``OSError`` vira falha
+       contada + log sem PHI (referência + contagem + tipo da exceção, sem
+       caminho/mensagem/traceback), nunca propaga.
+
+    Payloads NUNCA carregam conteúdo clínico nem nomes de arquivo.
+    """
+    with transaction.atomic(durable=True):
+        locked = Case.objects.select_for_update().get(pk=case.pk)
+        if locked.status != CaseStatus.CLEANED:
+            raise ValueError(
+                f"purga retroativa restrita a casos CLEANED — estado {locked.status!r}"
+            )
+        counts = retained_data_counts(locked)
+        if not counts.cleaned_fields and counts.documents == 0 and counts.attachments == 0:
+            return PurgeResult(
+                documents_deleted=0,
+                attachments_deleted=0,
+                files_attempted=0,
+                files_deleted=0,
+                files_failed=0,
+                cleaned_fields=(),
+            )
+        file_names = _retained_file_names(locked)
+        _clean_acknowledged_clinical_data(locked)
+        files_attempted = len(file_names)
+        CaseEvent.objects.create(
+            case_id=locked.case_id,
+            event_type=CaseEventType.CASE_RETAINED_DATA_PURGED,
+            actor_type=ActorType.SYSTEM,
+            actor=None,
+            actor_role="system",
+            payload={
+                "cleaned_fields": list(counts.cleaned_fields),
+                "documents_deleted": counts.documents,
+                "attachments_deleted": counts.attachments,
+                "files_attempted": files_attempted,
+            },
+        )
+
+    files_deleted = 0
+    files_failed = 0
+    reference = locked.display_reference
+    for name in file_names:
+        try:
+            default_storage.delete(name)
+        except OSError as file_error:
+            files_failed += 1
+            logger.warning(
+                "falha ao remover arquivo físico da purga do caso %s (contagem %d/%d, tipo %s)",
+                reference,
+                files_failed,
+                files_attempted,
+                type(file_error).__name__,
+            )
+        else:
+            files_deleted += 1
+
+    if files_attempted > 0:
+        CaseEvent.objects.create(
+            case_id=locked.case_id,
+            event_type=CaseEventType.CASE_RETAINED_DATA_PURGE_OUTCOME,
+            actor_type=ActorType.SYSTEM,
+            actor=None,
+            actor_role="system",
+            payload={
+                "files_deleted": files_deleted,
+                "files_failed": files_failed,
+            },
+        )
+    return PurgeResult(
+        documents_deleted=counts.documents,
+        attachments_deleted=counts.attachments,
+        files_attempted=files_attempted,
+        files_deleted=files_deleted,
+        files_failed=files_failed,
+        cleaned_fields=counts.cleaned_fields,
+    )

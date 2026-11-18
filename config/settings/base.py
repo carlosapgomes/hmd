@@ -308,6 +308,20 @@ INTAKE_ENABLED = os.environ.get("INTAKE_ENABLED", "true").lower() in (
     "yes",
 )
 
+# Disposição dos dados no encerramento (change retencao-auditoria-casos-encerrados,
+# slice 001, ADR-0010 — política temporária da fase de estabilização):
+# ``True`` = minimização no encerramento (7 campos clínicos/LLM zerados e
+# rows/arquivos de documentos e anexos removidos); ``False`` (default) =
+# retenção total (nada é zerado/deletado no encerramento). Lida no momento
+# do serviço (nunca em import-time) — padrão dos flags existentes.
+CASE_CLOSURE_MINIMIZATION_ENABLED = os.environ.get(
+    "CASE_CLOSURE_MINIMIZATION_ENABLED", "false"
+).lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # Anonimização Presidio (change presidio-anonymization, slice 002, design
 # D3/D4): modelo spaCy pt-BR do engine singleton e limiar de score do
 # analyzer. O modelo default (pt_core_news_lg, ~541 MB) é trocável por um

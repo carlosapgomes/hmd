@@ -47,8 +47,8 @@ EVENT_LABELS: dict[str, str] = {
     CaseEventType.CASE_STATUS_SCHEDULING_DENIED: "Agendamento negado",
     CaseEventType.CASE_STATUS_FINAL_REPLY_POSTED: "Resposta final publicada ao NIR",
     CaseEventType.CASE_STATUS_AWAITING_NIR_ACK: "Aguardando ciência do NIR",
-    CaseEventType.CASE_STATUS_CLEANING: "Limpeza dos dados iniciada",
-    CaseEventType.CASE_STATUS_CLEANED: "Caso concluído e dados minimizados",
+    CaseEventType.CASE_STATUS_CLEANING: "Disposição dos dados em andamento",
+    CaseEventType.CASE_STATUS_CLEANED: "Caso concluído",
     # Procedimentos por caso.
     CaseEventType.CASE_PROCEDURES_DECLARED: "Procedimentos declarados pelo NIR",
     CaseEventType.CASE_PROCEDURES_DETECTED: "Procedimentos detectados na análise automática",
@@ -80,6 +80,9 @@ EVENT_LABELS: dict[str, str] = {
     CaseEventType.CASE_ATTACHMENT_FAILED: "Falha no processamento do anexo",
     # Encerramento administrativo do supervisor.
     CaseEventType.CASE_ADMINISTRATIVELY_CLOSED: "Caso encerrado administrativamente",
+    # Purga retroativa dos dados retidos (slice 003, R1) — ator Sistema.
+    CaseEventType.CASE_RETAINED_DATA_PURGED: "Dados retidos purgados",
+    CaseEventType.CASE_RETAINED_DATA_PURGE_OUTCOME: "Remoção dos arquivos da purga",
 }
 
 # Categoria do badge por tipo (R1) — cobertura COMPLETA do enum.
@@ -122,6 +125,10 @@ EVENT_BADGE_CSS: dict[str, str] = {
     CaseEventType.CASE_ATTACHMENT_PROCESSED: BADGE_SYSTEM,
     CaseEventType.CASE_ATTACHMENT_FAILED: BADGE_FAILURE,
     CaseEventType.CASE_ADMINISTRATIVELY_CLOSED: BADGE_ATTENTION,
+    CaseEventType.CASE_RETAINED_DATA_PURGED: BADGE_SYSTEM,
+    # Desfecho físico da purga: neutro por padrão; ``files_failed > 0`` sobe
+    # para perigo em ``event_badge_css`` (badge consciente do payload).
+    CaseEventType.CASE_RETAINED_DATA_PURGE_OUTCOME: BADGE_SYSTEM,
 }
 
 
@@ -132,9 +139,14 @@ def event_label(event_type: str) -> str:
 
 def event_badge_css(event_type: str, payload: Mapping[str, object] | None = None) -> str:
     """Classe do badge do evento (R1): falha (tipo ``*_FAILED`` ou payload com
-    ``status=FAILED``) → danger; demais no mapa por categoria; desconhecido →
-    badge de sistema (default seguro)."""
+    ``status=FAILED``) → danger; desfecho da purga com ``files_failed > 0``
+    (P2) → danger; demais no mapa por categoria; desconhecido → badge de
+    sistema (default seguro)."""
     if event_type.endswith("_FAILED") or _payload_failed(payload):
+        return BADGE_FAILURE
+    if event_type == CaseEventType.CASE_RETAINED_DATA_PURGE_OUTCOME and _payload_files_failed(
+        payload
+    ):
         return BADGE_FAILURE
     return EVENT_BADGE_CSS.get(event_type, BADGE_SYSTEM)
 
@@ -144,3 +156,11 @@ def _payload_failed(payload: Mapping[str, object] | None) -> bool:
     if not payload:
         return False
     return str(payload.get("status", "")).upper() == _FAILED_PAYLOAD_STATUS
+
+
+def _payload_files_failed(payload: Mapping[str, object] | None) -> bool:
+    """Desfecho da purga marca falha quando ``files_failed`` > 0 (P2)."""
+    if not payload:
+        return False
+    value = payload.get("files_failed", 0)
+    return isinstance(value, int) and value > 0

@@ -26,20 +26,23 @@ hospeda a ação de encerramento administrativo.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 from datetime import date, datetime, time, timedelta
 from urllib.parse import urlencode
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import Role, User
-from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS
+from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS, administratively_close_case
 from apps.cases.events import CaseEventType
 from apps.cases.models import (
     ActorType,
     Case,
+    CaseDocument,
     CaseEvent,
     CaseProcedure,
     CaseStatus,
@@ -68,6 +71,14 @@ ORIGIN_UNIT = "HELN - HOSPITAL ESTADUAL DO LESTE NORTE"
 
 # Rótulos configurados do cenário de override (change unit-labels-env, R5).
 CONFIGURED_UNIT_LABELS = {1: "Hemodinâmica HGRS", 2: "Unidade Satélite"}
+
+
+@pytest.fixture(autouse=True)
+def _minimization_mode() -> Iterator[None]:
+    """Pino explícito do modo de minimização (ADR-0010/D7) nos fluxos de
+    encerramento existentes — os testes de retenção sobrescrevem com False."""
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=True):
+        yield
 
 
 def _make_user(username: str, role_name: str = MANAGER_ROLE) -> User:
@@ -1171,3 +1182,70 @@ def test_case_detail_trail_marks_failed_event_with_danger_badge(client: Client) 
         f'<span class="badge rounded-pill text-bg-danger">'
         f"{EVENT_LABELS[CaseEventType.CASE_STATUS_FAILED]}</span>"
     ) in trail
+
+
+# ── Retenção (ADR-0010, slice 001): serve no painel + textos truthful ─────
+
+
+def _add_document(case: Case, uploaded_by: User) -> CaseDocument:
+    """Anexa um PDF fake ao caso (position 1) para o serve do painel."""
+    uploaded = SimpleUploadedFile(
+        "relatorio-painel.pdf",
+        b"%PDF-1.4 conteudo do pdf retido",
+        content_type="application/pdf",
+    )
+    return CaseDocument.objects.create(
+        case=case,
+        file=uploaded,
+        position=1,
+        original_filename="relatorio-painel.pdf",
+        content_type="application/pdf",
+        size_bytes=len(uploaded.read()),
+        uploaded_by=uploaded_by,
+    )
+
+
+@pytest.mark.django_db
+def test_admin_close_retention_serve_document_200_in_panel(client: Client) -> None:
+    """Retenção (flag False): o encerramento administrativo preserva o
+    documento e o serve do painel (manager) segue 200 em caso CLEANED."""
+    creator = _make_user("gestor-retencao-serve")
+    case = Case.objects.create(created_by=creator)
+    document = _add_document(case, creator)
+    url = reverse("dashboard:case_pdf", args=[case.case_id, document.position])
+    client.force_login(creator)
+    assert client.get(url).status_code == 200
+
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=False):
+        administratively_close_case(
+            case=case,
+            user=creator,
+            active_role=MANAGER_ROLE,
+            reason_code=CLOSE_REASON_CODE,
+            reason_text=CLOSE_REASON_TEXT,
+        )
+
+    case.refresh_from_db()
+    assert case.status == CaseStatus.CLEANED
+    assert client.get(url).status_code == 200
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("minimization", [False, True])
+def test_admin_close_texts_are_truthful_in_both_modes(minimization: bool, client: Client) -> None:
+    """ADR-0010/D9: confirmação e detalhe do painel usam texto neutro e
+    verdadeiro nos dois modos (sem afirmar minimização)."""
+    creator = _make_user(f"gestor-texto-modo-{minimization}")
+    case = Case.objects.create(created_by=creator)
+    client.force_login(creator)
+
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=minimization):
+        confirm_body = client.get(
+            reverse("dashboard:admin_close_confirm", args=[case.case_id])
+        ).content.decode()
+        detail_body = client.get(_detail_url(case)).content.decode()
+
+    for body in (confirm_body, detail_body):
+        assert "política vigente" in body
+        assert "ADR-0010" in body
+        assert "são minimizados" not in body

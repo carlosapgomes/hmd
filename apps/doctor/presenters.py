@@ -57,6 +57,7 @@ from apps.cases.models import (
 )
 from apps.cases.presentation import _PROFILE_BY_TYPE, _as_list, _as_str, build_structure_sections
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
+from apps.cases.procedure_review import build_doctor_confirmation_notice
 from apps.pipeline.prior_case import lookup_prior_case_context
 
 # Ordem canônica do catálogo (mesma regra de ``apps/cases/procedures.py``) para
@@ -553,8 +554,14 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
         _build_attachment_card(attachment, case) for attachment in case.attachments.all()
     ]
 
+    # Aviso da confirmação NIR (confirm-nir-procedure-review, slice 004, D8):
+    # projeção determinística APPLIED + CONFIRMED referenciada — None em
+    # automático/legado (nenhum aviso fictício). O template escapa o texto livre.
+    procedure_review_notice = build_doctor_confirmation_notice(case)
+
     context: dict[str, object] = {
         "case_id": str(case.case_id),
+        "procedure_review_notice": procedure_review_notice,
         # Referência humana (change case-detail-human-reference, D4): título,
         # breadcrumb e links; o uid segue como chave técnica das URLs.
         "case_reference": case.display_reference,

@@ -49,6 +49,14 @@ urlpatterns: list[URLPattern] = [
         views.attachment_pdf_viewer,
         name="attachment_pdf_viewer",
     ),
+    # Confirmação explícita do procedimento (confirm-nir-procedure-review,
+    # slice 002, D2): POST do próprio criador sobre caso marcado retido por
+    # divergência — resolve pela confirmação com reprocessamento real.
+    path(
+        "cases/<uuid:case_id>/procedure-review/confirm/",
+        views.procedure_review_confirm,
+        name="procedure_review_confirm",
+    ),
     # Ações do gate NIR (slice 005, D6/D7): apenas caso retido do próprio criador.
     path(
         "cases/<uuid:case_id>/gate/release/",

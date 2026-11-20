@@ -44,17 +44,29 @@ from django.utils import timezone
 from apps.attachments.models import CaseAttachment
 from apps.attachments.services import AttachmentValidationError, validate_attachments
 from apps.cases.events import CaseEventType
-from apps.cases.locks import CaseLockConflictError
+from apps.cases.locks import CaseLockConflictError, claim_case_lock, release_case_lock
 from apps.cases.models import (
     PROCEDURE_DIVERGENCE_REASON,
     ActorType,
     Case,
     CaseDocument,
     CaseEvent,
+    CaseProcedure,
     CaseStatus,
+    DetectionStatus,
 )
 from apps.cases.procedure_catalog import get_procedure_profile
-from apps.cases.procedures import set_declared_procedures
+from apps.cases.procedure_review import (
+    PROCEDURE_REVIEW_VERSION,
+    REVIEW_LOCK_CONTEXT,
+    REVIEW_ROLE,
+    anonymized_text_digest_for_case,
+    has_procedure_review_marker,
+    latest_review_event,
+    pseudonym_map_digest_for_case,
+    source_fingerprint_for_case,
+)
+from apps.cases.procedures import get_declared_procedure_types, set_declared_procedures
 from apps.intake.tasks import enqueue_case_processing
 
 if TYPE_CHECKING:
@@ -347,6 +359,18 @@ def create_case_with_documents(
                     saved_file_names.append(stored_name)
                 attachment.save()
             set_declared_procedures(case, (procedure_type,), user=user, role=role)
+            # Marca prospectiva do contrato de revisão (slice 002, D1): só os
+            # casos criados a partir daqui a recebem, no mesmo atomic da
+            # criação — lote e reenvio corrigido herdam pela primitiva; o
+            # original encerrado e os casos anteriores nunca são remarcados.
+            CaseEvent.objects.create(
+                case=case,
+                event_type=CaseEventType.CASE_PROCEDURE_REVIEW_ENABLED,
+                actor_type=ActorType.USER if user is not None else ActorType.SYSTEM,
+                actor=user,
+                actor_role=role or "",
+                payload={"version": PROCEDURE_REVIEW_VERSION},
+            )
     except BaseException:
         _delete_saved_files_best_effort(saved_file_names)
         raise
@@ -489,6 +513,18 @@ def release_retained_case(
         locked = Case.objects.select_for_update().get(pk=case.pk)
         _assert_owned_by(locked, user)
         _assert_releasable(locked)
+        # Contrato novo (slice 002, D1): divergência de caso marcado só se
+        # resolve pela confirmação explícita — o bypass simples é recusado
+        # sem efeito, sem job e sem confirmação (precede o lock ativo: 400).
+        if (
+            locked.status == CaseStatus.LLM_EXTRACTING
+            and locked.manual_review_reason == PROCEDURE_DIVERGENCE_REASON
+            and has_procedure_review_marker(locked)
+        ):
+            raise CaseNotRetainedError(
+                "Este caso está sob o novo contrato de revisão — a divergência "
+                "só pode ser resolvida pela confirmação explícita do procedimento."
+            )
         _assert_no_active_lock(locked)
         if locked.status == CaseStatus.PDF_EXTRACTING:
             retention_reason = locked.manual_review_reason
@@ -514,6 +550,188 @@ def release_retained_case(
         locked.manual_review_reason = ""
         locked.save(update_fields=["manual_review_required", "manual_review_reason"])
         return CaseStatus.LLM_SUMMARIZING
+
+
+def _validate_review_acknowledgment(review_acknowledged: object) -> None:
+    """Consentimento explícito de leitura (D2): só ``True`` ou ``"on"``.
+
+    Qualquer outro valor — inclusive strings não-vazias como ``"false"``,
+    ``"off"`` ou números — é recusado sem efeitos (sem consentimento por
+    truthiness, sem default verdadeiro).
+    """
+    if review_acknowledged is True or review_acknowledged == "on":
+        return
+    raise ValueError("Confirme que leu o relatório principal para validar o procedimento.")
+
+
+def _validate_review_justification(review_justification: object) -> str:
+    """Justificativa livre da confirmação (D1): trim, 1–500 úteis, sem NUL.
+
+    Devolve o texto com trim para a auditoria; vazia, longa demais ou com
+    U+0000 é recusada ANTES de qualquer efeito (sem truncamento silencioso).
+    """
+    if not isinstance(review_justification, str):
+        raise ValueError("Informe a justificativa da confirmação (1-500 caracteres).")
+    text = review_justification.strip()
+    if not text:
+        raise ValueError("Informe a justificativa da confirmação (1-500 caracteres).")
+    if len(text) > 500:
+        raise ValueError("Justificativa excede 500 caracteres.")
+    if "\x00" in text:
+        raise ValueError("Justificativa contém caractere inválido.")
+    return text
+
+
+def confirm_case_procedure_review(
+    *,
+    case: Case,
+    user: User,
+    role: str | None,
+    procedure_type: str,
+    review_acknowledged: object,
+    review_justification: object,
+    review_event_id: object,
+    source_fingerprint: object,
+) -> Case:
+    """Confirma um procedimento após revisão e reprocessa o mesmo caso (D2).
+
+    Serviço vertical R1–R2: valida ator NIR (papel ativo + vínculo do ator ao
+    papel), dono (escopo por criador → 404 sem vazar informação), marcador
+    D1, retenção por divergência em ``LLM_EXTRACTING``, ausência de decisão
+    médica, seleção única do catálogo, consentimento, justificativa, revisão
+    mais recente e fingerprint da fonte — tudo sob ``select_for_update`` + lease
+    curta do contexto ``nir_procedure_review`` no atomic durável real
+    (``atomic(durable=True)`` — nenhum atomic externo de produção atrasa o
+    callback). No mesmo atomic: limpa os quatro derivados, reseta a detecção
+    (sem apagar rows), troca a declaração via serviço existente, zera flags,
+    grava a confirmação com snapshot do servidor (digests) e executa a FSM
+    ``reprocess_after_procedure_review`` (self-transition com pedido
+    referenciando a confirmação); lease liberada antes do commit que dispara
+    o worker via signal. Falha em qualquer etapa desfaz tudo (rollback total).
+
+    Raises:
+        Http404: caso inexistente ou de outro criador (sem vazar informação).
+        PermissionError: papel ativo não-NIR ou ator sem o papel ``nir``.
+        CaseLockConflictError: lease ativa de outro ator (409 na view futura).
+        ValueError: marcador/estado/flag, decisão médica, seleção,
+            consentimento, justificativa, revisão ou fonte obsoletos/ausentes
+            (400 na view futura) — nunca muta o caso.
+    """
+    _validate_review_acknowledgment(review_acknowledged)
+    justification = _validate_review_justification(review_justification)
+    if not isinstance(procedure_type, str) or not procedure_type:
+        raise ValueError("Informe um único tipo de procedimento do relatório.")
+    try:
+        get_procedure_profile(procedure_type)
+    except KeyError as exc:
+        raise ValueError(str(exc)) from None
+    if isinstance(review_event_id, int) and not isinstance(review_event_id, bool):
+        review_pk = review_event_id
+    elif isinstance(review_event_id, str):
+        try:
+            review_pk = int(review_event_id)
+        except ValueError:
+            raise ValueError(
+                "Revisão de origem inválida; reabra o caso e confirme novamente."
+            ) from None
+    else:
+        raise ValueError("Revisão de origem inválida; reabra o caso e confirme novamente.")
+    if not isinstance(source_fingerprint, str) or not source_fingerprint:
+        raise ValueError("Identificação da fonte ausente; reabra o caso e confirme novamente.")
+
+    with transaction.atomic(durable=True):
+        try:
+            locked = Case.objects.select_for_update().get(pk=case.pk)
+        except Case.DoesNotExist:
+            raise Http404 from None
+        _assert_owned_by(locked, user)
+        if role != REVIEW_ROLE:
+            raise PermissionError("Confirmação de procedimento restrita ao papel nir.")
+        assert user is not None
+        if not user.roles.filter(name=REVIEW_ROLE).exists():
+            raise PermissionError("Confirmação de procedimento restrita ao papel nir.")
+        if not has_procedure_review_marker(locked):
+            raise ValueError(
+                "Este caso não está sob o contrato de revisão de procedimento — "
+                "recarregue a página."
+            )
+        if (
+            locked.status != CaseStatus.LLM_EXTRACTING
+            or not locked.manual_review_required
+            or locked.manual_review_reason != PROCEDURE_DIVERGENCE_REASON
+        ):
+            raise ValueError(
+                "Este caso não está retido por divergência de procedimento — recarregue a página."
+            )
+        if CaseProcedure.objects.filter(case=locked).exclude(doctor_disposition="pending").exists():
+            raise ValueError("Caso com decisão médica registrada não pode ser confirmado.")
+        review = latest_review_event(locked)
+        if review is None or review.pk != review_pk:
+            raise ValueError(
+                "A revisão mudou desde a abertura; reabra o caso e confirme novamente."
+            )
+        source_current = source_fingerprint_for_case(locked)
+        if source_current is None:
+            raise ValueError("Fonte principal indisponível; reabra o caso ou fale com o suporte.")
+        if source_current != source_fingerprint:
+            raise ValueError("A fonte principal mudou desde a abertura; revise a fonte atual.")
+        anonymized_current = anonymized_text_digest_for_case(locked)
+        map_current = pseudonym_map_digest_for_case(locked)
+        review_payload = review.payload if isinstance(review.payload, dict) else {}
+        for digest_key, digest_current in (
+            ("source_fingerprint", source_current),
+            ("anonymized_text_digest", anonymized_current),
+            ("pseudonym_map_digest", map_current),
+        ):
+            snapshot = review_payload.get(digest_key)
+            if (
+                not isinstance(snapshot, str)
+                or not snapshot.startswith("v1:")
+                or snapshot != digest_current
+            ):
+                raise ValueError(
+                    "Fonte, texto anonimizado ou mapa mudou desde a revisão; "
+                    "reabra o caso ou fale com o suporte."
+                )
+        previous_declared = list(get_declared_procedure_types(locked))
+        lock = claim_case_lock(locked, user=user, context=REVIEW_LOCK_CONTEXT, role=REVIEW_ROLE)
+        locked.refresh_from_db()
+        locked.structured_data = {}
+        locked.summary_text = ""
+        locked.policy_result = {}
+        locked.suggested_action = {}
+        locked.save(
+            update_fields=["structured_data", "summary_text", "policy_result", "suggested_action"]
+        )
+        CaseProcedure.objects.filter(case=locked).update(detection_status=DetectionStatus.PENDING)
+        set_declared_procedures(locked, (procedure_type,), user=user, role=REVIEW_ROLE)
+        locked.manual_review_required = False
+        locked.manual_review_reason = ""
+        locked.save(update_fields=["manual_review_required", "manual_review_reason"])
+        confirmation = CaseEvent.objects.create(
+            case=locked,
+            event_type=CaseEventType.CASE_PROCEDURE_REVIEW_CONFIRMED,
+            actor_type=ActorType.USER,
+            actor=user,
+            actor_role=REVIEW_ROLE,
+            payload={
+                "version": PROCEDURE_REVIEW_VERSION,
+                "review_event_id": review.pk,
+                "previous_declared_procedures": previous_declared,
+                "confirmed_procedures": [procedure_type],
+                "selection_changed": previous_declared != [procedure_type],
+                "justification": justification,
+                "source_fingerprint": source_current,
+                "anonymized_text_digest": anonymized_current,
+                "pseudonym_map_digest": map_current,
+            },
+        )
+        locked.reprocess_after_procedure_review(
+            user=user, role=REVIEW_ROLE, confirmation_event_id=confirmation.pk
+        )
+        release_case_lock(locked, lock.token)
+        locked.refresh_from_db()
+        return locked
 
 
 def resubmit_case_documents(

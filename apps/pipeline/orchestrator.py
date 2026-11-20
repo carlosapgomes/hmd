@@ -38,6 +38,24 @@ from django.db import transaction
 
 from apps.cases.locks import CaseLock, CaseLockConflictError, claim_case_lock, release_case_lock
 from apps.cases.models import Case, CaseStatus
+from apps.cases.procedure_review import (
+    REASON_ANONYMIZATION_MISSING,
+    REASON_ANONYMIZED_MISMATCH,
+    REASON_DECLARATION_CHANGED,
+    REASON_MAP_MISMATCH,
+    REASON_SOURCE_CHANGED,
+    REASON_SOURCE_UNAVAILABLE,
+    anonymized_text_digest_for_case,
+    has_procedure_review_marker,
+    is_gate_reason,
+    is_processing_complete,
+    latest_confirmation_event,
+    latest_confirmation_validity,
+    pseudonym_map_digest_for_case,
+    record_review_invalidated,
+    source_fingerprint_for_case,
+)
+from apps.cases.procedures import get_declared_procedure_types
 from apps.pipeline.llm import LlmPipelineError
 from apps.pipeline.llm1_service import run_llm1_extraction
 from apps.pipeline.llm2_service import run_llm2_summarization
@@ -90,7 +108,150 @@ def _is_pipeline_state(status: CaseStatus) -> bool:
     return status in (CaseStatus.LLM_EXTRACTING, CaseStatus.LLM_SUMMARIZING)
 
 
-def process_case_pipeline(case_id: uuid.UUID) -> None:
+def _assert_confirmation_for_dispatch(case: Case) -> None:
+    """Valida a autoridade antes de um dispatch externo (D3, sem CLEANED).
+
+    Sem confirmação → retorna (automático). Válida → retorna (confirmado).
+    Gate (revisão/declaração íntegres) → audita INVALIDATED uma vez e retorna
+    (automático segue). Integridade/malformação → audita e levanta
+    ``LlmPipelineError(motivo)`` SEM dispatch (o handler vira FAILED). O
+    chamador decide ``CLEANED`` antes — caso encerrado nunca invalida/falha.
+    """
+    confirmation_event, validity = latest_confirmation_validity(case)
+    if confirmation_event is None or validity is None:
+        return
+    if validity.valid:
+        return
+    record_review_invalidated(case, confirmation_event, validity.reason)
+    if is_gate_reason(validity.reason):
+        return
+    raise LlmPipelineError(
+        validity.reason,
+        "confirmação de procedimento inválida (integridade) — sem dispatch.",
+    )
+
+
+def _authority_snapshot(case: Case) -> tuple[int | None, bool | None, str | None]:
+    """Snapshot (confirmação, válida, motivo) para detectar estagnação nova."""
+    event, validity = latest_confirmation_validity(case)
+    return (
+        event.pk if event is not None else None,
+        validity.valid if validity is not None else None,
+        validity.reason if validity is not None else None,
+    )
+
+
+def _is_new_gate_stale(
+    pre: tuple[int | None, bool | None, str | None],
+    post: tuple[int | None, bool | None, str | None],
+) -> bool:
+    """Autoridade ficou estagnada (gate) DURANTE esta execução?
+
+    Só quando a pós-LLM2 é gate inválida e difere do snapshot pré-dispatch:
+    um INVALIDATED histórico de gate já consumido (mesma confirmação/motivo)
+    não re-dispara a reconciliação (HD-001).
+    """
+    _event_pk, valid, reason = post
+    return valid is False and reason is not None and is_gate_reason(reason) and post != pre
+
+
+def _assert_processing_complete(case: Case) -> None:
+    """Guard de completude dos casos marcados (D6) antes do encaminhamento."""
+    if has_procedure_review_marker(case) and not is_processing_complete(case):
+        raise LlmPipelineError(
+            "procedure_review_incomplete",
+            "caso marcado sem extração válida, resumo útil ou análise completa "
+            "do conjunto efetivo — sem encaminhamento.",
+        )
+
+
+def _capture_execution_digests(case: Case) -> dict[str, str | None]:
+    """Snapshot pós-LLM2 da integridade da execução (só hashes, nunca textos)."""
+    return {
+        "source_fingerprint": source_fingerprint_for_case(case),
+        "anonymized_text_digest": anonymized_text_digest_for_case(case),
+        "pseudonym_map_digest": pseudonym_map_digest_for_case(case),
+    }
+
+
+def _execution_digest_failure(snapshot: dict[str, str | None], case: Case) -> str | None:
+    """Motivo de integridade se a linha travada diverge do snapshot da execução."""
+    current_source = source_fingerprint_for_case(case)
+    if snapshot["source_fingerprint"] is not None and current_source is None:
+        return REASON_SOURCE_UNAVAILABLE
+    if current_source != snapshot["source_fingerprint"]:
+        return REASON_SOURCE_CHANGED
+    if anonymized_text_digest_for_case(case) != snapshot["anonymized_text_digest"]:
+        if not (case.anonymized_text or ""):
+            return REASON_ANONYMIZATION_MISSING
+        return REASON_ANONYMIZED_MISMATCH
+    if pseudonym_map_digest_for_case(case) != snapshot["pseudonym_map_digest"]:
+        return REASON_MAP_MISMATCH
+    return None
+
+
+def _reconcile_stale_authority(case: Case) -> str:
+    """HD-001: descarta a resposta estagnada e refaz a reconciliação automática.
+
+    Devolve ``"cleaned"`` (abortar), ``"retain"`` (divergência vigente) ou
+    ``"continue"`` (extração completa, seguir para sumarização).
+    """
+    _event, _validity = latest_confirmation_validity(case)
+    if _event is not None and _validity is not None and not _validity.valid:
+        record_review_invalidated(case, _event, _validity.reason)
+    case.return_to_llm_extracting(user=None, role=SYSTEM_ROLE)
+    case.start_llm_extraction(user=None, role=SYSTEM_ROLE)
+    extraction = run_llm1_extraction(case, user=None, role=SYSTEM_ROLE)
+    case.refresh_from_db()
+    if case.status == CaseStatus.CLEANED:
+        return "cleaned"
+    if extraction.has_divergence:
+        logger.info(
+            "process_case_pipeline: caso %s retido após reconciliação HD-001 "
+            "(divergência automática vigente, sem LLM2)",
+            case.case_id,
+        )
+        return "retain"
+    case.complete_llm_extraction(user=None, role=SYSTEM_ROLE)
+    return "continue"
+
+
+def _normalize_recovery_call(
+    case_id: uuid.UUID | str, confirmation_event_id: int | str | None
+) -> tuple[uuid.UUID, int | None]:
+    """Normaliza os argumentos serializados do Schedule de recovery (D7).
+
+    O scheduler do django-q2 avalia os args persistidos (``ast.literal_eval``)
+    e entrega ``(str_uuid, int)`` — a normalização aqui garante que o destino
+    persistido execute corretamente. Seleção inválida (não-inteiro) é erro de
+    código: levanta ``ValueError`` sem efeito colateral.
+    """
+    normalized_case_id = case_id if isinstance(case_id, uuid.UUID) else uuid.UUID(str(case_id))
+    if confirmation_event_id is None:
+        return normalized_case_id, None
+    if isinstance(confirmation_event_id, bool):
+        raise ValueError(f"confirmation_event_id inválido: {confirmation_event_id!r}")
+    try:
+        normalized_confirmation = int(confirmation_event_id)
+    except (TypeError, ValueError):
+        raise ValueError(f"confirmation_event_id inválido: {confirmation_event_id!r}") from None
+    return normalized_case_id, normalized_confirmation
+
+
+def _is_stale_recovery(case: Case, confirmation_event_id: int) -> bool:
+    """Recovery refere-se a confirmação diferente da vigente? (D7).
+
+    Job atrasado (outra confirmação, caso concluído/encerrado ou sem
+    confirmação) é no-op: nunca reescreve a seleção nem duplica efeitos —
+    a autoridade vigente continua revalidada pelos guards normais.
+    """
+    latest = latest_confirmation_event(case)
+    return latest is None or latest.pk != confirmation_event_id
+
+
+def process_case_pipeline(
+    case_id: uuid.UUID | str, confirmation_event_id: int | str | None = None
+) -> None:
     """Processa o caso pelo pipeline LLM (entry point do worker/cluster llm).
 
     Idempotência por estado: ``LLM_EXTRACTING`` = pipeline completo (LLM1 +
@@ -102,15 +263,33 @@ def process_case_pipeline(case_id: uuid.UUID) -> None:
     motivo na trilha.
 
     Raises:
-        ValueError: caso inexistente.
+        ValueError: caso inexistente ou ``confirmation_event_id`` inválido.
         CaseLockConflictError: lock ativo de outro ator (inline — anomalia;
             propagada; em async o conflito é no-op com log).
+
+    ``confirmation_event_id`` (só o recovery ONCE fornece) fixa a execução à
+    confirmação vigente: job atrasado de outra confirmação é no-op (nunca
+    reescreve a seleção); entradas normais (sem o argumento) seguem intactas.
     """
+    normalized_case_id, normalized_confirmation = _normalize_recovery_call(
+        case_id, confirmation_event_id
+    )
+    # A partir daqui o fluxo usa o UUID normalizado (o Scheduler entrega str).
+    case_id = normalized_case_id
     try:
         case = Case.objects.get(case_id=case_id)
     except Case.DoesNotExist:
         logger.error("process_case_pipeline: caso %s não encontrado", case_id)
         raise ValueError(f"caso {case_id} não encontrado") from None
+
+    if normalized_confirmation is not None and _is_stale_recovery(case, normalized_confirmation):
+        logger.info(
+            "process_case_pipeline: recovery do caso %s refere-se a confirmacao "
+            "diferente da vigente (%s) — no-op",
+            case_id,
+            normalized_confirmation,
+        )
+        return
 
     if not _is_pipeline_state(case.status):
         logger.info(
@@ -138,6 +317,7 @@ def process_case_pipeline(case_id: uuid.UUID) -> None:
                 case.status,
             )
             return
+        _assert_confirmation_for_dispatch(case)
 
         if case.status == CaseStatus.LLM_EXTRACTING:
             # Etapa LLM1 + reconciliação (a self-transition tem source
@@ -165,52 +345,116 @@ def process_case_pipeline(case_id: uuid.UUID) -> None:
                 return
             case.complete_llm_extraction(user=None, role=SYSTEM_ROLE)
 
-        # Sumarização (continuação da extração ou retomada pós-bypass).
-        case.refresh_from_db()
-        if case.status == CaseStatus.CLEANED:
-            logger.info(
-                "process_case_pipeline: caso %s encerrado administrativamente antes da "
-                "sumarização — abortando",
-                case_id,
-            )
-            return
-        case.start_llm_summarization(user=None, role=SYSTEM_ROLE)
-        evaluate_case_policies(case, user=None, role=SYSTEM_ROLE)
-        record_prior_case_lookups(case, user=None, role=SYSTEM_ROLE)
-        # Os serviços acima persistem em instâncias lockadas; a releitura
-        # alinha o objeto em memória (policy_result etc.) antes da LLM2.
-        case.refresh_from_db()
-        if case.status == CaseStatus.CLEANED:
-            logger.info(
-                "process_case_pipeline: caso %s encerrado administrativamente antes do "
-                "LLM2 — abortando",
-                case_id,
-            )
-            return
-        run_llm2_summarization(case, user=None, role=SYSTEM_ROLE)
-
-        # Coordenação transição+release no MESMO atomic (padrão change 05): a
-        # ``complete_llm_summarization`` emite o evento de entrada em
-        # AWAITING_DOCTOR; qualquer hook ``on_commit`` (fila médica, 07) só
-        # dispara com a lease ``worker_llm`` já liberada.
-        with transaction.atomic():
-            current = Case.objects.select_for_update().get(pk=case.pk)
-            # Gate do slice 002: encerramento administrativo durante a chamada
-            # llm2 (sentinel) → abort benigno, sem transição nem log de erro.
-            if current.status == CaseStatus.CLEANED:
-                return
-            current.complete_llm_summarization(user=None, role=SYSTEM_ROLE)
-            try:
-                release_case_lock(current, lock.token)
-                released = True
-            except CaseLockConflictError:
-                # Lease expirada durante o processamento (anomalia rara): o
-                # resultado da fase permanece e o finally re-tenta o release.
-                logger.warning(
-                    "process_case_pipeline: lease do caso %s expirou no atomic final",
+        # Sumarização (continuação da extração ou retomada pós-bypass), com
+        # reconciliação HD-001: autoridade estagnada durante a LLM2 com
+        # integridade intacta descarta a resposta e refaz LLM1 automática.
+        while True:
+            case.refresh_from_db()
+            if case.status == CaseStatus.CLEANED:
+                logger.info(
+                    "process_case_pipeline: caso %s encerrado administrativamente antes da "
+                    "sumarização — abortando",
                     case_id,
-                    exc_info=True,
                 )
+                return
+            case.start_llm_summarization(user=None, role=SYSTEM_ROLE)
+            evaluate_case_policies(case, user=None, role=SYSTEM_ROLE)
+            record_prior_case_lookups(case, user=None, role=SYSTEM_ROLE)
+            case.refresh_from_db()
+            if case.status == CaseStatus.CLEANED:
+                logger.info(
+                    "process_case_pipeline: caso %s encerrado administrativamente antes do "
+                    "LLM2 — abortando",
+                    case_id,
+                )
+                return
+            _assert_confirmation_for_dispatch(case)
+            pre_authority = _authority_snapshot(case)
+            stale_gate = False
+            try:
+                run_llm2_summarization(case, user=None, role=SYSTEM_ROLE)
+            except LlmPipelineError as llm2_exc:
+                if not is_gate_reason(llm2_exc.reason):
+                    raise
+                stale_gate = True
+            case.refresh_from_db()
+            if case.status == CaseStatus.CLEANED:
+                return
+            post_authority = _authority_snapshot(case)
+            if stale_gate or _is_new_gate_stale(pre_authority, post_authority):
+                # HD-001: resposta estagnada já descartada pela LLM2 (nunca
+                # persistida). Audita uma vez, retorna via operação nomeada e
+                # refaz a extração/reconciliação automática vigente.
+                outcome = _reconcile_stale_authority(case)
+                if outcome in ("cleaned", "retain"):
+                    return
+                continue
+            # Snapshot da execução pós-LLM2 (fix-2 P1-2): capturado ANTES das
+            # checagens externas ao lock — qualquer mutação entre aqui e o
+            # atomic final diverge da linha travada e é revalidada abaixo.
+            marked_execution = has_procedure_review_marker(case)
+            execution_digests = _capture_execution_digests(case) if marked_execution else None
+            execution_authority = post_authority
+            execution_declared = get_declared_procedure_types(case)
+            _assert_confirmation_for_dispatch(case)
+            _assert_processing_complete(case)
+            final_failure: str | None = None
+            final_stale_gate = False
+            with transaction.atomic():
+                current = Case.objects.select_for_update().get(pk=case.pk)
+                if current.status == CaseStatus.CLEANED:
+                    return
+                if marked_execution and execution_digests is not None:
+                    digest_failure = _execution_digest_failure(execution_digests, current)
+                    fresh_authority = _authority_snapshot(current)
+                    _fresh_event, fresh_validity = latest_confirmation_validity(current)
+                    if digest_failure is not None:
+                        final_failure = digest_failure
+                    elif (
+                        fresh_authority != execution_authority
+                        and fresh_validity is not None
+                        and not fresh_validity.valid
+                    ):
+                        if is_gate_reason(fresh_validity.reason):
+                            final_stale_gate = True
+                        else:
+                            final_failure = fresh_validity.reason
+                    elif get_declared_procedure_types(current) != execution_declared:
+                        final_stale_gate = True
+                    if final_failure is not None or final_stale_gate:
+                        if _fresh_event is not None:
+                            record_reason = final_failure
+                            if record_reason is None:
+                                record_reason = (
+                                    fresh_validity.reason
+                                    if fresh_validity is not None and not fresh_validity.valid
+                                    else REASON_DECLARATION_CHANGED
+                                )
+                            record_review_invalidated(current, _fresh_event, record_reason)
+                if final_failure is None and not final_stale_gate:
+                    _assert_processing_complete(current)
+                    current.complete_llm_summarization(user=None, role=SYSTEM_ROLE)
+                    try:
+                        release_case_lock(current, lock.token)
+                        released = True
+                    except CaseLockConflictError:
+                        logger.warning(
+                            "process_case_pipeline: lease do caso %s expirou no atomic final",
+                            case_id,
+                            exc_info=True,
+                        )
+            if final_failure is not None:
+                raise LlmPipelineError(
+                    final_failure,
+                    "execução estagnada (integridade) antes da transição final — "
+                    "sem encaminhamento.",
+                )
+            if final_stale_gate:
+                outcome = _reconcile_stale_authority(case)
+                if outcome in ("cleaned", "retain"):
+                    return
+                continue
+            break
     except Exception as exc:
         logger.exception("process_case_pipeline: pipeline falhou para o caso %s", case_id)
         # O rollback do atomic final desfez transição/eventos; a releitura

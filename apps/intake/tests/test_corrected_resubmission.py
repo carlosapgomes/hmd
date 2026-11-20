@@ -518,7 +518,11 @@ def test_create_case_with_documents_pure_no_correction(
     assert case.correction_reason == ""
     assert case.correction_created_by_id is None
     event_types = _event_types(case)
-    assert event_types == [CaseEventType.CASE_PROCEDURES_DECLARED.value]
+    # A primitiva emite a declaração e a marca prospectiva do novo contrato.
+    assert event_types == [
+        CaseEventType.CASE_PROCEDURES_DECLARED.value,
+        CaseEventType.CASE_PROCEDURE_REVIEW_ENABLED.value,
+    ]
 
 
 # ── R4: UI — botão, view flow e lista no detalhe do original ──────────────

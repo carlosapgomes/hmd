@@ -83,6 +83,15 @@ EVENT_LABELS: dict[str, str] = {
     # Purga retroativa dos dados retidos (slice 003, R1) — ator Sistema.
     CaseEventType.CASE_RETAINED_DATA_PURGED: "Dados retidos purgados",
     CaseEventType.CASE_RETAINED_DATA_PURGE_OUTCOME: "Remoção dos arquivos da purga",
+    # Revisão de procedimento do NIR (confirm-nir, slice 001).
+    CaseEventType.CASE_PROCEDURE_REVIEW_ENABLED: "Revisão de procedimento do NIR ativa",
+    CaseEventType.CASE_PROCEDURE_REVIEW_CONFIRMED: "Procedimento confirmado pelo NIR",
+    CaseEventType.CASE_PROCEDURE_REPROCESSING_REQUESTED: (
+        "Reprocessamento solicitado após confirmação"
+    ),
+    CaseEventType.CASE_PROCEDURE_REVIEW_APPLIED: "Confirmação aplicada ao processamento",
+    CaseEventType.CASE_PROCEDURE_REVIEW_INVALIDATED: "Confirmação desconsiderada",
+    CaseEventType.CASE_PROCEDURE_REPROCESS_ENQUEUE_FAILED: ("Falha ao enfileirar reprocessamento"),
 }
 
 # Categoria do badge por tipo (R1) — cobertura COMPLETA do enum.
@@ -129,6 +138,15 @@ EVENT_BADGE_CSS: dict[str, str] = {
     # Desfecho físico da purga: neutro por padrão; ``files_failed > 0`` sobe
     # para perigo em ``event_badge_css`` (badge consciente do payload).
     CaseEventType.CASE_RETAINED_DATA_PURGE_OUTCOME: BADGE_SYSTEM,
+    # Revisão de procedimento do NIR (confirm-nir, slice 001).
+    CaseEventType.CASE_PROCEDURE_REVIEW_ENABLED: BADGE_SYSTEM,
+    CaseEventType.CASE_PROCEDURE_REVIEW_CONFIRMED: BADGE_NIR,
+    CaseEventType.CASE_PROCEDURE_REPROCESSING_REQUESTED: BADGE_NIR,
+    CaseEventType.CASE_PROCEDURE_REVIEW_APPLIED: BADGE_SYSTEM,
+    CaseEventType.CASE_PROCEDURE_REVIEW_INVALIDATED: BADGE_ATTENTION,
+    # Falha de enqueue pós-confirmação (confirm-nir, slice 003): erro
+    # operacional observável — vermelho pelo payload/sufixo, como os demais.
+    CaseEventType.CASE_PROCEDURE_REPROCESS_ENQUEUE_FAILED: BADGE_FAILURE,
 }
 
 

@@ -105,6 +105,10 @@ ATTACHMENTS_RUN_TASKS_INLINE = True
 INTAKE_ENABLED = True
 OPENROUTER_API_KEY_FILE = ""
 OPENROUTER_API_KEY = ""
+# Adaptador LLM determinístico exclusivo de verify (confirm-nir-procedure-
+# review, slice 002, D9): respostas sintéticas por estágio/perfil, sem rede
+# e com LlmError tipado em falha/entrada desconhecida. NUNCA dev/prod/test.
+LLM_CLIENT_FACTORY = "config.llm_verify.create_verify_llm_client"
 APP_DISPLAY_NAME = "SAR – HMD"
 UNIT_LABELS = {1: "Unidade 1", 2: "Unidade 2"}
 

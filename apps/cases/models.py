@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
-from django_fsm import RETURN_VALUE, FSMField, FSMModelMixin, transition
+from django_fsm import RETURN_VALUE, FSMField, FSMModelMixin, TransitionNotAllowed, transition
 
 from apps.cases.events import CaseEventType, case_status_event_type
 from apps.cases.procedure_catalog import get_procedure_profile
@@ -306,6 +306,10 @@ class Case(FSMModelMixin, models.Model):
     def _fsm_complete_llm_extraction(self) -> None:
         """Hook FSM LLM_EXTRACTING → LLM_SUMMARIZING."""
 
+    @transition(field="status", source=CaseStatus.LLM_EXTRACTING, target=CaseStatus.LLM_EXTRACTING)
+    def _fsm_reprocess_after_procedure_review(self) -> None:
+        """Hook FSM self LLM_EXTRACTING (reprocessamento pós-confirmação NIR)."""
+
     @transition(
         field="status", source=CaseStatus.LLM_SUMMARIZING, target=CaseStatus.LLM_SUMMARIZING
     )
@@ -317,6 +321,16 @@ class Case(FSMModelMixin, models.Model):
     )
     def _fsm_complete_llm_summarization(self) -> None:
         """Hook FSM LLM_SUMMARIZING → AWAITING_DOCTOR."""
+
+    @transition(field="status", source=CaseStatus.LLM_SUMMARIZING, target=CaseStatus.LLM_EXTRACTING)
+    def _fsm_return_to_llm_extracting(self) -> None:
+        """Hook FSM LLM_SUMMARIZING → LLM_EXTRACTING (HD-001).
+
+        Retorno nomeado e protegido para reconciliação automática quando a
+        autoridade fica estagnada durante a LLM2 com integridade intacta:
+        descarta a resposta estagnada e refaz a extração sob a declaração
+        vigente. Nenhum estado novo.
+        """
 
     @transition(
         field="status",
@@ -492,6 +506,47 @@ class Case(FSMModelMixin, models.Model):
         """LLM_EXTRACTING → LLM_SUMMARIZING (fim da extração LLM)."""
         self._run_transition(self._fsm_complete_llm_extraction, user=user, role=role)
 
+    def reprocess_after_procedure_review(
+        self,
+        *,
+        user: User | None = None,
+        role: str | None = None,
+        confirmation_event_id: int,
+    ) -> None:
+        """Self LLM_EXTRACTING (reprocessamento após confirmação NIR, D4).
+
+        Operação FSM nomeada usada SÓ pelo serviço de confirmação (D2): grava
+        no MESMO atomic a transição (``CASE_STATUS_LLM_EXTRACTING`` com
+        ``source=target=LLM_EXTRACTING`` — o signal de entrada, que filtra
+        ``source=ANONYMIZING``, NÃO re-dispara) e o pedido auditado
+        ``CASE_PROCEDURE_REPROCESSING_REQUESTED`` referenciando a confirmação
+        (gatilho pós-commit do pipeline). O serviço usa a self-transition do
+        worker (``start_llm_extraction``) como distinta: nenhum job novo nasce
+        dela. Source inválido → ``TransitionNotAllowed`` sem efeito.
+        """
+        source = str(self.status)
+        with transaction.atomic():
+            self._fsm_reprocess_after_procedure_review()
+            self.save()
+            target = str(self.status)
+            actor_type = ActorType.USER if user is not None else ActorType.SYSTEM
+            CaseEvent.objects.create(
+                case_id=self.case_id,
+                event_type=case_status_event_type(target),
+                actor_type=actor_type,
+                actor=user,
+                actor_role=role or "",
+                payload={"source": source, "target": target},
+            )
+            CaseEvent.objects.create(
+                case_id=self.case_id,
+                event_type=CaseEventType.CASE_PROCEDURE_REPROCESSING_REQUESTED,
+                actor_type=actor_type,
+                actor=user,
+                actor_role=role or "",
+                payload={"confirmation_event_id": confirmation_event_id},
+            )
+
     def bypass_pipeline_divergence(
         self, *, user: User | None = None, role: str | None = None
     ) -> None:
@@ -535,8 +590,37 @@ class Case(FSMModelMixin, models.Model):
     def complete_llm_summarization(
         self, *, user: User | None = None, role: str | None = None
     ) -> None:
-        """LLM_SUMMARIZING → AWAITING_DOCTOR (fim do pipeline de processamento)."""
+        """LLM_SUMMARIZING → AWAITING_DOCTOR (fim do pipeline de processamento).
+
+        D6 (fix-1 P1-1): nos casos marcados, a operação pública rejeita a
+        transição sem extração válida, resumo útil e análise completa do
+        conjunto efetivo — o guard não vive só no orquestrador. Sem
+        marcador, o contrato histórico segue intacto.
+        """
+        # Import tardio: procedure_review importa Case (ciclo).
+        from apps.cases.procedure_review import (
+            has_procedure_review_marker,
+            is_processing_complete,
+        )
+
+        if has_procedure_review_marker(self) and not is_processing_complete(self):
+            raise TransitionNotAllowed(
+                "caso marcado sem extração válida, resumo útil ou análise "
+                "completa do conjunto efetivo — sem encaminhamento."
+            )
         self._run_transition(self._fsm_complete_llm_summarization, user=user, role=role)
+
+    def return_to_llm_extracting(
+        self, *, user: User | None = None, role: str | None = None
+    ) -> None:
+        """LLM_SUMMARIZING → LLM_EXTRACTING (HD-001, reconciliação automática).
+
+        Operação nomeada usada só pelo orquestrador quando a autoridade fica
+        estagnada durante a LLM2 com integridade intacta: a resposta
+        estagnada é descartada (nunca persistida) e a extração/reconciliação
+        automática é refeita sob a declaração vigente.
+        """
+        self._run_transition(self._fsm_return_to_llm_extracting, user=user, role=role)
 
     def fail_processing(
         self,

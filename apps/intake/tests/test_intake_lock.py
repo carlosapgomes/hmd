@@ -38,6 +38,7 @@ from django.urls import reverse
 
 from apps.accounts.models import User
 from apps.attachments.models import CaseAttachment
+from apps.cases.events import CaseEventType
 from apps.cases.models import Case, CaseDocument, CaseEvent, CaseProcedure, CaseStatus
 from apps.intake.services import (
     INTAKE_DISABLED_MESSAGE,
@@ -127,6 +128,12 @@ def _retain_for_review(case: Case) -> Case:
 def _cleaned_case(user: User, pdf_factory: Callable[..., SimpleUploadedFile]) -> Case:
     """Caso dirigido pelas operações FSM até ``CLEANED`` (pré-req. do reenvio)."""
     case = _create_case(user, pdf_factory)
+    # Contrato histórico simulado: sem a marca, o drive manual até CLEANED
+    # segue o contrato antigo (a guarda de completude do slice 001 só vale
+    # para casos marcados).
+    CaseEvent.objects.filter(
+        case=case, event_type=CaseEventType.CASE_PROCEDURE_REVIEW_ENABLED
+    ).delete()
     case.start_pdf_extraction(user=None, role=SYSTEM_ROLE)
     case.complete_pdf_extraction(user=None, role=SYSTEM_ROLE)
     case.complete_anonymization(user=None, role=SYSTEM_ROLE)

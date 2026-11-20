@@ -37,6 +37,20 @@ from pydantic import ValidationError as PydanticValidationError
 
 from apps.cases.events import CaseEventType
 from apps.cases.models import ActorType, Case, CaseEvent, CaseStatus
+from apps.cases.procedure_review import (
+    REASON_ANONYMIZATION_MISSING,
+    REASON_ANONYMIZED_MISMATCH,
+    REASON_MAP_MISMATCH,
+    REASON_SOURCE_CHANGED,
+    REASON_SOURCE_UNAVAILABLE,
+    anonymized_text_digest_for_case,
+    get_valid_confirmation,
+    has_procedure_review_marker,
+    latest_confirmation_validity,
+    pseudonym_map_digest_for_case,
+    record_review_invalidated,
+    source_fingerprint_for_case,
+)
 from apps.cases.procedures import get_declared_procedure_types
 from apps.llm.services import build_case_prompts, prompt_usage
 from apps.pipeline.json_parser import LlmJsonParseError, decode_llm_json_object
@@ -223,11 +237,31 @@ def _lookup_prior_context(case: Case, declared: Sequence[str]) -> list[PriorCase
     return summaries
 
 
+def _review_context(case: Case) -> str | None:
+    """Contexto técnico da confirmação para a LLM2 (D5, sem PHI, sem justificativa).
+
+    Só quando há confirmação vigente: nomeia o singleton no prompt renderizado
+    como contexto técnico — nunca como indicação/aprovação clínica — sem
+    autor, sem justificativa e sem evidência nova. ``None`` = caminho
+    automático (prompt histórico intacto).
+    """
+    effective, _event = get_valid_confirmation(case)
+    if effective is None or len(effective) != 1:
+        return None
+    return (
+        f"Contexto técnico: procedimento confirmado após revisão humana: {effective[0]}. "
+        "A confirmação não é indicação nem aprovação clínica; "
+        "use os dados comuns disponíveis e explicite ausências; "
+        "não invente itens ou evidências."
+    )
+
+
 def _render_messages(
     case: Case,
     declared: Sequence[str],
     view: dict[str, Any],
     prior_summaries: Sequence[PriorCaseSummary],
+    review_context: str | None = None,
 ) -> list[dict[str, str]]:
     """Monta system+user do caso e substitui os placeholders via str.replace."""
     rendered: list[dict[str, str]] = []
@@ -248,6 +282,8 @@ def _render_messages(
             content = content.replace("{visao_estruturada}", visao_json)
             content = content.replace("{policy}", policy_json)
             content = content.replace("{prior_case}", prior_json)
+            if review_context is not None:
+                content = f"{content}\n\n{review_context}"
             rendered.append({"role": "user", "content": content})
         else:
             rendered.append({"role": "system", "content": message["content"]})
@@ -393,7 +429,7 @@ def run_llm2_summarization(
     prior_summaries = _lookup_prior_context(case, declared_types)
     prior_cases = _prior_cases_for_assert(prior_summaries)
     prompt_versions = prompt_usage("llm2", declared_types)
-    messages = _render_messages(case, declared_types, view, prior_summaries)
+    messages = _render_messages(case, declared_types, view, prior_summaries, _review_context(case))
     json_schema = {
         "name": Llm2Response.__name__,
         "schema": normalize_schema_for_response_format(Llm2Response),
@@ -407,6 +443,25 @@ def run_llm2_summarization(
         sort_keys=True,
     )
     _assert_tokens_only(case, serialized_payload, prior_cases)
+
+    # Contexto da execução capturado ANTES do dispatch (fix-1 P1-2/P1-6):
+    # digests + autoridade vigente. A revalidação sob o lock de persistência
+    # compara a linha fresca contra este snapshot.
+    marked = has_procedure_review_marker(case)
+    pre_digests: dict[str, str | None] | None = None
+    pre_authority: tuple[int | None, bool | None, str | None] = (None, None, None)
+    if marked:
+        pre_digests = {
+            "source_fingerprint": source_fingerprint_for_case(case),
+            "anonymized_text_digest": anonymized_text_digest_for_case(case),
+            "pseudonym_map_digest": pseudonym_map_digest_for_case(case),
+        }
+        _pre_event, _pre_validity = latest_confirmation_validity(case)
+        pre_authority = (
+            _pre_event.pk if _pre_event is not None else None,
+            _pre_validity.valid if _pre_validity is not None else None,
+            _pre_validity.reason if _pre_validity is not None else None,
+        )
 
     client = get_llm_client()
     validated, retry_used = _call_with_corrective_retry(
@@ -428,6 +483,8 @@ def run_llm2_summarization(
         "aggregate": aggregate,
     }
 
+    suggestions_payload: dict[str, str] = {}
+    pending_failure: str | None = None
     with transaction.atomic():
         locked = Case.objects.select_for_update().get(pk=case.pk)
         # Gate do slice 002 (painel-lista-encerramento): o passo pode retornar
@@ -445,24 +502,62 @@ def run_llm2_summarization(
                 aggregate_reasons=[],
                 retry_used=False,
             )
-        locked.summary_text = validated.summary_text
-        locked.suggested_action = suggested_action
-        locked.save(update_fields=["summary_text", "suggested_action"])
-        suggestions_payload = {
-            procedure_type: str(entry["suggestion"])
-            for procedure_type, entry in final_suggestions.items()
-        }
-        _record_event(
-            locked,
-            event_type=CaseEventType.CASE_LLM2_COMPLETED,
-            payload={
-                "prompts": prompt_versions,
-                "suggestions": suggestions_payload,
-                "aggregate": aggregate["suggestion"],
-                "retry_used": retry_used,
-            },
-            user=user,
-            role=role,
+        # Revalidação ANTES de qualquer escrita (fix-1 P1-2): CLEANED primeiro,
+        # depois digests vs snapshot pré-dispatch e autoridade vigente vs
+        # snapshot. Integridade → FAILED; autoridade de gate *nova* → sinal
+        # distinto (o orquestrador aplica HD-001, nunca FAILED). O INVALIDATED
+        # é commitado neste atomic; a falha levanta após ele.
+        if marked and pre_digests is not None:
+            current_source = source_fingerprint_for_case(locked)
+            if pre_digests["source_fingerprint"] is not None and current_source is None:
+                pending_failure = REASON_SOURCE_UNAVAILABLE
+            elif current_source != pre_digests["source_fingerprint"]:
+                pending_failure = REASON_SOURCE_CHANGED
+            elif anonymized_text_digest_for_case(locked) != pre_digests["anonymized_text_digest"]:
+                pending_failure = (
+                    REASON_ANONYMIZATION_MISSING
+                    if not (locked.anonymized_text or "")
+                    else REASON_ANONYMIZED_MISMATCH
+                )
+            elif pseudonym_map_digest_for_case(locked) != pre_digests["pseudonym_map_digest"]:
+                pending_failure = REASON_MAP_MISMATCH
+            _event, _validity = latest_confirmation_validity(locked)
+            if _event is not None and _validity is not None and not _validity.valid:
+                record_review_invalidated(locked, _event, _validity.reason)
+                post_authority = (
+                    _event.pk,
+                    _validity.valid,
+                    _validity.reason,
+                )
+                if pending_failure is None and post_authority != pre_authority:
+                    pending_failure = _validity.reason
+            elif pending_failure is not None and _event is not None:
+                record_review_invalidated(locked, _event, pending_failure)
+        if pending_failure is None:
+            locked.summary_text = validated.summary_text
+            locked.suggested_action = suggested_action
+            locked.save(update_fields=["summary_text", "suggested_action"])
+            suggestions_payload = {
+                procedure_type: str(entry["suggestion"])
+                for procedure_type, entry in final_suggestions.items()
+            }
+            _record_event(
+                locked,
+                event_type=CaseEventType.CASE_LLM2_COMPLETED,
+                payload={
+                    "prompts": prompt_versions,
+                    "suggestions": suggestions_payload,
+                    "aggregate": aggregate["suggestion"],
+                    "retry_used": retry_used,
+                },
+                user=user,
+                role=role,
+            )
+
+    if pending_failure is not None:
+        raise LlmPipelineError(
+            pending_failure,
+            "resultado LLM2 estagnado (integridade/autoridade) — sem persistir.",
         )
 
     raw_motivos = aggregate.get("motivos")

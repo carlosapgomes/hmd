@@ -269,7 +269,10 @@ def test_detail_divergence_lists_declared_and_detected(
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R2/R3: divergência exibe ambos os conjuntos + resumo no card de revisão."""
+    """R2/R3: divergência exibe ambos os conjuntos + resumo no card de revisão.
+
+    Caso novo (marcado): o card é o de confirmação explícita — sem o bypass
+    legado (contrato do slice 002)."""
     case = _create_case(nir_user, pdf_factory, "angio_art_perif")
     _advance_to_llm_extracting(case)
     record_detected_procedures(
@@ -293,11 +296,14 @@ def test_detail_divergence_lists_declared_and_detected(
     assert "Declarado" in body
     assert "Não detectado" in body
     assert "Detectado na extração" in body
-    # Resumo declarados × detectados no card da divergência, junto à ação.
+    # Resumo declarados × detectados no card de confirmação, junto à ação.
     assert "Declarados:" in body
     assert "— não detectado" in body
     assert "Detectados na extração:" in body
-    assert "Liberar caso" in body
+    assert "Revisão do procedimento" in body
+    assert "Confirmar procedimento" in body
+    assert reverse("intake:procedure_review_confirm", args=[case.case_id]) in body
+    assert "Liberar caso" not in body
 
 
 @pytest.mark.django_db

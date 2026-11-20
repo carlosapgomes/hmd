@@ -69,3 +69,4 @@ seeding is never feature proof. Skipped entry points remain unverified.
   (ui-parity-intake-detail slice 002).
 - [Detalhe, decisão e confirmação por papel](detalhe-papeis.md): jornada médico→agendador→NIR no layout ats-web (ui-parity-intake-detail slice 003).
 - [Painel gerencial no visual](painel-visual.md): toolbar de período, cards de métrica e lista em `case-card` com os mesmos números e filtros (ui-parity-intake-detail slice 004).
+- [Revisão NIR do procedimento](revisao-procedimento-nir.md): card declarado×detectado com select único dos 13 tipos, manutenção e troca para não detectado com reprocessamento real, gating, teclado, viewports 390/1280, select sem JS e zero transporte externo (confirm-nir-procedure-review slice 002).

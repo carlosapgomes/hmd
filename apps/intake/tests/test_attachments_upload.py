@@ -214,7 +214,11 @@ def test_create_without_attachments_unchanged(
     assert case.attachments.count() == 0
     assert CaseAttachment.objects.count() == 0
     assert CaseProcedure.objects.filter(case=case, declared_by_nir=True).count() == 1
-    assert _event_types(case) == [CaseEventType.CASE_PROCEDURES_DECLARED.value]
+    # A primitiva emite a declaração e a marca prospectiva do novo contrato.
+    assert _event_types(case) == [
+        CaseEventType.CASE_PROCEDURES_DECLARED.value,
+        CaseEventType.CASE_PROCEDURE_REVIEW_ENABLED.value,
+    ]
 
 
 @pytest.mark.django_db

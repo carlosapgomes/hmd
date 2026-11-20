@@ -151,6 +151,39 @@ class CaseEventType(models.TextChoices):
         "Desfecho da remoção dos arquivos da purga",
     )
 
+    # Revisão humana de procedimento do NIR (change confirm-nir-procedure-review,
+    # slice 001, D1/D3): marcador de contrato (ENABLED, payload {version: 1}),
+    # autoridade humana versionada (CONFIRMED), pedido FSM de reprocessamento
+    # (REPROCESSING_REQUESTED, com confirmation_event_id), aplicação do
+    # conjunto confirmado ao reaproveitar a detecção nova (APPLIED),
+    # invalidação definitiva correlacionada (INVALIDATED, com motivo) e falha
+    # de enqueue pós-commit (ENQUEUE_FAILED, slice 003, D7: payload terse com
+    # confirmation_event_id + recovery_scheduled + reason_code).
+    CASE_PROCEDURE_REVIEW_ENABLED = (
+        "CASE_PROCEDURE_REVIEW_ENABLED",
+        "Contrato de revisão de procedimento ativo",
+    )
+    CASE_PROCEDURE_REVIEW_CONFIRMED = (
+        "CASE_PROCEDURE_REVIEW_CONFIRMED",
+        "Procedimento confirmado pelo NIR",
+    )
+    CASE_PROCEDURE_REPROCESSING_REQUESTED = (
+        "CASE_PROCEDURE_REPROCESSING_REQUESTED",
+        "Reprocessamento solicitado após confirmação",
+    )
+    CASE_PROCEDURE_REVIEW_APPLIED = (
+        "CASE_PROCEDURE_REVIEW_APPLIED",
+        "Confirmação aplicada ao processamento",
+    )
+    CASE_PROCEDURE_REVIEW_INVALIDATED = (
+        "CASE_PROCEDURE_REVIEW_INVALIDATED",
+        "Confirmação desconsiderada",
+    )
+    CASE_PROCEDURE_REPROCESS_ENQUEUE_FAILED = (
+        "CASE_PROCEDURE_REPROCESS_ENQUEUE_FAILED",
+        "Falha ao enfileirar reprocessamento",
+    )
+
 
 def case_status_event_type(state: str) -> str:
     """Resolve o tipo canônico do evento de transição para o estado-alvo.

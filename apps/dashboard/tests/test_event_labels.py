@@ -119,6 +119,17 @@ def test_failed_event_types_use_danger_badge(event_type: str) -> None:
     assert event_badge_css(event_type) == "text-bg-danger"
 
 
+def test_enqueue_failed_label_and_badge() -> None:
+    """Slice 003 (confirm-nir): a falha de enqueue pós-confirmação tem
+    rótulo legível e badge de falha (observável na trilha do painel)."""
+    assert event_label(CaseEventType.CASE_PROCEDURE_REPROCESS_ENQUEUE_FAILED) == (
+        "Falha ao enfileirar reprocessamento"
+    )
+    assert (
+        event_badge_css(CaseEventType.CASE_PROCEDURE_REPROCESS_ENQUEUE_FAILED) == "text-bg-danger"
+    )
+
+
 def test_failed_payload_uses_danger_badge() -> None:
     """R1: payload com ``status=FAILED`` marca o evento em vermelho mesmo em
     tipo fora do padrão ``*_FAILED``."""

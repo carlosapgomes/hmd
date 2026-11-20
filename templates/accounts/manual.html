@@ -114,6 +114,31 @@
         por divergência).
       </li>
       <li>
+        <strong>Confirmação do procedimento (novos envios)</strong>: nos casos
+        criados após a implantação da revisão, a divergência entre declarado e
+        detectado só se resolve com <strong>confirmação explícita</strong> no
+        card «Revisão do procedimento» do detalhe — escolha um único tipo do
+        catálogo (manter o atual ou trocar, inclusive por um tipo não
+        detectado), informe a justificativa (1–500 caracteres) e marque a
+        leitura do relatório principal. Sem upload novo: a confirmação solicita
+        nova extração e análise do mesmo caso, com registro na trilha. A
+        liberação simples (bypass) desses casos é recusada; casos anteriores
+        mantêm o fluxo antigo.
+      </li>
+      <li>
+        <strong>Recuperação do processamento</strong>: a confirmação é
+        <strong>durável</strong> — se o envio ao processamento falhar após o
+        registro, o caso não volta atrás. O sistema agenda automaticamente uma
+        nova tentativa pelo agendador (cluster <code>llm</code>, uma única
+        vez, cerca de 60 segundos depois) e avisa na tela que a recuperação foi
+        programada. Se a própria programação falhar, a tela informa que o
+        processamento está <em>pendente de suporte</em>: anote o número do caso
+        e informe à equipe técnica — <strong>não reenvie o relatório nem tente
+        confirmar de novo</strong> (não há botão de repetição; a confirmação já
+        está registrada). Falhas de processamento continuam levando o caso a
+        <code>FAILED</code>, sem nova tentativa automática.
+      </li>
+      <li>
         <strong>Meus casos</strong> (<em>Meus casos</em>): a lista separa os casos
         <em>ativos</em> (em andamento) dos <em>encerrados</em> (<code>CLEANED</code>).
         O detalhe mostra documentos, trilha e comunicações apenas dos seus casos.
@@ -166,10 +191,23 @@
         <em>nunca</em> descarta nem bloqueia o caso; a decisão é sempre do médico.
       </li>
       <li>
+        <strong>Confirmação do NIR</strong>: nos casos novos com divergência
+        resolvida pelo NIR, o detalhe e a página de decisão mostram o card
+        <em>Procedimento confirmado pelo NIR</em> — procedimento confirmado,
+        seleção mantida ou trocada, declaração anterior, detecção automática
+        original e, quando diferente, a nova detecção (inclusive quando nada
+        foi detectado), autor, data e justificativa. O aviso é consultivo:
+        a confirmação do NIR não é aprovação clínica — a decisão permanece
+        com o médico e uma recomendação de recusa nunca bloqueia uma aprovação
+        com reserva válida.
+      </li>
+      <li>
         <strong>Decidir</strong>: registre a <em>decisão por procedimento</em>
         (aprovar ou negar), com motivo obrigatório em cada negativa. Negações
         totais publicam a resposta final ao NIR; ao menos uma aprovação encaminha
-        o caso à fila de agendamento.
+        o caso à fila de agendamento. O trabalho médico exige resumo e análise
+        completos do procedimento confirmado — caso inconsistente informa o
+        problema em vez de oferecer decisão sobre relatório puro.
       </li>
     </ul>
   </div>

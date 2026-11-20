@@ -205,6 +205,95 @@
 
     {% if case.manual_review_required %}
       {% if case.status == 'LLM_EXTRACTING' and case.manual_review_reason == 'procedure_divergence' %}
+      {% if show_procedure_review %}
+      <!-- Confirmação explícita do procedimento (confirm-nir-procedure-review,
+           slice 002, R3/D2): select único dos 13 tipos (atual pré-selecionado,
+           inclusive não detectado), justificativa 1–500 e leitura explícita —
+           sem upload. Funciona sem JavaScript (select canônico); com JS o
+           combobox pesquisável aprimora a seleção. -->
+      <div class="card shadow-sm mb-4 report-card border-info">
+        <div class="card-header bg-info-subtle">
+          <h2 class="h5 mb-0">Revisão do procedimento</h2>
+        </div>
+        <div class="card-body">
+          <p class="mb-3">
+            Os procedimentos detectados pela extração divergem dos declarados.
+            <strong>Confirme o procedimento</strong> — manter ou trocar por um dos
+            13 tipos do catálogo — para solicitar nova extração e análise do
+            mesmo caso, sem exigir novo upload.
+          </p>
+          {% if procedure_rows %}
+          <div class="mb-3 small">
+            <div>
+              <strong>Declarados:</strong>
+              {% for row in declared_procedure_rows %}
+              <span class="badge rounded-pill text-bg-light border">{{ row.label }}{% if row.detection == 'not_detected' %} — não detectado{% elif row.detection == 'detected' %} — detectado{% endif %}</span>
+              {% endfor %}
+            </div>
+            {% if detected_extra_procedure_rows %}
+            <div class="mt-1">
+              <strong>Detectados na extração:</strong>
+              {% for row in detected_extra_procedure_rows %}
+              <span class="badge rounded-pill text-bg-info">{{ row.label }}</span>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </div>
+          {% endif %}
+          <form method="post" action="{% url 'intake:procedure_review_confirm' case.case_id %}"
+                id="procedure-review-form">
+            {% csrf_token %}
+            {% if procedure_review_form.non_field_errors %}
+            <div class="alert alert-danger" role="alert">
+              {% for error in procedure_review_form.non_field_errors %}{{ error }}<br>{% endfor %}
+            </div>
+            {% endif %}
+            <div class="mb-3">
+              <label for="{{ procedure_review_form.procedure_type.id_for_label }}" class="form-label">
+                {{ procedure_review_form.procedure_type.label }}
+              </label>
+              <div class="procedure-combobox">
+                {{ procedure_review_form.procedure_type }}
+              </div>
+              <p class="form-text procedure-combobox__hint">
+                Busca ignora acentos e busca por nome ou código. Navegue com ↑ ↓ e confirme com Enter.
+              </p>
+              {% if procedure_review_form.procedure_type.errors %}
+              <p class="procedure-combobox__error" role="alert">
+                {% for error in procedure_review_form.procedure_type.errors %}{{ error }} {% endfor %}
+              </p>
+              {% endif %}
+            </div>
+            <div class="mb-3">
+              <label for="{{ procedure_review_form.review_justification.id_for_label }}" class="form-label">
+                {{ procedure_review_form.review_justification.label }}
+              </label>
+              {{ procedure_review_form.review_justification }}
+              <div class="form-text">{{ procedure_review_form.review_justification.help_text }}</div>
+              {% if procedure_review_form.review_justification.errors %}
+              <p class="text-danger small mb-0" role="alert">
+                {% for error in procedure_review_form.review_justification.errors %}{{ error }} {% endfor %}
+              </p>
+              {% endif %}
+            </div>
+            <div class="form-check mb-3">
+              {{ procedure_review_form.review_acknowledged }}
+              <label class="form-check-label" for="{{ procedure_review_form.review_acknowledged.id_for_label }}">
+                {{ procedure_review_form.review_acknowledged.label }}
+              </label>
+              {% if procedure_review_form.review_acknowledged.errors %}
+              <p class="text-danger small mb-0" role="alert">
+                {% for error in procedure_review_form.review_acknowledged.errors %}{{ error }} {% endfor %}
+              </p>
+              {% endif %}
+            </div>
+            {{ procedure_review_form.review_event_id }}
+            {{ procedure_review_form.source_fingerprint }}
+            <button type="submit" class="btn btn-primary">Confirmar procedimento</button>
+          </form>
+        </div>
+      </div>
+      {% else %}
       <div class="card shadow-sm mb-4 report-card border-info">
         <div class="card-header bg-info-subtle">
           <h2 class="h5 mb-0">Revisão do gate — divergência de procedimentos</h2>
@@ -241,6 +330,7 @@
           </form>
         </div>
       </div>
+      {% endif %}
       {% elif case.status == 'PDF_EXTRACTING' %}
       <div class="card shadow-sm mb-4 report-card border-warning">
         <div class="card-header bg-warning-subtle">
@@ -442,4 +532,5 @@
 
 {% block extra_js %}
 <script src="{% static 'js/pdf-lazy-embed.js' %}"></script>
+<script src="{% static 'js/procedure_combobox.js' %}" defer></script>
 {% endblock %}

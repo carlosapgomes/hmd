@@ -61,6 +61,7 @@ from apps.cases.events import CaseEventType
 from apps.cases.models import Case, CaseDocument, CaseEvent, CaseStatus, SchedulingUnit
 from apps.cases.navigation import resolve_safe_next_url
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
+from apps.cases.procedure_review import event_detail_lines
 from apps.cases.units import unit_label
 
 from .case_labels import CASE_NEXT_STEP_LABELS, CASE_RESULT_LABELS, PROCEDURE_TYPE_OPTIONS
@@ -500,6 +501,7 @@ def _case_detail_context(case: Case, *, filters: Mapping[str, str]) -> dict[str,
                 "actor_display": event.actor.display_name if event.actor else "Sistema",
                 "actor_role": event.actor_role,
                 "timestamp": timezone.localtime(event.timestamp),
+                "details": event_detail_lines(event),
             }
             for event in case.events.select_related("actor")
         ],

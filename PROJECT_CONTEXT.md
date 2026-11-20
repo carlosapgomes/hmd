@@ -188,6 +188,48 @@ sincronizada (requirement Extração assíncrona: 49 cenários no total); `valid
 
 Decisão do dono (fase de estabilização): o encerramento RETÉM tudo (7 campos clínicos/LLM + rows/arquivos de documentos/anexos) para benchmark com corpus real e auditoria supervisora — política temporária do ADR-0010 (base jurídica: execução íntegra no perímetro do hospital com autorização expressa dos gestores; gatilho de reversão: versão 1.0; responsável: gerência de TI; runbook flip→`--dry-run`→purga→registro com E2E dev validado e registrado). **Slice 001**: flag `CASE_CLOSURE_MINIMIZATION_ENABLED` (default `false`=retenção, passthrough no `web` do compose prod) + gate de modo NOS entry points do closure (função interna `_clean_acknowledged_clinical_data` INCONDICIONAL — reusada pela purga; `test_header_persistence` verde sem pino); worker de anexos blindado (gates `CLEANED` + transações curtas com `select_for_update` + **dispatch durável** — lock+gate+evento `DISPATCHED` no mesmo atomic com commit ANTES do envio + guard por página 2..N — e verificação com API pública única `request_verification_outcome`/`VERIFICATION_FAILURE_EXCEPTIONS`; janela residual commit→envio documentada na D8); textos/trilha verdadeiros nos dois modos (rótulos CLEANED "Caso concluído"/CLEANING "Disposição dos dados em andamento"). **Slice 002**: card «Sumário apresentado ao médico» no detalhe do painel (manager/admin) — builders extraídos para `apps/cases/presentation.py` (API única `build_structure_sections`; paridade médico×painel provada por teste), re-identificado sem tokens, cobre casos ativos e `CLEANED` retidos (placeholders independentes por bloco). **Slice 003**: purga retroativa — serviço `purge_closed_case_data` em `closure.py` (`atomic(durable=True)`, commit real obrigatório, deleção física síncrona pós-commit) + comando `purge_closed_case_data [--dry-run]` (só `CLEANED` com dados, idempotente, atomic por caso, exit não-zero com falha física) + **trilha em duas fases** (`CASE_RETAINED_DATA_PURGED` atômico com a limpeza + `CASE_RETAINED_DATA_PURGE_OUTCOME` com badge de perigo quando `files_failed>0`; payload/log/saída sem PHI). Execução em loop worker(muse-ember-1.0:max)+reviewer(gpt-6.1-terra:high) controlado pelo parent (11 rodadas ao todo; desvios de boundary para `extraction.py`/`verification.py` autorizados e registrados). Suíte 1972→2019. Specs: `case-closure` (requirement renomeado p/ «encerramento e disposição de dados» + MODIFIED ×2 + ADDED purga — 6 reqs) e `dashboard` (ADDED card — 6 reqs); `validate --specs --strict` 16/16. Débitos P2/P3: seleção da purga varre todos os `CLEANED` com `exists()` por caso (volume grande → mover p/ queryset `Exists`); badge do outcome neutro só muda com `files_failed` int>0 (defesa de apresentação); janela residual commit→envio do OCR (D8, alternativas rejeitadas registradas).
 
+## Fecho do change confirm-nir-procedure-review (slices 001–004, ARQUIVADO em 2026-11-20)
+
+Confirmação autoritativa de procedimento pelo NIR de ponta a ponta (4 slices, loop controlado pelo parent com
+worker/reviewer fresh por fase; 001 com muse-ember-1.0/gpt-6.1-terra + decisões HD-001/002/003 documentadas em
+`/tmp/pi-openspec-loop-*`; 002–004 com muse-spark-1.3-contributor:high/:max; 43+12+22 novos testes, suíte
+2031→2210, commits c9b2420→7ffafff). **Slice 001 (domínio/pipeline)**: marcador prospectivo
+`CASE_PROCEDURE_REVIEW_ENABLED {version:1}` apenas no atomic da primitiva única de criação (lote/reenvio novos;
+originais/históricos nunca convertidos); validação de autoridade/fonte/texto anonimizado/mapa por digests `v1:`;
+confirmação com declaração anterior vs confirmada (manter/trocar de um dos 13 tipos, incl. não detectado),
+justificativa 1–500 e confirmação de leitura obrigatórias, atomicidade durável com lock de linha e lease;
+invalidação irreversível auditada (restaurar valores não revive autoridade; integridade atual prevalece sobre
+motivo gate histórico); reprocessamento REAL de LLM1+reconciliação+policy+prior-case+LLM2 sem reextrair PDF;
+`APPLIED.automatic_procedures` = detecção exata canônica da nova passada (nunca união/conflitos); guarda de
+completude compartilhada (pública e sob lock final) com falha fechada; transição protegida autorizada
+`LLM_SUMMARIZING→LLM_EXTRACTING` (HD-001) descarta resposta estagnada em voo e refaz reconciliação automática
+com idempotência de eventos equivalentes; integridade revalidada em TODAS as fronteiras (pré-dispatch, pós-chamada,
+lock de persistência, transição final). **Slice 002 (UI NIR)**: card de revisão no detalhe (select único dos 13
+com valor atual pré-selecionado, cardinalidade via `getlist`, submit sem JS), negativos endurecidos sem mutação
+(CSRF/papel/404 alheio/revisão obsoleta 400/bytes alterados/fonte ilegível/lock 409) com mensagens sem PHI,
+flash com referência humana; adaptador determinístico exclusivo de verify `config/llm_verify.py` (D9: zero rede,
+`LlmError` tipado em falha/desconhecido, guardas dev/test/prod incl. programáticas) + `seed_verify
+--procedure-review` (prompts primeiro, fixtures 990101–990104 idempotentes antes/depois de confirmação real,
+conflito explícito); jornada verify-hmd 37/37. **Slice 003 (recuperação de dispatch)**:
+`ProcedureReviewEnqueueAfterCommitError` (case/confirmation/recovery_scheduled/reason_code); callback único
+`on_commit(robust=False)` no signal do pedido; falha de enqueue preserva a confirmação e agenda `Schedule.ONCE`
++60 s no cluster `llm` (nome caso+confirmação, savepoint, recuperação+auditoria commitadas em transação própria
+ANTES da exceção propagar; atomic inteiro falho → `recovery_scheduled=False` com log sanitizado sem alegação);
+view trata 302-aviso (programada) vs 503-suporte (não programada), sem retry/PHI; dedupe por nome incl. corrida;
+UUID serializado executa recuperação real sem PDF e sem duplicar efeitos; smoke qcluster `llm` real em verify.
+**Slice 004 (evidência ao médico + integração final)**: aviso consultivo do `APPLIED`+`CONFIRMED` referenciado
+(confirmado, mantido/trocado, declaração anterior, detecção ORIGINAL da revisão vs NOVA exata — incluindo vazia
+explícita, nunca união —, autor/data/justificativa escapadas, ressalva clínica); sem aviso fictício em
+automático/legado; auditoria legível correlacionada no painel (`event_detail_lines` + escaping SSR provado);
+declaração efetiva governa subtipo/singleton com decisão clínica livre de veto (prova HTTP novo/antigo subtipo,
+generalista, admin); guarda de completude no GET e POST; retido/FAILED nunca prontos na fila; jornadas reais
+manter/troca/vazia/erro com fábrica D9 reutilizada, zero transporte externo, 390/1280. **Specs promovidas**:
+case-management +2 (8 reqs), doctor-decision +2 (9), intake-nir MODIFIED Revisão do gate + Meus casos e ADDED
+Confirmação explícita + Prospeção apenas novos envios (7), llm-pipeline MODIFIED Reconciliação/Sumarização/
+Processamento e ADDED Integridade no reprocessamento + Recuperação observável de enqueue (9); `validate --specs`
+16/16. Pré-release: smoke operacional completo do qcluster com workers/modelos de produção (bloqueio explícito
+dos relatórios 003/004); P2s deferidos registrados nos receipts de execução.
+
 ## Backlog pós-piloto (fase 2 — dono, 2026-09-15, E2E dev validado)
 
 Cada item abaixo é um change próprio (dono enumerou após validar o fluxo

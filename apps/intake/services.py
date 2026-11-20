@@ -359,6 +359,18 @@ def create_case_with_documents(
                     saved_file_names.append(stored_name)
                 attachment.save()
             set_declared_procedures(case, (procedure_type,), user=user, role=role)
+            # Marca prospectiva do contrato de revisão (slice 002, D1): só os
+            # casos criados a partir daqui a recebem, no mesmo atomic da
+            # criação — lote e reenvio corrigido herdam pela primitiva; o
+            # original encerrado e os casos anteriores nunca são remarcados.
+            CaseEvent.objects.create(
+                case=case,
+                event_type=CaseEventType.CASE_PROCEDURE_REVIEW_ENABLED,
+                actor_type=ActorType.USER if user is not None else ActorType.SYSTEM,
+                actor=user,
+                actor_role=role or "",
+                payload={"version": PROCEDURE_REVIEW_VERSION},
+            )
     except BaseException:
         _delete_saved_files_best_effort(saved_file_names)
         raise
@@ -501,6 +513,18 @@ def release_retained_case(
         locked = Case.objects.select_for_update().get(pk=case.pk)
         _assert_owned_by(locked, user)
         _assert_releasable(locked)
+        # Contrato novo (slice 002, D1): divergência de caso marcado só se
+        # resolve pela confirmação explícita — o bypass simples é recusado
+        # sem efeito, sem job e sem confirmação (precede o lock ativo: 400).
+        if (
+            locked.status == CaseStatus.LLM_EXTRACTING
+            and locked.manual_review_reason == PROCEDURE_DIVERGENCE_REASON
+            and has_procedure_review_marker(locked)
+        ):
+            raise CaseNotRetainedError(
+                "Este caso está sob o novo contrato de revisão — a divergência "
+                "só pode ser resolvida pela confirmação explícita do procedimento."
+            )
         _assert_no_active_lock(locked)
         if locked.status == CaseStatus.PDF_EXTRACTING:
             retention_reason = locked.manual_review_reason

@@ -211,3 +211,92 @@ class CorrectedResubmissionForm(IntakeUploadForm):
         documents.label = "Arquivo PDF do relatório corrigido"
         documents.help_text = _corrected_documents_help_text()
         documents.widget.attrs.pop("multiple", None)
+
+
+# Opções do select de confirmação: exatamente os 13 tipos do catálogo
+# (confirm-nir-procedure-review, slice 002, R3/D2) — seleção única, sem
+# pacote/multiselect; a cardinalidade de campo repetido é validada na view
+# via ``request.POST.getlist`` (o ChoiceField sozinho toma o último valor).
+_PROCEDURE_REVIEW_CHOICES = tuple(
+    (profile.procedure_type, profile.label) for profile in PROCEDURE_PROFILES
+)
+
+
+class ProcedureReviewForm(forms.Form):
+    """Confirmação explícita do procedimento pelo NIR (slice 002, R3/D2).
+
+    Select único dos 13 tipos (atual pré-selecionado pela view, inclusive
+    não detectado), justificativa livre de 1–500 caracteres úteis após trim
+    (sem NUL, sem truncamento silencioso) e confirmação explícita de leitura
+    — sem nenhum campo de upload. Os limites espelham os do serviço
+    ``confirm_case_procedure_review`` (a defesa de mutação continua nele);
+    revisão e fingerprint viajam em hidden fields para a revalidação
+    transacional da fonte vigente.
+    """
+
+    procedure_type = forms.ChoiceField(
+        label="Procedimento confirmado",
+        required=True,
+        choices=_PROCEDURE_REVIEW_CHOICES,
+        error_messages={
+            "required": "Selecione o procedimento confirmado.",
+            "invalid_choice": "Selecione um procedimento válido do catálogo.",
+        },
+        widget=forms.Select(
+            attrs={
+                "class": "form-select",
+                "data-procedure-combobox": "",
+                "data-combobox-placeholder": "Digite para buscar — ex.: cateterismo, nefrostomia…",
+            },
+        ),
+    )
+    review_justification = forms.CharField(
+        label="Justificativa da confirmação",
+        required=False,
+        help_text="Explique o motivo da confirmação (1–500 caracteres).",
+        error_messages={
+            "required": "Informe a justificativa da confirmação (1-500 caracteres).",
+        },
+        widget=forms.Textarea(
+            attrs={"class": "form-control", "rows": 3, "maxlength": "500"},
+        ),
+    )
+    review_acknowledged = forms.BooleanField(
+        label="Confirmo que li o relatório principal do caso",
+        required=True,
+        error_messages={
+            "required": "Confirme que leu o relatório principal para validar o procedimento.",
+        },
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+    )
+    review_event_id = forms.IntegerField(
+        error_messages={
+            "required": "Revisão de origem inválida; reabra o caso e confirme novamente.",
+            "invalid": "Revisão de origem inválida; reabra o caso e confirme novamente.",
+        },
+        widget=forms.HiddenInput,
+    )
+    source_fingerprint = forms.CharField(
+        error_messages={
+            "required": "Identificação da fonte ausente; reabra o caso e confirme novamente.",
+        },
+        widget=forms.HiddenInput,
+    )
+
+    def clean_review_justification(self) -> str:
+        """Trim + 1–500 úteis, sem NUL (mesmos limites do serviço, D2)."""
+        value = self.cleaned_data.get("review_justification", "")
+        if not isinstance(value, str):
+            raise forms.ValidationError(
+                "Informe a justificativa da confirmação (1-500 caracteres)."
+            )
+        text = value.strip()
+        if not text:
+            raise forms.ValidationError(
+                "Informe a justificativa da confirmação (1-500 caracteres)."
+            )
+        if len(text) > 500:
+            raise forms.ValidationError("Justificativa excede 500 caracteres.")
+        if "\x00" in text:
+            raise forms.ValidationError("Justificativa contém caractere inválido.")
+        return text

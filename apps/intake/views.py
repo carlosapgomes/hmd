@@ -61,6 +61,7 @@ from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS, acknowledge_case_
 from apps.cases.events import CaseEventType
 from apps.cases.locks import CaseLockConflictError
 from apps.cases.models import (
+    PROCEDURE_DIVERGENCE_REASON,
     Case,
     CaseDocument,
     CaseStatus,
@@ -69,14 +70,21 @@ from apps.cases.models import (
 )
 from apps.cases.navigation import resolve_safe_next_url
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
+from apps.cases.procedure_review import (
+    has_procedure_review_marker,
+    latest_review_event,
+    source_fingerprint_for_case,
+)
+from apps.cases.procedures import get_declared_procedure_types
 from apps.cases.units import unit_label
 
-from .forms import CorrectedResubmissionForm, IntakeUploadForm
+from .forms import CorrectedResubmissionForm, IntakeUploadForm, ProcedureReviewForm
 from .services import (
     INTAKE_DISABLED_MESSAGE,
     PDF_CONTENT_TYPE,
     CaseNotRetainedError,
     IntakeValidationError,
+    confirm_case_procedure_review,
     create_corrected_resubmission,
     release_retained_case,
     resubmit_case_documents,
@@ -480,6 +488,106 @@ def my_cases_partial(request: HttpRequest) -> HttpResponse:
     return render(request, "intake/_my_cases_content.html", _build_my_cases_context(request))
 
 
+def _assemble_case_detail_context(
+    case: Case,
+    *,
+    review_form: ProcedureReviewForm | None = None,
+) -> dict[str, object]:
+    """Monta o contexto do detalhe (página cheia e re-render 400 da revisão).
+
+    Confirmação NIR (slice 002, R3/D2): caso marcado retido por divergência
+    exibe o card com o select único dos 13 tipos (atual pré-selecionado e
+    confirmável, inclusive não detectado), justificativa, leitura explícita
+    e snapshots de revisão/fonte — sem upload; caso sem marca mantém o
+    bypass legado. O form do re-render de erro chega pronto (tentativa
+    preservada, checkbox nunca marcado); no GET um form inicial é montado.
+    """
+    documents = list(case.documents.all())
+    attachments = list(case.attachments.all())
+    communications = list(case.communication_messages.select_related("author"))
+
+    procedure_decisions = _procedure_decisions(case)
+    procedure_rows = _procedure_rows(case)
+    final_reply = None
+    if case.status in _FINAL_REPLY_STATES:
+        final_reply = next((m for m in reversed(communications) if m.author is not None), None)
+
+    corrections = list(case.corrected_by.order_by("created_at", "pk"))
+
+    detail_path = reverse("intake:case_detail", args=[case.case_id])
+    pdf_items = [
+        {
+            "position": document.position,
+            "filename": document.original_filename,
+            "size": document.size_bytes,
+            "serve_url": reverse("intake:serve_document", args=[case.case_id, document.pk]),
+            "viewer_url": reverse("intake:pdf_viewer", args=[case.case_id, document.pk]),
+        }
+        for document in documents
+    ]
+    attachment_items = [
+        {
+            "attachment": attachment,
+            "position": position,
+            "is_pdf": attachment.content_type == "application/pdf",
+            "serve_url": reverse("intake:serve_attachment", args=[case.case_id, attachment.pk]),
+            "viewer_url": reverse(
+                "intake:attachment_pdf_viewer", args=[case.case_id, attachment.pk]
+            ),
+        }
+        for position, attachment in enumerate(attachments, start=1)
+    ]
+
+    marked = has_procedure_review_marker(case)
+    divergence_retained = (
+        case.status == CaseStatus.LLM_EXTRACTING
+        and case.manual_review_required
+        and case.manual_review_reason == PROCEDURE_DIVERGENCE_REASON
+    )
+    show_procedure_review = marked and divergence_retained
+    show_legacy_divergence = divergence_retained and not marked
+    form = review_form
+    if show_procedure_review:
+        review = latest_review_event(case)
+        fingerprint = source_fingerprint_for_case(case)
+        if form is None:
+            initial: dict[str, object] = {"source_fingerprint": fingerprint or ""}
+            if review is not None:
+                initial["review_event_id"] = review.pk
+            declared = get_declared_procedure_types(case)
+            if len(declared) == 1:
+                initial["procedure_type"] = declared[0]
+            form = ProcedureReviewForm(initial=initial)
+
+    return {
+        "case": case,
+        "status_label": case.get_status_display(),
+        "documents": documents,
+        "pdf_items": pdf_items,
+        "detail_url": detail_path,
+        "attachments": attachments,
+        "attachment_items": attachment_items,
+        "communications": communications,
+        "procedure_rows": procedure_rows,
+        "declared_procedure_rows": [row for row in procedure_rows if row["is_declared"]],
+        "detected_extra_procedure_rows": [
+            row
+            for row in procedure_rows
+            if not row["is_declared"] and row["detection"] == DetectionStatus.DETECTED
+        ],
+        "has_outcome": bool(procedure_decisions),
+        "procedure_decisions": procedure_decisions,
+        "scheduling": _scheduling_context(case),
+        "final_reply": final_reply,
+        "can_ack": case.status == CaseStatus.FINAL_REPLY_POSTED,
+        "can_resubmit": case.status == CaseStatus.CLEANED,
+        "corrections": corrections,
+        "show_procedure_review": show_procedure_review,
+        "show_legacy_divergence": show_legacy_divergence,
+        "procedure_review_form": form,
+    }
+
+
 @role_required("nir")
 def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     """Detalhe do caso do próprio NIR: docs, comunicações e resultado.
@@ -503,78 +611,7 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         case_id=case_id,
         created_by=user,
     )
-    documents = list(case.documents.all())
-    attachments = list(case.attachments.all())
-    communications = list(case.communication_messages.select_related("author"))
-
-    procedure_decisions = _procedure_decisions(case)
-    procedure_rows = _procedure_rows(case)
-    # Resposta final em destaque (R1): a última comunicação autoral da thread
-    # quando o fechamento/agendamento já publicou a resposta final. Mensagens
-    # ``system`` (sem autor) nunca são a resposta final.
-    final_reply = None
-    if case.status in _FINAL_REPLY_STATES:
-        final_reply = next((m for m in reversed(communications) if m.author is not None), None)
-
-    # Reenvios corrigidos deste caso (D4/R4): os novos casos que corrigem o
-    # original (reverso ``corrected_by``), ordenados por criação.
-    corrections = list(case.corrected_by.order_by("created_at", "pk"))
-
-    # Cards do relatório (slice PVP-002, R2/D1): a view monta pdf_items
-    # (position/filename/size/serve/viewer) com reverse; o template itera.
-    detail_path = reverse("intake:case_detail", args=[case.case_id])
-    pdf_items = [
-        {
-            "position": document.position,
-            "filename": document.original_filename,
-            "size": document.size_bytes,
-            "serve_url": reverse("intake:serve_document", args=[case.case_id, document.pk]),
-            "viewer_url": reverse("intake:pdf_viewer", args=[case.case_id, document.pk]),
-        }
-        for document in documents
-    ]
-    # Cards de anexo (slice PVP-006, R3/D1/D6): cada anexo listado tem link
-    # de abertura (serve do papel) + visualização colapsável — PDF recebe
-    # embed lazy + viewer dedicado; imagem recebe img lazy + link direto.
-    attachment_items = [
-        {
-            "attachment": attachment,
-            "position": position,
-            "is_pdf": attachment.content_type == "application/pdf",
-            "serve_url": reverse("intake:serve_attachment", args=[case.case_id, attachment.pk]),
-            "viewer_url": reverse(
-                "intake:attachment_pdf_viewer", args=[case.case_id, attachment.pk]
-            ),
-        }
-        for position, attachment in enumerate(attachments, start=1)
-    ]
-
-    context = {
-        "case": case,
-        "status_label": case.get_status_display(),
-        "documents": documents,
-        "pdf_items": pdf_items,
-        "detail_url": detail_path,
-        "attachments": attachments,
-        "attachment_items": attachment_items,
-        "communications": communications,
-        "procedure_rows": procedure_rows,
-        # Resumo do card de divergência (R2/D2): declarados (com detecção no
-        # template) e detectados que NÃO foram declarados (rows extras).
-        "declared_procedure_rows": [row for row in procedure_rows if row["is_declared"]],
-        "detected_extra_procedure_rows": [
-            row
-            for row in procedure_rows
-            if not row["is_declared"] and row["detection"] == DetectionStatus.DETECTED
-        ],
-        "has_outcome": bool(procedure_decisions),
-        "procedure_decisions": procedure_decisions,
-        "scheduling": _scheduling_context(case),
-        "final_reply": final_reply,
-        "can_ack": case.status == CaseStatus.FINAL_REPLY_POSTED,
-        "can_resubmit": case.status == CaseStatus.CLEANED,
-        "corrections": corrections,
-    }
+    context = _assemble_case_detail_context(case)
     return render(request, "intake/case_detail.html", context)
 
 
@@ -965,3 +1002,92 @@ def gate_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         f"Caso {case.display_reference} reenviado — documentos substituídos e reprocessamento iniciado.",
     )
     return redirect(reverse("intake:case_detail", args=[case.case_id]))
+
+
+@role_required("nir")
+@require_POST
+def procedure_review_confirm(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    """Confirma o procedimento do caso e solicita o reprocessamento (R3/D2).
+
+    POST escopado ao caso do próprio NIR (alheio/inexistente → 404, sem
+    vazar informação). A cardinalidade é validada via ``getlist`` (um único
+    valor — o ChoiceField sozinho tomaria o último de um campo repetido) e
+    o restante pelo ``ProcedureReviewForm``; a defesa de mutação continua no
+    serviço ``confirm_case_procedure_review``. Sucesso → redirect ao detalhe
+    com flash na referência humana; form inválido ou pré-condição obsoleta
+    (revisão/fonte) → re-render do detalhe com HTTP 400, tentativa preservada
+    e escapada, checkbox nunca marcado; lock ativo de outro ator → 409 com
+    mensagem genérica (sem PHI/técnica); papel sem vínculo NIR → 403.
+    """
+    user = _require_user(request)
+    active_role = request.session.get("active_role", "")
+    case = get_object_or_404(
+        Case.objects.only("pk", "case_id", "created_by_id", "agency_record_number"),
+        case_id=case_id,
+        created_by=user,
+    )
+    detail_url = reverse("intake:case_detail", args=[case.case_id])
+    selected = request.POST.getlist("procedure_type")
+    form = ProcedureReviewForm(request.POST)
+    valid = form.is_valid()
+    if len(selected) != 1:
+        form.add_error("procedure_type", "Selecione exatamente um procedimento do catálogo.")
+        valid = False
+    if valid:
+        try:
+            confirm_case_procedure_review(
+                case=case,
+                user=user,
+                role=active_role,
+                procedure_type=form.cleaned_data["procedure_type"],
+                review_acknowledged=form.cleaned_data["review_acknowledged"],
+                review_justification=form.cleaned_data["review_justification"],
+                review_event_id=form.cleaned_data["review_event_id"],
+                source_fingerprint=form.cleaned_data["source_fingerprint"],
+            )
+        except Http404:
+            raise
+        except PermissionError as exc:
+            raise PermissionDenied(str(exc)) from exc
+        except CaseLockConflictError as exc:
+            logger.warning(
+                "procedure_review_locked user=%s case=%s motivo=%s", user.pk, case_id, exc
+            )
+            return _gate_action_error(
+                "Este caso está sob processamento no momento — aguarde e tente novamente.",
+                case_id,
+                status=409,
+            )
+        except ValueError as exc:
+            logger.warning(
+                "procedure_review_rejected user=%s case=%s motivo=%s", user.pk, case_id, exc
+            )
+            form.add_error(None, str(exc))
+            valid = False
+        else:
+            messages.success(
+                request,
+                f"Caso {case.display_reference} confirmado — o reprocessamento "
+                "do procedimento foi iniciado.",
+            )
+            return redirect(detail_url)
+    # Re-render do detalhe com a tentativa preservada e escapada, sem
+    # consentimento automático: o checkbox nunca volta marcado após erro.
+    display_data = request.POST.copy()
+    if "review_acknowledged" in display_data:
+        del display_data["review_acknowledged"]
+    display_form = ProcedureReviewForm(display_data)
+    display_form.is_valid()
+    if len(selected) != 1:
+        display_form.add_error(
+            "procedure_type", "Selecione exatamente um procedimento do catálogo."
+        )
+    for message in form.non_field_errors():
+        display_form.add_error(None, message)
+    full_case = get_object_or_404(
+        Case.objects.select_related("created_by").prefetch_related("procedures"),
+        case_id=case_id,
+        created_by=user,
+    )
+    context = _assemble_case_detail_context(full_case, review_form=display_form)
+    return render(request, "intake/case_detail.html", context, status=400)

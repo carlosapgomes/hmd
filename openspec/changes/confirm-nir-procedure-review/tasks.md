@@ -16,10 +16,10 @@ Contrato: [slice-001-confirmation-to-analysis.md](slices/slice-001-confirmation-
 
 Contrato: [slice-002-nir-review-ui.md](slices/slice-002-nir-review-ui.md). Depende de 001. Design D1–D2/D9.
 
-- [ ] 2.1 Demonstrar RED da jornada HTTP de novo envio → divergência → formulário → confirmação, incluindo manutenção e troca; verificar falha anterior de form/rota sem tomar 404 isolado como prova suficiente do comportamento final.
-- [ ] 2.2 Marcar novos casos na primitiva de criação, abrangendo lote/reenvio corrigido, e rejeitar bypass simples nos marcados; verificar R1–R2 sem alterar originais históricos, formato SESAB ou casos sem marcador.
-- [ ] 2.3 Entregar form, rota e detalhe com select único dos 13 tipos, justificativa, checkbox e snapshots de revisão/fonte; verificar R3–R4 com POST real, fallback sem JS, 500 caracteres, multiplicidade, escaping e reexibição sem consentimento automático.
-- [ ] 2.4 Entregar o adaptador LLM determinístico com override exclusivo de verify e fixtures pela opção `seed_verify --procedure-review`, que chama `seed_prompts` antes de criar casos; provar guardas/determinismo/zero rede, LlmError em falha/entrada desconhecida e idempotência dos números 990101–990104 antes/depois de confirmação sem reset de progresso/prompts. Demonstrar POST real manter/trocar no harness com pipeline real, atualizar manual NIR e verificar R5 em desktop/mobile com regressões; executar gate e produzir `/tmp/sirhosp-slice-002-report.md`.
+- [x] 2.1 Demonstrar RED da jornada HTTP de novo envio → divergência → formulário → confirmação, incluindo manutenção e troca; verificar falha anterior de form/rota sem tomar 404 isolado como prova suficiente do comportamento final.
+- [x] 2.2 Marcar novos casos na primitiva de criação, abrangendo lote/reenvio corrigido, e rejeitar bypass simples nos marcados; verificar R1–R2 sem alterar originais históricos, formato SESAB ou casos sem marcador.
+- [x] 2.3 Entregar form, rota e detalhe com select único dos 13 tipos, justificativa, checkbox e snapshots de revisão/fonte; verificar R3–R4 com POST real, fallback sem JS, 500 caracteres, multiplicidade, escaping e reexibição sem consentimento automático.
+- [x] 2.4 Entregar o adaptador LLM determinístico com override exclusivo de verify e fixtures pela opção `seed_verify --procedure-review`, que chama `seed_prompts` antes de criar casos; provar guardas/determinismo/zero rede, LlmError em falha/entrada desconhecida e idempotência dos números 990101–990104 antes/depois de confirmação sem reset de progresso/prompts. Demonstrar POST real manter/trocar no harness com pipeline real, atualizar manual NIR e verificar R5 em desktop/mobile com regressões; executar gate e produzir `/tmp/sirhosp-slice-002-report.md`.
 
 ## 3. Slice 003 — Confirmação durável com recuperação de dispatch
 

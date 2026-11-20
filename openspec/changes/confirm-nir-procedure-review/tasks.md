@@ -25,10 +25,10 @@ Contrato: [slice-002-nir-review-ui.md](slices/slice-002-nir-review-ui.md). Depen
 
 Contrato: [slice-003-dispatch-recovery.md](slices/slice-003-dispatch-recovery.md). Depende de 002. Design D7.
 
-- [ ] 3.1 Demonstrar RED HTTP com `transaction=True`, injetando falha de enqueue no callback on_commit real; exigir confirmação durável, Schedule e auditoria corretos depois da resposta, não apenas mensagem de erro ou callback manualmente simulado.
-- [ ] 3.2 Integrar enqueue seguro, Schedule ONCE após 60 s no cluster `llm`, deduplicação e `ProcedureReviewEnqueueAfterCommitError` propagada pelo callback `robust=False` à view; verificar R1–R2 com banco real, transação própria de recovery/auditoria commitada antes da exceção e parâmetros serializados executáveis.
-- [ ] 3.3 Exibir outcomes programado (redirect 302 com aviso) e suporte (detalhe HTTP 503), registrando falha auditável sem PHI; verificar R3 com falhas de Schedule e da própria transação de recovery/auditoria, sem sucesso falso, reversão da confirmação, botão novo ou log de justificativa.
-- [ ] 3.4 Provar execução de recuperação, job atrasado, rollback e ausência de loop/duplicação de efeitos; atualizar manual de suporte/recovery, verificar R4–R5, executar gate e produzir `/tmp/sirhosp-slice-003-report.md`.
+- [x] 3.1 Demonstrar RED HTTP com `transaction=True`, injetando falha de enqueue no callback on_commit real; exigir confirmação durável, Schedule e auditoria corretos depois da resposta, não apenas mensagem de erro ou callback manualmente simulado.
+- [x] 3.2 Integrar enqueue seguro, Schedule ONCE após 60 s no cluster `llm`, deduplicação e `ProcedureReviewEnqueueAfterCommitError` propagada pelo callback `robust=False` à view; verificar R1–R2 com banco real, transação própria de recovery/auditoria commitada antes da exceção e parâmetros serializados executáveis.
+- [x] 3.3 Exibir outcomes programado (redirect 302 com aviso) e suporte (detalhe HTTP 503), registrando falha auditável sem PHI; verificar R3 com falhas de Schedule e da própria transação de recovery/auditoria, sem sucesso falso, reversão da confirmação, botão novo ou log de justificativa.
+- [x] 3.4 Provar execução de recuperação, job atrasado, rollback e ausência de loop/duplicação de efeitos; atualizar manual de suporte/recovery, verificar R4–R5, executar gate e produzir `/tmp/sirhosp-slice-003-report.md`.
 
 ## 4. Slice 004 — Médico vê a contradição e decide sobre a análise confirmada
 

@@ -77,6 +77,7 @@ from apps.cases.procedure_review import (
 )
 from apps.cases.procedures import get_declared_procedure_types
 from apps.cases.units import unit_label
+from apps.pipeline.tasks import ProcedureReviewEnqueueAfterCommitError
 
 from .forms import CorrectedResubmissionForm, IntakeUploadForm, ProcedureReviewForm
 from .services import (
@@ -1004,6 +1005,26 @@ def gate_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     return redirect(reverse("intake:case_detail", args=[case.case_id]))
 
 
+def _procedure_review_support_error(case_id: uuid.UUID, case_reference: str) -> HttpResponse:
+    """Detalhe de erro 503 do reprocessamento pendente de suporte (R3/D7).
+
+    Sem formulário nem botão de repetição: a confirmação está registrada e o
+    recovery não foi programado — só a equipe de suporte resolve, informada
+    pelo número do caso. Corpo mínimo, sem PHI e sem sucesso falso.
+    """
+    detail_url = reverse("intake:case_detail", args=[case_id])
+    body = (
+        '<!doctype html><html lang="pt-br"><head><meta charset="utf-8">'
+        "<title>Processamento pendente de suporte</title></head><body>"
+        f"<p>Confirmação do caso {escape(case_reference)} registrada; o "
+        "processamento está pendente de suporte — informe o número do caso "
+        "à equipe técnica. Não é necessário reenviar o relatório.</p>"
+        f'<p><a href="{escape(detail_url)}">Voltar ao caso</a></p>'
+        "</body></html>"
+    )
+    return HttpResponse(body, status=503)
+
+
 @role_required("nir")
 @require_POST
 def procedure_review_confirm(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
@@ -1018,6 +1039,8 @@ def procedure_review_confirm(request: HttpRequest, case_id: uuid.UUID) -> HttpRe
     (revisão/fonte) → re-render do detalhe com HTTP 400, tentativa preservada
     e escapada, checkbox nunca marcado; lock ativo de outro ator → 409 com
     mensagem genérica (sem PHI/técnica); papel sem vínculo NIR → 403.
+    Falha de dispatch pós-commit → a confirmação permanece e o outcome do
+    recovery vira 302-aviso (programado) ou 503-suporte (sem recovery).
     """
     user = _require_user(request)
     active_role = request.session.get("active_role", "")
@@ -1045,6 +1068,37 @@ def procedure_review_confirm(request: HttpRequest, case_id: uuid.UUID) -> HttpRe
                 review_event_id=form.cleaned_data["review_event_id"],
                 source_fingerprint=form.cleaned_data["source_fingerprint"],
             )
+        except ProcedureReviewEnqueueAfterCommitError as exc:
+            # A confirmação já commitou; só o dispatch falhou (D7). Recovery
+            # programado → redirect 302 com aviso; sem recovery → detalhe de
+            # erro 503 com orientação de suporte (sem formulário/botão, sem
+            # PHI, sem sucesso falso). Nenhuma outra exceção é convertida.
+            if exc.recovery_scheduled:
+                logger.warning(
+                    "procedure_review_recovery_scheduled user=%s case=%s confirmacao=%s",
+                    user.pk,
+                    case_id,
+                    exc.confirmation_event_id,
+                )
+                messages.warning(
+                    request,
+                    f"Caso {case.display_reference} confirmado — a recuperação do "
+                    "processamento foi programada.",
+                )
+                return redirect(detail_url)
+            logger.warning(
+                "procedure_review_support_needed user=%s case=%s confirmacao=%s motivo=%s",
+                user.pk,
+                case_id,
+                exc.confirmation_event_id,
+                exc.reason_code,
+            )
+            messages.error(
+                request,
+                f"Caso {case.display_reference} confirmado, mas o processamento está "
+                "pendente de suporte — informe o número do caso à equipe técnica.",
+            )
+            return _procedure_review_support_error(case.case_id, case.display_reference)
         except Http404:
             raise
         except PermissionError as exc:

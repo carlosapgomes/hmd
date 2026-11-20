@@ -126,6 +126,19 @@
         mantêm o fluxo antigo.
       </li>
       <li>
+        <strong>Recuperação do processamento</strong>: a confirmação é
+        <strong>durável</strong> — se o envio ao processamento falhar após o
+        registro, o caso não volta atrás. O sistema agenda automaticamente uma
+        nova tentativa pelo agendador (cluster <code>llm</code>, uma única
+        vez, cerca de 60 segundos depois) e avisa na tela que a recuperação foi
+        programada. Se a própria programação falhar, a tela informa que o
+        processamento está <em>pendente de suporte</em>: anote o número do caso
+        e informe à equipe técnica — <strong>não reenvie o relatório nem tente
+        confirmar de novo</strong> (não há botão de repetição; a confirmação já
+        está registrada). Falhas de processamento continuam levando o caso a
+        <code>FAILED</code>, sem nova tentativa automática.
+      </li>
+      <li>
         <strong>Meus casos</strong> (<em>Meus casos</em>): a lista separa os casos
         <em>ativos</em> (em andamento) dos <em>encerrados</em> (<code>CLEANED</code>).
         O detalhe mostra documentos, trilha e comunicações apenas dos seus casos.

@@ -155,10 +155,10 @@ class CaseEventType(models.TextChoices):
     # slice 001, D1/D3): marcador de contrato (ENABLED, payload {version: 1}),
     # autoridade humana versionada (CONFIRMED), pedido FSM de reprocessamento
     # (REPROCESSING_REQUESTED, com confirmation_event_id), aplicação do
-    # conjunto confirmado ao reaproveitar a detecção nova (APPLIED) e
-    # invalidação definitiva correlacionada (INVALIDATED, com motivo). O
-    # evento de recuperação de enqueue (ENQUEUE_FAILED) é do slice 003 e NÃO
-    # nasce aqui (sem infraestrutura não usada).
+    # conjunto confirmado ao reaproveitar a detecção nova (APPLIED),
+    # invalidação definitiva correlacionada (INVALIDATED, com motivo) e falha
+    # de enqueue pós-commit (ENQUEUE_FAILED, slice 003, D7: payload terse com
+    # confirmation_event_id + recovery_scheduled + reason_code).
     CASE_PROCEDURE_REVIEW_ENABLED = (
         "CASE_PROCEDURE_REVIEW_ENABLED",
         "Contrato de revisão de procedimento ativo",
@@ -178,6 +178,10 @@ class CaseEventType(models.TextChoices):
     CASE_PROCEDURE_REVIEW_INVALIDATED = (
         "CASE_PROCEDURE_REVIEW_INVALIDATED",
         "Confirmação desconsiderada",
+    )
+    CASE_PROCEDURE_REPROCESS_ENQUEUE_FAILED = (
+        "CASE_PROCEDURE_REPROCESS_ENQUEUE_FAILED",
+        "Falha ao enfileirar reprocessamento",
     )
 
 

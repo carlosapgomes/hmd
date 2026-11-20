@@ -91,6 +91,7 @@ EVENT_LABELS: dict[str, str] = {
     ),
     CaseEventType.CASE_PROCEDURE_REVIEW_APPLIED: "Confirmação aplicada ao processamento",
     CaseEventType.CASE_PROCEDURE_REVIEW_INVALIDATED: "Confirmação desconsiderada",
+    CaseEventType.CASE_PROCEDURE_REPROCESS_ENQUEUE_FAILED: ("Falha ao enfileirar reprocessamento"),
 }
 
 # Categoria do badge por tipo (R1) — cobertura COMPLETA do enum.
@@ -143,6 +144,9 @@ EVENT_BADGE_CSS: dict[str, str] = {
     CaseEventType.CASE_PROCEDURE_REPROCESSING_REQUESTED: BADGE_NIR,
     CaseEventType.CASE_PROCEDURE_REVIEW_APPLIED: BADGE_SYSTEM,
     CaseEventType.CASE_PROCEDURE_REVIEW_INVALIDATED: BADGE_ATTENTION,
+    # Falha de enqueue pós-confirmação (confirm-nir, slice 003): erro
+    # operacional observável — vermelho pelo payload/sufixo, como os demais.
+    CaseEventType.CASE_PROCEDURE_REPROCESS_ENQUEUE_FAILED: BADGE_FAILURE,
 }
 
 

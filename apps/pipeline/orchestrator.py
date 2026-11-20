@@ -49,6 +49,7 @@ from apps.cases.procedure_review import (
     has_procedure_review_marker,
     is_gate_reason,
     is_processing_complete,
+    latest_confirmation_event,
     latest_confirmation_validity,
     pseudonym_map_digest_for_case,
     record_review_invalidated,
@@ -215,7 +216,42 @@ def _reconcile_stale_authority(case: Case) -> str:
     return "continue"
 
 
-def process_case_pipeline(case_id: uuid.UUID) -> None:
+def _normalize_recovery_call(
+    case_id: uuid.UUID | str, confirmation_event_id: int | str | None
+) -> tuple[uuid.UUID, int | None]:
+    """Normaliza os argumentos serializados do Schedule de recovery (D7).
+
+    O scheduler do django-q2 avalia os args persistidos (``ast.literal_eval``)
+    e entrega ``(str_uuid, int)`` — a normalização aqui garante que o destino
+    persistido execute corretamente. Seleção inválida (não-inteiro) é erro de
+    código: levanta ``ValueError`` sem efeito colateral.
+    """
+    normalized_case_id = case_id if isinstance(case_id, uuid.UUID) else uuid.UUID(str(case_id))
+    if confirmation_event_id is None:
+        return normalized_case_id, None
+    if isinstance(confirmation_event_id, bool):
+        raise ValueError(f"confirmation_event_id inválido: {confirmation_event_id!r}")
+    try:
+        normalized_confirmation = int(confirmation_event_id)
+    except (TypeError, ValueError):
+        raise ValueError(f"confirmation_event_id inválido: {confirmation_event_id!r}") from None
+    return normalized_case_id, normalized_confirmation
+
+
+def _is_stale_recovery(case: Case, confirmation_event_id: int) -> bool:
+    """Recovery refere-se a confirmação diferente da vigente? (D7).
+
+    Job atrasado (outra confirmação, caso concluído/encerrado ou sem
+    confirmação) é no-op: nunca reescreve a seleção nem duplica efeitos —
+    a autoridade vigente continua revalidada pelos guards normais.
+    """
+    latest = latest_confirmation_event(case)
+    return latest is None or latest.pk != confirmation_event_id
+
+
+def process_case_pipeline(
+    case_id: uuid.UUID | str, confirmation_event_id: int | str | None = None
+) -> None:
     """Processa o caso pelo pipeline LLM (entry point do worker/cluster llm).
 
     Idempotência por estado: ``LLM_EXTRACTING`` = pipeline completo (LLM1 +
@@ -227,15 +263,33 @@ def process_case_pipeline(case_id: uuid.UUID) -> None:
     motivo na trilha.
 
     Raises:
-        ValueError: caso inexistente.
+        ValueError: caso inexistente ou ``confirmation_event_id`` inválido.
         CaseLockConflictError: lock ativo de outro ator (inline — anomalia;
             propagada; em async o conflito é no-op com log).
+
+    ``confirmation_event_id`` (só o recovery ONCE fornece) fixa a execução à
+    confirmação vigente: job atrasado de outra confirmação é no-op (nunca
+    reescreve a seleção); entradas normais (sem o argumento) seguem intactas.
     """
+    normalized_case_id, normalized_confirmation = _normalize_recovery_call(
+        case_id, confirmation_event_id
+    )
+    # A partir daqui o fluxo usa o UUID normalizado (o Scheduler entrega str).
+    case_id = normalized_case_id
     try:
         case = Case.objects.get(case_id=case_id)
     except Case.DoesNotExist:
         logger.error("process_case_pipeline: caso %s não encontrado", case_id)
         raise ValueError(f"caso {case_id} não encontrado") from None
+
+    if normalized_confirmation is not None and _is_stale_recovery(case, normalized_confirmation):
+        logger.info(
+            "process_case_pipeline: recovery do caso %s refere-se a confirmacao "
+            "diferente da vigente (%s) — no-op",
+            case_id,
+            normalized_confirmation,
+        )
+        return
 
     if not _is_pipeline_state(case.status):
         logger.info(

@@ -15,12 +15,15 @@ Três receivers em ``CaseEvent.post_save`` — a trilha é a fonte de verdade
   avanço natural do orquestrador — ``complete_llm_extraction`` com ator
   system — NÃO re-enfileira: a task segue em execução própria).
 
-- **R5c — reprocessamento pós-confirmação NIR** (confirm-nir 001, D4):
-  ``event_type == CASE_PROCEDURE_REPROCESSING_REQUESTED`` → enqueue do mesmo
-  caso. Gatilho DISTINTO da entrada real (a self-transition
-  ``reprocess_after_procedure_review`` grava ``CASE_STATUS_LLM_EXTRACTING`` com
-  ``source=LLM_EXTRACTING`` e NÃO passa pelo filtro R5a; a self-transition do
-  worker ``start_llm_extraction`` também não dispara).
+- **R5c — reprocessamento pós-confirmação NIR** (confirm-nir 001, D4;
+  dono único em confirm-nir 003, D7): ``event_type ==
+  CASE_PROCEDURE_REPROCESSING_REQUESTED`` → dispatch seguro
+  (``enqueue_procedure_review_reprocessing``) do mesmo caso com o
+  ``confirmation_event_id`` do pedido. Gatilho DISTINTO da entrada real (a
+  self-transition ``reprocess_after_procedure_review`` grava
+  ``CASE_STATUS_LLM_EXTRACTING`` com ``source=LLM_EXTRACTING`` e NÃO passa
+  pelo filtro R5a; a self-transition do worker ``start_llm_extraction``
+  também não dispara).
 
 Todos via ``transaction.on_commit`` (nunca dentro da transação que ainda vai
 commitar — rollback não enfileira). Conflito de lock do claim em async é no-op
@@ -108,22 +111,33 @@ def enqueue_case_pipeline_reprocessing_after_review(
     created: bool,
     **kwargs: object,
 ) -> None:
-    """Enfileira o reprocessamento após confirmação NIR (R5c, D4).
+    """Enfileira o reprocessamento após confirmação NIR (R5c, D4/D7).
 
-    Único gatilho do reprocessamento: o evento auditado
-    ``CASE_PROCEDURE_REPROCESSING_REQUESTED`` da self-transition
+    Único gatilho e DONO ÚNICO do dispatch do reprocessamento: o evento
+    auditado ``CASE_PROCEDURE_REPROCESSING_REQUESTED`` da self-transition
     ``reprocess_after_procedure_review``. A transição em si
     (``CASE_STATUS_LLM_EXTRACTING`` com ``source=LLM_EXTRACTING``) não dispara
     nada (filtro R5a) e a self-transition do worker
     (``start_llm_extraction``) também não — sem loop, um único dispatch por
-    confirmação, via ``transaction.on_commit`` (rollback não enfileira).
+    confirmação, via ``transaction.on_commit(..., robust=False)`` (rollback
+    não enfileira; a exceção tipada do wrapper propaga pelo commit durável
+    até a view, sem converter em sucesso nem reverter a confirmação).
     """
     del sender, kwargs
     if not created:
         return
     if instance.event_type != CaseEventType.CASE_PROCEDURE_REPROCESSING_REQUESTED:
         return
-    from apps.pipeline.tasks import enqueue_case_pipeline
-
+    payload = instance.payload if isinstance(instance.payload, dict) else {}
+    confirmation_event_id = int(payload.get("confirmation_event_id", 0))
     case_id = instance.case_id
-    transaction.on_commit(lambda: enqueue_case_pipeline(case_id))
+
+    def _dispatch_after_commit() -> None:
+        from apps.pipeline.tasks import enqueue_procedure_review_reprocessing
+
+        enqueue_procedure_review_reprocessing(
+            case_id=case_id,
+            confirmation_event_id=confirmation_event_id,
+        )
+
+    transaction.on_commit(_dispatch_after_commit, robust=False)

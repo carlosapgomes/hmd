@@ -40,6 +40,15 @@ class Llm2Response(StrictModel):
     procedures: list[Llm2ProcedureRecommendation] = Field(min_length=1)
 
     @model_validator(mode="after")
+    def _reject_whitespace_only_summary(self) -> Self:
+        # D6 (slice 001): resumo só de espaços não é resumo útil — rejeição no
+        # schema dispara o retry corretivo e, esgotado, ``llm2_schema`` (FAILED),
+        # nunca um encaminhamento com relatório puro.
+        if not self.summary_text.strip():
+            raise ValueError("summary_text só com espaços não é resumo útil")
+        return self
+
+    @model_validator(mode="after")
     def _reject_duplicate_procedure_types(self) -> Self:
         seen: set[str] = set()
         for recommendation in self.procedures:

@@ -256,6 +256,13 @@
             <div class="small text-muted mt-1">
               {{ event.actor_display }}{% if event.actor_role %} · papel {{ event.actor_role|role_label }}{% endif %}
             </div>
+            {% if event.details %}
+            <ul class="small text-muted mt-1 mb-0">
+              {% for line in event.details %}
+              <li>{{ line }}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
           </div>
           <span class="small text-muted text-nowrap">{{ event.timestamp|date:"d/m/Y H:i" }}</span>
         </div>

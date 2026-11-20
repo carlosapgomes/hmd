@@ -75,6 +75,54 @@ detalhe read-only (`case_detail.html`).
       </div>
     </div>
 
+    {% if procedure_review_notice %}
+    <!-- Confirmação do NIR (confirm-nir-procedure-review, slice 004, D8/R1):
+         aviso determinístico APPLIED + CONFIRMED referenciada — confirmado,
+         mantido/trocado, anterior, detecção original e nova se diferente,
+         autor/data/justificativa (escapada) e ressalva clínica. Fora do texto
+         gerado pelo LLM; ausente em automático/legado (presenter = None). -->
+    <div class="card shadow-sm mb-4 doctor-report-card border-info">
+      <div class="card-header bg-white">
+        <h2 class="h5 mb-0">Procedimento confirmado pelo NIR</h2>
+      </div>
+      <div class="card-body">
+        <p class="mb-2">
+          <strong>{{ procedure_review_notice.confirmed_label }}</strong>
+          {% if procedure_review_notice.selection_changed %}
+          <span class="badge rounded-pill text-bg-warning">Seleção alterada</span>
+          {% else %}
+          <span class="badge rounded-pill text-bg-info">Seleção mantida</span>
+          {% endif %}
+        </p>
+        <dl class="small row mb-2">
+          <dt class="col-4 col-md-3 text-truncate">Declarado antes</dt>
+          <dd class="col-8 col-md-9 mb-1">{{ procedure_review_notice.previous_label }}</dd>
+          {% if procedure_review_notice.original_label %}
+          <dt class="col-4 col-md-3 text-truncate">Detecção original</dt>
+          <dd class="col-8 col-md-9 mb-1">{{ procedure_review_notice.original_label }}</dd>
+          {% endif %}
+          {% if procedure_review_notice.show_new_detection or not procedure_review_notice.new_detected %}
+          {% if procedure_review_notice.new_label %}
+          <dt class="col-4 col-md-3 text-truncate">Nova detecção</dt>
+          <dd class="col-8 col-md-9 mb-1">{{ procedure_review_notice.new_label }}</dd>
+          {% else %}
+          <dt class="col-4 col-md-3 text-truncate">Nova detecção</dt>
+          <dd class="col-8 col-md-9 mb-1">Nenhum procedimento detectado na nova extração.</dd>
+          {% endif %}
+          {% endif %}
+          <dt class="col-4 col-md-3 text-truncate">Confirmado por</dt>
+          <dd class="col-8 col-md-9 mb-1">
+            {{ procedure_review_notice.author_display }} em {{ procedure_review_notice.confirmed_at }}
+          </dd>
+        </dl>
+        {% if procedure_review_notice.justification %}
+        <p class="small mb-2"><strong>Justificativa do NIR:</strong> {{ procedure_review_notice.justification }}</p>
+        {% endif %}
+        <p class="small text-muted mb-0">A confirmação do NIR não é aprovação clínica; a decisão permanece com o médico.</p>
+      </div>
+    </div>
+    {% endif %}
+
     <!-- Procedimentos do caso -->
     <div class="card shadow-sm mb-4 doctor-report-card">
       <div class="card-header bg-white">

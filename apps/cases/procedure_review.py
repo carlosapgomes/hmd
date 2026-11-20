@@ -384,6 +384,183 @@ def get_valid_confirmation(case: Case) -> tuple[tuple[str, ...] | None, CaseEven
     return ordered, event
 
 
+# ── Aviso médico + auditoria legível (slice 004, D8/R1–R2) ─────────────────
+
+_PROFILE_LABEL_BY_TYPE: dict[str, str] = {
+    profile.procedure_type: profile.label for profile in PROCEDURE_PROFILES
+}
+
+
+def _type_label(procedure_type: str) -> str:
+    """Rótulo canônico do tipo (fallback: o próprio código)."""
+    return _PROFILE_LABEL_BY_TYPE.get(procedure_type, procedure_type)
+
+
+def _ordered_labels(procedure_types: Iterable[str]) -> str:
+    """Rótulos na ordem canônica do catálogo, unidos por " + "."""
+    ordered = sorted(
+        (str(item) for item in procedure_types),
+        key=lambda code: _CATALOG_ORDER.get(code, len(_CATALOG_ORDER)),
+    )
+    return " + ".join(_type_label(code) for code in ordered)
+
+
+def _sanitized_procedure_list(value: object) -> tuple[str, ...]:
+    """Lista de tipos válidos do catálogo em ordem canônica (D3)."""
+    if not isinstance(value, list):
+        return ()
+    detected = [str(item) for item in value if isinstance(item, str) and item in _CATALOG_TYPES]
+    return tuple(sorted(detected, key=_CATALOG_ORDER.__getitem__))
+
+
+def build_doctor_confirmation_notice(case: Case) -> dict[str, object] | None:
+    """Projeção determinística do aviso médico (D8/R1–R2, puro, sem writes).
+
+    Fonte: ``APPLIED`` mais recente + ``CONFIRMED`` referenciada (nunca o
+    último CONFIRMED solto nem metadata mutável). Sem aplicação/confirmação
+    localizável, sem ator ou com referência quebrada → ``None`` (nenhum aviso
+    fictício em automático/legado). Detecção original vem da revisão
+    referenciada (só classes match/missing_declaration); detecção nova vem
+    exatamente de ``APPLIED.automatic_procedures`` (ordem canônica,
+    admitindo ``[]``) — nunca uniões/conflitos. Textos livres seguem crus no
+    dict; o template escapa (nunca ``mark_safe``).
+    """
+    applied = (
+        CaseEvent.objects.filter(case=case, event_type=CaseEventType.CASE_PROCEDURE_REVIEW_APPLIED)
+        .order_by("-timestamp", "-id")
+        .first()
+    )
+    if applied is None or not isinstance(applied.payload, dict):
+        return None
+    confirmation_id = applied.payload.get("confirmation_event_id")
+    if not _is_int(confirmation_id):
+        return None
+    assert isinstance(confirmation_id, int)
+    confirmation = CaseEvent.objects.filter(
+        case=case,
+        event_type=CaseEventType.CASE_PROCEDURE_REVIEW_CONFIRMED,
+        pk=confirmation_id,
+    ).first()
+    if confirmation is None or not isinstance(confirmation.payload, dict):
+        return None
+    if confirmation.actor_id is None:
+        return None
+    payload = confirmation.payload
+    confirmed = _sanitized_procedure_list(payload.get("confirmed_procedures"))
+    if len(confirmed) != 1:
+        return None
+    previous = _sanitized_procedure_list(payload.get("previous_declared_procedures"))
+    if not previous:
+        return None
+    selection_changed = payload.get("selection_changed")
+    if not isinstance(selection_changed, bool):
+        return None
+    review_event_id = payload.get("review_event_id")
+    if not _is_int(review_event_id):
+        return None
+    assert isinstance(review_event_id, int)
+    review = CaseEvent.objects.filter(case=case, pk=review_event_id).first()
+    if review is None or review.event_type != CaseEventType.CASE_GATE_PROCEDURE_DIVERGENCE:
+        return None
+    original = original_detected_types(review)
+    new_detected = _sanitized_procedure_list(applied.payload.get("automatic_procedures"))
+    justification = payload.get("justification")
+    justification_text = str(justification).strip() if isinstance(justification, str) else ""
+    actor = confirmation.actor
+    author_display = ""
+    if actor is not None:
+        display = getattr(actor, "display_name", "")
+        author_display = str(display).strip() if display else ""
+        if not author_display:
+            author_display = getattr(actor, "username", "") or ""
+    if not author_display:
+        return None
+    from django.utils.timezone import localtime as _localtime
+
+    timestamp = confirmation.timestamp
+    return {
+        "confirmed_procedures": confirmed,
+        "confirmed_label": _ordered_labels(confirmed),
+        "previous_declared_procedures": previous,
+        "previous_label": _ordered_labels(previous),
+        "selection_changed": selection_changed,
+        "original_detected": original,
+        "original_label": _ordered_labels(original),
+        "new_detected": new_detected,
+        "new_label": _ordered_labels(new_detected),
+        "show_new_detection": tuple(new_detected) != tuple(original),
+        "author_display": author_display,
+        "author_role": confirmation.actor_role or "",
+        "confirmed_at": _localtime(timestamp).strftime("%d/%m/%Y %H:%M") if timestamp else "",
+        "justification": justification_text,
+    }
+
+
+_INVALIDATED_REASON_LABELS: dict[str, str] = {
+    REASON_SOURCE_CHANGED: "a fonte principal mudou após a revisão",
+    REASON_SOURCE_UNAVAILABLE: "a fonte principal ficou indisponível",
+    REASON_ANONYMIZED_MISMATCH: "o texto anonimizado mudou após a revisão",
+    REASON_ANONYMIZATION_MISSING: "o texto anonimizado ficou indisponível",
+    REASON_MAP_MISMATCH: "o mapa de pseudônimos mudou após a revisão",
+    REASON_REVIEW_SUPERSEDED: "há revisão mais recente",
+    REASON_DECLARATION_CHANGED: "a seleção declarada mudou após a confirmação",
+    REASON_PAYLOAD_INVALID: "o registro da confirmação está inválido",
+    REASON_ACTOR_INVALID: "a autoria da confirmação está inválida",
+}
+
+
+def event_detail_lines(event: CaseEvent) -> list[str]:
+    """Linhas legíveis da trilha do painel para os eventos da revisão (D8).
+
+    Projetadas só do payload (sem consultar o Case mutável); ``[]`` para
+    qualquer outro tipo — leitores passam todos os eventos por aqui sem
+    ramificar por tipo na view.
+    """
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    event_type = event.event_type
+    if event_type == CaseEventType.CASE_PROCEDURE_REVIEW_CONFIRMED:
+        previous = _sanitized_procedure_list(payload.get("previous_declared_procedures"))
+        confirmed = _sanitized_procedure_list(payload.get("confirmed_procedures"))
+        if not previous or not confirmed:
+            return []
+        lines: list[str] = []
+        if payload.get("selection_changed"):
+            lines.append(
+                f"Seleção alterada: {_ordered_labels(previous)} → {_ordered_labels(confirmed)}."
+            )
+        else:
+            lines.append(f"Seleção mantida: {_ordered_labels(confirmed)}.")
+        justification = payload.get("justification")
+        if isinstance(justification, str) and justification.strip():
+            lines.append(f"Justificativa: {justification.strip()}")
+        return lines
+    if event_type == CaseEventType.CASE_PROCEDURE_REVIEW_APPLIED:
+        effective = _sanitized_procedure_list(payload.get("effective_procedures"))
+        automatic = _sanitized_procedure_list(payload.get("automatic_procedures"))
+        if not effective:
+            return []
+        lines = [f"Conjunto em análise: {_ordered_labels(effective)}."]
+        if automatic:
+            lines.append(f"Detecção automática registrada: {_ordered_labels(automatic)}.")
+        else:
+            lines.append("Nenhum procedimento detectado na nova extração.")
+        return lines
+    if event_type == CaseEventType.CASE_PROCEDURE_REVIEW_INVALIDATED:
+        reason = payload.get("reason")
+        label = _INVALIDATED_REASON_LABELS.get(str(reason), str(reason or "motivo técnico"))
+        return [f"Confirmação desconsiderada: {label}. A análise segue as regras automáticas."]
+    if event_type == CaseEventType.CASE_PROCEDURE_REVIEW_ENABLED:
+        return ["Caso sob o contrato de revisão de procedimento do NIR."]
+    if event_type == CaseEventType.CASE_PROCEDURE_REPROCESSING_REQUESTED:
+        return ["Reprocessamento do mesmo caso solicitado após confirmação."]
+    if event_type == CaseEventType.CASE_PROCEDURE_REPROCESS_ENQUEUE_FAILED:
+        scheduled = payload.get("recovery_scheduled") is True
+        if scheduled:
+            return ["Falha ao enfileirar o reprocessamento; recuperação programada."]
+        return ["Falha ao enfileirar o reprocessamento; processamento pendente de suporte."]
+    return []
+
+
 # ── Detecção original e conjunto efetivo ───────────────────────────────────
 
 

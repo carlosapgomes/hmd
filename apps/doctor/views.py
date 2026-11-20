@@ -85,6 +85,7 @@ from apps.cases.locks import (
 from apps.cases.models import Case, CaseDocument, CaseStatus, DoctorDisposition
 from apps.cases.navigation import resolve_safe_next_url
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES, VALID_DOCTOR_SUBTYPES
+from apps.cases.procedure_review import has_procedure_review_marker, is_processing_complete
 from apps.cases.procedures import get_declared_procedure_types, record_doctor_procedure_decisions
 
 from .access import DoctorAccess, can_access_case
@@ -120,6 +121,13 @@ ALREADY_DECIDED_DETAIL_MESSAGE = (
 )
 ALREADY_DECIDED_RACE_MESSAGE = "Caso já decidido por outro médico — sua decisão não foi registrada."
 NO_DECLARED_PROCEDURES_MESSAGE = "Não há procedimentos declarados para este caso — nada a decidir."
+# Guarda de completude do trabalho médico (confirm-nir, slice 004, D6/R4): caso
+# novo marcado sem resumo/análise completos recusa GET/POST sem efeitos — o
+# detalhe autorizado e o PDF seguem consultáveis, sem formulário decidível.
+INCONSISTENT_CASE_MESSAGE = (
+    "Caso com processamento inconsistente — resumo ou análise indisponível. "
+    "Consulte o detalhe e aguarde a conclusão do processamento."
+)
 # Fechamento da negativa total (nir-result-closure, slice 001): falha rara
 # entre a decisão e a publicação da resposta final ao NIR — a decisão fica
 # registrada e o caso permanece DOCTOR_DENIED, visível e operável via admin
@@ -736,6 +744,13 @@ def case_decide(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
             )
             messages.error(request, ALREADY_DECIDED_RACE_MESSAGE)
             return redirect(detail_url)
+        if has_procedure_review_marker(case) and not is_processing_complete(case):
+            # Slice 004 (D6/R4): caso novo marcado sem completude recusa o
+            # POST direto sem efeitos — sem decisão parcial, sem encaminhar
+            # como pronto (o PDF segue consultável no detalhe).
+            logger.warning("doctor_decide_incomplete user=%s case=%s", user.pk, case.case_id)
+            messages.error(request, INCONSISTENT_CASE_MESSAGE)
+            return redirect(detail_url)
         form = DoctorDecisionForm(request.POST, case=case)
         if token is None or not form.is_valid():
             # R6/D2: sem reserva vigente (token ausente/ilegível) o POST não
@@ -817,6 +832,12 @@ def case_decide(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     if case.status != CaseStatus.AWAITING_DOCTOR:
         # R2: GET de caso já decidido → detalhe read-only com mensagem.
         messages.info(request, ALREADY_DECIDED_DETAIL_MESSAGE)
+        return redirect(detail_url)
+    if has_procedure_review_marker(case) and not is_processing_complete(case):
+        # Slice 004 (D6/R4): GET de trabalho em caso novo inconsistente não
+        # exibe formulário decidível sobre relatório puro — redirect ao
+        # detalhe com informação clara, sem reserva e sem efeitos.
+        messages.error(request, INCONSISTENT_CASE_MESSAGE)
         return redirect(detail_url)
     # R4/D2: abrir a página de trabalho RESERVA o caso (claim atômico com a
     # lease longa do contexto). Reserva ativa de OUTRO médico barra a abertura

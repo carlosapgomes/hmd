@@ -4,6 +4,29 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.21] — 2026-11-20
+
+**Confirmação autoritativa de procedimento pelo NIR (paridade ats-web)** —
+1 change (`confirm-nir-procedure-review`), 4 slices TDD com revisão
+independente por slice. Suíte 2031 → **2210** (+179 testes). Sem
+migrations (deploy direto).
+
+- Nos casos enviados após a implantação, o bypass de divergência vira
+  revisão explícita: o NIR escolhe **um único procedimento entre os 13**
+  do catálogo com justificativa (1–500 caracteres) e confirmação de
+  leitura — mesmo para manter o exame original; autorização, revisão e
+  fonte validadas sob transação.
+- Confirmação humana registrada como autoritativa com reprocessamento do
+  **mesmo caso** desde LLM1 (perfil confirmado → policy → prior-case →
+  LLM2); PDF, anexos, texto extraído, anonimização e história
+  preservados; sem loop pela mesma divergência; falha no worker vira
+  `FAILED` operacional com recuperação automática de enqueue (sem novo
+  envio externo).
+- Médico recebe resumo e análise do procedimento confirmado com aviso de
+  confirmação × detecção automática (autor, data, justificativa) e
+  ressalva de decisão clínica exclusiva; casos anteriores e bypasses
+  antigos não são reinterpretados.
+
 ## [0.1.20] — 2026-11-18
 
 **Retenção temporária no encerramento + auditoria do painel (ADR-0010) +

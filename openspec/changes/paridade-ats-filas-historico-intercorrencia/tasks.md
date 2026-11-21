@@ -27,9 +27,11 @@ Contrato: [slice-002-fundacao-intercorrencia.md](slices/slice-002-fundacao-inter
 
 Contrato: [slice-003-busca-nir-encerrados.md](slices/slice-003-busca-nir-encerrados.md). Depende de 002. Design D1/D6; specs delta `intake-nir` (ADDED) + `post-closure-issue` (superfície).
 
-- [ ] 3.1 Demonstrar RED: busca por nome/nº sobre encerrados + intercorrências ativas de qualquer criador (cap 50, estado vazio, referência humana, 403 para não-NIR), detalhe histórico read-only com trilha e POST de abertura para elegíveis.
-- [ ] 3.2 Implementar views/urls/form/templates próprios com guarda de escopo histórico (guard criador do detalhe vigente intocado), elegibilidade exibida na busca e no detalhe, flash + redirect no POST; verificar todos os cenários do delta `intake-nir`.
-- [ ] 3.3 Executar bateria completa e produzir relatório em `/tmp/hmd-slice-003-report.md`.
+- [x] 3.1 Demonstrar RED: busca por nome/nº sobre encerrados + intercorrências ativas de qualquer criador (cap 50, estado vazio, referência humana, 403 para não-NIR), detalhe histórico read-only com trilha e POST de abertura para elegíveis.
+- [x] 3.2 Implementar views/urls/form/templates próprios com guarda de escopo histórico (guard criador do detalhe vigente intocado), elegibilidade exibida na busca e no detalhe, flash + redirect no POST; verificar todos os cenários do delta `intake-nir`.
+- [x] 3.3 Executar bateria completa e produzir relatório em `/tmp/hmd-slice-003-report.md`.
+
+> Nota de execução: loop controlado pela pai (pi-subagents-openspec-loop/2) — implementação 1 rodada + review 1 (BLOCK: P1 navegação + P2 contratual R3) + fix 1 rodada + review 2 FINAL («OK with notes»); gate pai pós-fix: ruff/format/mypy verdes, pytest 2265 passed. **P2 deferido**: RED do teste da corrida (rodada 1) demonstrou falha de fixture, não de comportamento — evidência de qualidade a revisar em polimento futuro (teste verde e guard existente no slice 002). P2 do slice 002 (corrida abertura×abertura) EMBUTIDO neste slice (1 teste, sem mudança de produção). Evidências: `/tmp/hmd-slice-003-report.md`, `/tmp/hmd-slice-003-fix-1-report.md`, raiz `slice-003-20261121T165805`.
 
 ## 4. Slice 004 — Histórico do agendador e carimbos de decisão de agendamento
 

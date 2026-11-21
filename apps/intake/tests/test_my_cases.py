@@ -29,7 +29,8 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS, administratively_close_case
 from apps.cases.communications import post_user_communication
-from apps.cases.models import Case, CaseDocument, CaseStatus
+from apps.cases.events import CaseEventType
+from apps.cases.models import ActorType, Case, CaseDocument, CaseEvent, CaseStatus
 from apps.intake.services import create_case_with_documents
 
 NIR_ROLE = "nir"
@@ -140,14 +141,14 @@ def test_retention_and_failed_badges(
 
 
 @pytest.mark.django_db
-def test_detail_shows_docs_and_communications_without_trail(
+def test_detail_shows_docs_communications_and_trail(
     client: Client,
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R2/cenário spec: detalhe do próprio caso mostra docs e comunicações —
-    SEM a trilha de eventos (slice 003 do painel-ats-parity: a trilha vive no
-    painel)."""
+    """R2/cenário spec: detalhe do próprio caso mostra docs, comunicações e a
+    trilha de eventos (trilha-eventos-todos-perfis, slice 002, R1) — a mesma
+    trilha do painel, em card collapsible FECHADO por padrão."""
     case = _retain_for_review(_create_case(nir_user, pdf_factory, "relatorio-sesab.pdf"))
     documents = list(case.documents.all())
     assert len(documents) == 1
@@ -168,9 +169,16 @@ def test_detail_shows_docs_and_communications_without_trail(
     for document in documents:
         assert document.original_filename in body
         assert reverse("intake:serve_document", args=[case.case_id, document.pk]) in body
-    # Sem trilha de eventos no detalhe do NIR (vive no painel).
-    assert "Trilha de eventos" not in body
-    assert "Procedimentos declarados pelo NIR" not in body
+    # Trilha de eventos ao final, FECHADA por padrão (mesmo partial do painel).
+    assert "Trilha de eventos" in body
+    assert '<div class="collapse" id="case-event-trail">' in body
+    assert 'aria-expanded="false"' in body
+    assert 'data-bs-toggle="collapse"' in body
+    assert "collapse show" not in body
+    # Rótulo legível + ator NIR com papel pt-BR (nunca o tipo bruto).
+    assert "Procedimentos declarados pelo NIR" in body
+    assert nir_user.username in body
+    assert "papel nir" in body
     assert "CASE_STATUS_PDF_EXTRACTING" not in body
     # Thread de comunicações (change 03).
     assert "Comunicações" in body
@@ -567,12 +575,13 @@ def test_foreign_case_identification_not_leaked(
 
 
 @pytest.mark.django_db
-def test_detail_failed_case_shows_error_badge_without_trail(
+def test_detail_failed_case_shows_error_badge_and_trail(
     client: Client,
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R3/D4: caso ``FAILED`` exibe badge de erro e nenhuma trilha/motivo técnico."""
+    """R3/D4: caso ``FAILED`` exibe badge de erro e a trilha (fechada); o
+    motivo técnico NÃO aparece no detalhe (só o rótulo legível do evento)."""
     case = _fail_case(_create_case(nir_user, pdf_factory, "relatorio-sesab.pdf"))
 
     client.force_login(nir_user)
@@ -581,13 +590,58 @@ def test_detail_failed_case_shows_error_badge_without_trail(
 
     assert response.status_code == 200
     assert case.status == CaseStatus.FAILED
-    assert "Trilha de eventos" not in body
+    assert "Trilha de eventos" in body
+    assert '<div class="collapse" id="case-event-trail">' in body
+    assert "collapse show" not in body
+    assert "Falha no processamento" in body
     assert re.search(
         r'<span class="badge rounded-pill text-bg-danger[^"]*">Falha no processamento</span>',
         body,
     )
-    # O motivo técnico não aparece no detalhe do NIR (vive na trilha do painel).
+    # O motivo técnico não aparece no detalhe do NIR (fora da renderização).
     assert "falha na extração do PDF" not in body
+
+
+@pytest.mark.django_db
+def test_detail_trail_shows_doctor_and_scheduler_actors(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """Cenário «Trilha do NIR mostra quem fez o quê»: decisão médica com o
+    NOME do médico e agendamento com o NOME do agendador (papel pt-BR)."""
+    case = _create_case(nir_user, pdf_factory)
+    doctor = user_factory("medico-decisao", DOCTOR_ROLE)
+    CaseEvent.objects.create(
+        case=case,
+        actor_type=ActorType.USER,
+        actor=doctor,
+        actor_role=DOCTOR_ROLE,
+        event_type=CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED,
+        payload={},
+    )
+    scheduler = user_factory("agendador-trilha", "scheduler")
+    CaseEvent.objects.create(
+        case=case,
+        actor_type=ActorType.USER,
+        actor=scheduler,
+        actor_role="scheduler",
+        event_type=CaseEventType.CASE_STATUS_SCHEDULING_CONFIRMED,
+        payload={},
+    )
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:case_detail", args=[case.case_id])).content.decode()
+
+    assert "Trilha de eventos" in body
+    trail = body.split("Trilha de eventos")[-1]
+    assert "Decisões médicas por procedimento registradas" in trail
+    assert doctor.username in trail
+    assert "papel médico" in trail
+    assert "Agendamento confirmado" in trail
+    assert scheduler.username in trail
+    assert "papel agendador" in trail
 
 
 # ── R2: cards sem o uid do caso (queues-remove-uid) ───────────────────────

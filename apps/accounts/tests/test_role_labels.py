@@ -220,8 +220,8 @@ def test_dashboard_trail_system_role_falls_back_to_raw_key(client: Client) -> No
 
 @pytest.mark.django_db
 def test_doctor_decision_card_shows_role_label(client: Client) -> None:
-    """R3: o card de decisões do detalhe médico exibe "papel médico" (a trilha
-    saiu do detalhe no slice 003 do painel-ats-parity — resta UM ponto)."""
+    """R3: o card de decisões E a trilha do detalhe médico exibem
+    "papel médico" (slice 002: a trilha volta ao detalhe via partial)."""
     creator = _create_user(username="nir.criador", role_names=["nir"])
     event_actor = _create_user(username="ator.medico", role_names=[DOCTOR_ROLE])
     message_author = _create_user(username="autor.supervisor", role_names=[MANAGER_ROLE])
@@ -233,16 +233,18 @@ def test_doctor_decision_card_shows_role_label(client: Client) -> None:
 
     body = client.get(reverse("doctor:case_detail", args=[case.case_id])).content.decode()
 
-    # Ator/data do evento de decisão (a trilha não é mais renderizada aqui).
-    assert body.count("papel médico") == 1
+    # Trilha + card de decisão: DOIS pontos com "papel médico".
+    assert "Trilha de eventos" in body
+    assert '<div class="collapse" id="case-event-trail">' in body
+    assert "collapse show" not in body
+    assert body.count("papel médico") == 2
     assert "papel doctor" not in body
-    assert "Trilha de eventos" not in body
 
 
 @pytest.mark.django_db
-def test_intake_communication_shows_labels_without_trail(client: Client) -> None:
-    """R3: o badge de comunicação do detalhe NIR exibe o rótulo; a trilha de
-    eventos saiu do detalhe (slice 003 do painel-ats-parity)."""
+def test_intake_communication_and_trail_show_labels(client: Client) -> None:
+    """R3: o badge de comunicação do detalhe NIR exibe "supervisor" e a
+    trilha (slice 002) exibe "papel médico" para o evento de decisão."""
     creator = _create_user(username="nir.criador", role_names=["nir"])
     event_actor = _create_user(username="ator.medico", role_names=[DOCTOR_ROLE])
     message_author = _create_user(username="autor.supervisor", role_names=[MANAGER_ROLE])
@@ -255,8 +257,11 @@ def test_intake_communication_shows_labels_without_trail(client: Client) -> None
 
     assert ">supervisor</span>" in body
     assert "papel manager" not in body
-    assert "Trilha de eventos" not in body
-    assert "papel médico" not in body
+    assert "Trilha de eventos" in body
+    assert '<div class="collapse" id="case-event-trail">' in body
+    assert "collapse show" not in body
+    assert "papel médico" in body
+    assert "papel doctor" not in body
 
 
 @pytest.mark.django_db

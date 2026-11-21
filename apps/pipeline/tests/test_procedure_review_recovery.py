@@ -325,10 +325,14 @@ def test_dispatch_failure_preserves_confirmation_and_schedules_recovery(
         "recovery_scheduled": True,
         "reason_code": "enqueue_failed",
     }
-    sensitive = (sched.args or "") + json.dumps(event.payload) + follow.content.decode()
+    sensitive = (sched.args or "") + json.dumps(event.payload)
     assert "Fulano" not in sensitive
     assert "123.456" not in sensitive
     assert "Fulano" not in caplog.text
+    # Paridade total (design D4, decisão do dono 2026-11-21, opção B): a trilha
+    # no detalhe do NIR exibe a justificativa do evento
+    # CASE_PROCEDURE_REVIEW_CONFIRMED, como o painel.
+    assert "Justificativa:" in follow.content.decode()
 
 
 @pytest.mark.django_db(transaction=True)

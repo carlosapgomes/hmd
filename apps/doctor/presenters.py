@@ -17,9 +17,10 @@ reais).
 
 Slice 004 (R5): o contexto ganha a seção de decisões pós-decisão — cada row
 declarada leva ``reason``/``decided_at`` e o ator/data do evento
-``CASE_DOCTOR_DECISIONS_RECORDED`` (``decision_event``). A trilha de eventos
-saiu do detalhe médico no slice 003 do painel-ats-parity (D4): passou a viver
-no painel, e o detalhe médico só mantém o ator/data da decisão.
+``CASE_DOCTOR_DECISIONS_RECORDED`` (``decision_event``). Slice 002 do
+trilha-eventos-todos-perfis (R2): a trilha de eventos volta ao detalhe médico
+(``event_trail`` — a mesma do painel) e o ``decision_event`` passa a ser
+DERIVADO da lista carregada, sem query dedicada (card inalterado).
 
 Anexos (attachment-processing-ocr, slice 004/D5): seção aditiva
 ``attachments`` — card por anexo com nome/método/status/badge e
@@ -46,10 +47,10 @@ from django.utils.timezone import localtime
 
 from apps.anonymization.reidentify import reidentify, reidentify_structure, reidentify_text
 from apps.attachments.models import AttachmentStatus, CaseAttachment, ExtractionMethod, PatientMatch
+from apps.cases.event_trail import build_event_trail_context
 from apps.cases.events import CaseEventType
 from apps.cases.models import (
     Case,
-    CaseEvent,
     CaseProcedure,
     CaseStatus,
     DetectionStatus,
@@ -321,21 +322,31 @@ def _format_datetime(value: datetime | None) -> str:
     return localtime(value).strftime(_DATETIME_DISPLAY_FORMAT)
 
 
-# ── Ator/data da decisão (slice 003 do painel-ats-parity, D4) ──────────────
+# ── Trilha + ator/data da decisão (slice 002, R2) ──────────────────────────
 
 
-def _decision_event_summary(event: CaseEvent) -> dict[str, object]:
+def _derive_decision_event(event_trail: list[dict[str, object]]) -> dict[str, object] | None:
     """Ator/data do evento canônico de decisão para o card «Decisões registradas».
 
-    A TRILHA saiu do detalhe médico (vive no painel — slice 003 do
-    painel-ats-parity): o presenter não monta mais a lista de eventos, mas o
-    card pós-decisão continua exibindo quem decidiu e quando, por consulta
-    DEDICADA ao evento ``CASE_DOCTOR_DECISIONS_RECORDED`` mais recente.
+    DERIVADO da lista da trilha já carregada (último
+    ``CASE_DOCTOR_DECISIONS_RECORDED``) — sem query dedicada; o card renderiza
+    IDÊNTICO (ator/data).
     """
+    decision_entry = next(
+        (
+            item
+            for item in reversed(event_trail)
+            if item["event_type"] == CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED
+        ),
+        None,
+    )
+    if decision_entry is None:
+        return None
+    timestamp = decision_entry["timestamp"]
     return {
-        "actor_display": event.actor.display_name if event.actor else "Sistema",
-        "actor_role": event.actor_role,
-        "timestamp": _format_datetime(event.timestamp),
+        "actor_display": decision_entry["actor_display"],
+        "actor_role": decision_entry["actor_role"],
+        "timestamp": _format_datetime(timestamp if isinstance(timestamp, datetime) else None),
     }
 
 
@@ -432,11 +443,12 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
     re-identificados por seção, alertas consultivos da policy por procedimento
     com a sugestão do LLM2, requisitos gerais acionáveis, prior-case com motivo
     real, a flag ``can_decide`` (= estado ``AWAITING_DOCTOR``), o ator/data da
-    decisão (``decision_event``, consulta dedicada) e a flag ``is_failed`` para
+    decisão (``decision_event``, derivado da trilha), a trilha de eventos
+    (``event_trail`` — a mesma do painel, ao final do detalhe) e a flag
+    ``is_failed`` para
     o badge de erro. ``declared`` carrega TODAS as rows do caso — declaradas
     primeiro (ordem canônica do contrato) e depois as detectadas não-declaradas
     que sobrevivem ao bypass da divergência — numa leitura única da relação. A
-    trilha de eventos saiu do detalhe médico (vive no painel). A
     re-identificação usa exclusivamente o mapa do caso (tokens de espaços
     alheios podem sobrar como tokens — sem vazamento). Caso sem artefatos →
     seções vazias.
@@ -538,15 +550,12 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
 
     sections = build_structure_sections(structured)
 
-    # Ator/data da decisão (D4): consulta DEDICADA ao evento canônico mais
-    # recente — a trilha saiu do detalhe médico (vive no painel).
-    decision_event_row = (
-        case.events.filter(event_type=CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED)
-        .select_related("actor")
-        .order_by("-id")
-        .first()
-    )
-    decision_event = _decision_event_summary(decision_event_row) if decision_event_row else None
+    # Trilha de eventos (slice 002, R2): a mesma trilha do painel, em card
+    # collapsible ao final do detalhe; o ``decision_event`` do card «Decisões
+    # registradas» é DERIVADO da lista carregada (último
+    # ``CASE_DOCTOR_DECISIONS_RECORDED``) — sem query dedicada, card idêntico.
+    event_trail = build_event_trail_context(case)
+    decision_event = _derive_decision_event(event_trail)
 
     # Cards de anexo (slice 004, D5): seção aditiva — casos sem anexos
     # permanecem com o contexto do change 07 intacto (chave ausente).
@@ -577,6 +586,7 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
         "aggregate": _build_aggregate(suggestions.get("aggregate")),
         "prior_cases": _build_prior_cases(case, declared_types),
         "decision_event": decision_event,
+        "event_trail": event_trail,
         "is_failed": case.status == CaseStatus.FAILED,
         "has_structure": any(section["lines"] for section in sections),
     }

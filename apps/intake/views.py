@@ -58,6 +58,7 @@ from apps.accounts.decorators import role_required
 from apps.accounts.models import User
 from apps.attachments.models import CaseAttachment
 from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS, acknowledge_case_receipt
+from apps.cases.event_trail import build_event_trail_context
 from apps.cases.events import CaseEventType
 from apps.cases.locks import CaseLockConflictError
 from apps.cases.models import (
@@ -569,6 +570,9 @@ def _assemble_case_detail_context(
         "attachments": attachments,
         "attachment_items": attachment_items,
         "communications": communications,
+        # Trilha de eventos (trilha-eventos-todos-perfis, slice 002, R1):
+        # a mesma trilha do painel, em card collapsible ao final do detalhe.
+        "event_trail": build_event_trail_context(case),
         "procedure_rows": procedure_rows,
         "declared_procedure_rows": [row for row in procedure_rows if row["is_declared"]],
         "detected_extra_procedure_rows": [
@@ -591,14 +595,15 @@ def _assemble_case_detail_context(
 
 @role_required("nir")
 def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
-    """Detalhe do caso do próprio NIR: docs, comunicações e resultado.
+    """Detalhe do caso do próprio NIR: docs, comunicações, resultado e trilha.
 
     O queryset filtra ``created_by=user`` — caso alheio (ou inexistente)
     responde 404 sem vazar informação (D6/D9). Exibe status/timestamps, tipos
     declarados, flag de retenção com motivo, documentos com link de abertura
-    (``serve_document``) e a thread de comunicações do change 03 — SEM a
-    trilha de eventos (slice 003 do painel-ats-parity: a trilha vive no
-    painel; falha aparece como badge de erro). Quando o caso
+    (``serve_document``), a thread de comunicações do change 03 e a trilha de
+    eventos (slice 002 do trilha-eventos-todos-perfis: a mesma trilha do
+    painel, em card collapsible fechado ao final) — falha aparece também como
+    badge de erro. Quando o caso
     passou da decisão médica (slice 003, R1/D3), ganha também a seção de
     resultado: decisões por procedimento (label + disposição + motivo real),
     dados de agendamento (unidade/data/local quando houver) e a resposta final

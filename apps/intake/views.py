@@ -46,6 +46,7 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
+from django.db.models import Q
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -57,7 +58,13 @@ from django.views.decorators.http import require_POST
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
 from apps.attachments.models import CaseAttachment
-from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS, acknowledge_case_receipt
+from apps.cases.closure import (
+    ADMINISTRATIVE_CLOSURE_REASONS,
+    POST_CLOSURE_ISSUE_STATUS_OPENED,
+    acknowledge_case_receipt,
+    get_post_closure_issue_ineligibility_reason,
+    open_post_closure_issue,
+)
 from apps.cases.event_trail import build_event_trail_context
 from apps.cases.events import CaseEventType
 from apps.cases.locks import CaseLockConflictError
@@ -80,7 +87,12 @@ from apps.cases.procedures import get_declared_procedure_types
 from apps.cases.units import unit_label
 from apps.pipeline.tasks import ProcedureReviewEnqueueAfterCommitError
 
-from .forms import CorrectedResubmissionForm, IntakeUploadForm, ProcedureReviewForm
+from .forms import (
+    CorrectedResubmissionForm,
+    IntakeUploadForm,
+    PostClosureIssueForm,
+    ProcedureReviewForm,
+)
 from .services import (
     INTAKE_DISABLED_MESSAGE,
     PDF_CONTENT_TYPE,
@@ -488,6 +500,161 @@ def my_cases_partial(request: HttpRequest) -> HttpResponse:
     escopo por criador com os mesmos filtros/aba da URL.
     """
     return render(request, "intake/_my_cases_content.html", _build_my_cases_context(request))
+
+
+# ── Busca NIR de encerrados + detalhe histórico (paridade-ats, slice 003) ──
+
+# Cap da busca histórica (D6): no máximo 50 resultados por consulta, os mais
+# novos primeiro (``order_by("-created_at")`` antes do slice).
+_CLOSED_CASES_SEARCH_CAP = 50
+
+
+def _in_historical_scope(case: Case) -> bool:
+    """O caso está no escopo histórico do NIR? (D6, guarda própria fail-closed).
+
+    Universo da busca e do detalhe: ``CLEANED`` (qualquer criador) OU caso com
+    intercorrência ativa (qualquer status — o reaberto segue localizável até
+    o novo encerramento). Fora disso → 404, sem vazar conteúdo.
+    """
+    if case.status == CaseStatus.CLEANED:
+        return True
+    return case.post_schedule_issue_status == POST_CLOSURE_ISSUE_STATUS_OPENED
+
+
+@role_required("nir")
+def closed_cases_search(request: HttpRequest) -> HttpResponse:
+    """Busca NIR de casos encerrados por nº de ocorrência OU nome (R1, D1/D6).
+
+    Universo ``Q(CLEANED) | Q(issue ativa)`` de QUALQUER criador (o escopo por
+    criador de «meus casos» permanece intocado); o termo casa
+    ``agency_record_number__icontains`` OU ``patient_name__icontains``; cap 50
+    (``-created_at`` antes do slice); sem critério → estado vazio (leitura
+    pura, nenhuma escrita). Cada resultado traz a referência humana (nº +
+    sufixo curto quando duplicado na página — padrão de «meus casos») e a
+    elegibilidade exibida pela função do slice 002 (ação para elegíveis,
+    motivo legível para inelegíveis — sem duplicar regra).
+    """
+    query = request.GET.get("q", "").strip()
+    results: list[dict[str, object]] = []
+    if query:
+        matches = list(
+            Case.objects.filter(
+                Q(status=CaseStatus.CLEANED)
+                | Q(post_schedule_issue_status=POST_CLOSURE_ISSUE_STATUS_OPENED)
+            )
+            .filter(Q(agency_record_number__icontains=query) | Q(patient_name__icontains=query))
+            .order_by("-created_at")[:_CLOSED_CASES_SEARCH_CAP]
+        )
+        # Nºs repetidos NOS RESULTADOS (mesma regra de «meus casos», D4):
+        # contagem sobre a lista já carregada; nº em branco nunca é chave.
+        repeated = Counter(record for record in map(_stripped_record, matches) if record)
+        for case in matches:
+            ineligibility_reason = get_post_closure_issue_ineligibility_reason(case)
+            results.append(
+                {
+                    "case": case,
+                    "status_label": case.get_status_display(),
+                    "patient_name": case.patient_name,
+                    "agency_record_number": case.agency_record_number or "—",
+                    # Sufixo só para nº duplicado E preenchido; senão "".
+                    "reference_suffix": (
+                        f" · {case.short_id}" if repeated[_stripped_record(case)] > 1 else ""
+                    ),
+                    "eligible": ineligibility_reason == "",
+                    "ineligibility_reason": ineligibility_reason,
+                }
+            )
+    return render(
+        request,
+        "intake/closed_cases_search.html",
+        {"query": query, "results": results},
+    )
+
+
+@role_required("nir")
+def closed_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    """Detalhe histórico read-only + POST de abertura da intercorrência (R2/R3).
+
+    GET escopado ao universo histórico (``_in_historical_scope`` — caso fora
+    → 404 sem vazar conteúdo; o guard criador do detalhe de «meus casos»
+    permanece intocado): identificação, resultado, comunicações e trilha de
+    eventos fechada por padrão (mesmo contexto assembly do detalhe do
+    criador, sem as seções de edição), com o formulário de intercorrência
+    APENAS para elegíveis (motivo legível quando inelegível).
+
+    POST sobre caso elegível delega ao serviço ``open_post_closure_issue`` do
+    slice 002: sucesso → flash com referência humana + redirect ao detalhe
+    (o reaberto segue no escopo histórico); motivo ausente → re-render com
+    erro (HTTP 400), sem escrita (garantia do serviço); caso inelegível →
+    re-render com o motivo de inelegibilidade e status 400, sem escrita.
+    """
+    case = get_object_or_404(
+        Case.objects.select_related("created_by").prefetch_related("procedures"),
+        case_id=case_id,
+    )
+    if not _in_historical_scope(case):
+        raise Http404
+    ineligibility_reason = get_post_closure_issue_ineligibility_reason(case)
+    eligible = ineligibility_reason == ""
+    issue_form: PostClosureIssueForm | None = PostClosureIssueForm() if eligible else None
+
+    if request.method == "POST":
+        if not eligible:
+            logger.warning(
+                "post_closure_issue_refused user=%s case=%s motivo=%s",
+                request.user.pk,
+                case_id,
+                ineligibility_reason,
+            )
+            context = _assemble_case_detail_context(case)
+            context.update(
+                {
+                    "eligible": False,
+                    "ineligibility_reason": ineligibility_reason,
+                    "issue_form": None,
+                }
+            )
+            return render(request, "intake/closed_case_detail.html", context, status=400)
+        issue_form = PostClosureIssueForm(request.POST)
+        if issue_form.is_valid():
+            user = _require_user(request)
+            active_role = request.session.get("active_role", "")
+            try:
+                open_post_closure_issue(
+                    case=case,
+                    reason=issue_form.cleaned_data["reason"],
+                    user=user,
+                    role=active_role,
+                )
+            except ValueError as exc:
+                # Corrida perdida sob o lock (ex.: issue aberta entre o GET e
+                # o POST): o serviço não escreveu nada — re-render com erro.
+                logger.warning(
+                    "post_closure_issue_rejected user=%s case=%s motivo=%s",
+                    user.pk,
+                    case_id,
+                    exc,
+                )
+                issue_form.add_error(None, str(exc))
+            else:
+                logger.info("post_closure_issue_ok user=%s case=%s", user.pk, case_id)
+                messages.success(
+                    request,
+                    f"Intercorrência aberta — o caso {case.display_reference} "
+                    "retornou à fila de agendamento.",
+                )
+                return redirect(reverse("intake:closed_case_detail", args=[case.case_id]))
+
+    context = _assemble_case_detail_context(case)
+    context.update(
+        {
+            "eligible": eligible,
+            "ineligibility_reason": ineligibility_reason,
+            "issue_form": issue_form,
+        }
+    )
+    status = 400 if request.method == "POST" else 200
+    return render(request, "intake/closed_case_detail.html", context, status=status)
 
 
 def _assemble_case_detail_context(

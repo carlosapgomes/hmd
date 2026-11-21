@@ -746,3 +746,62 @@ def test_opened_event_projects_reason_and_snapshot_details(
     assert any("HGRS — Hemodinâmica" in line for line in lines)
     joined = " ".join(lines)
     assert nir_user.username not in joined
+
+
+# ── P2 deferido do slice 002: corrida abertura×abertura ─────────────────
+
+
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_double_open_single_issue_wins(
+    nir_user: User,
+    doctor_user: User,
+    user_factory: Callable[[str, str], User],
+) -> None:
+    """P2 (slice 002): duas aberturas concorrentes — uma vence, a outra é
+    recusada por issue ativa, sem duplicatas nem escrita parcial.
+
+    O ``select_for_update`` + revalidação de ``open_post_closure_issue``
+    serializa os atomics: exatamente um ``CASE_POST_CLOSURE_ISSUE_OPENED``
+    existe ao final, com o motivo do vencedor."""
+    from django.db import connection
+
+    scheduler_user = user_factory("scheduler-corrida-abertura", SCHEDULER_ROLE)
+    case = _retained_closed_case(
+        created_by=nir_user, decided_by=doctor_user, scheduler_user=scheduler_user
+    )
+    case_pk = case.case_id
+    barrier = threading.Barrier(2)
+    outcomes: dict[str, str] = {}
+
+    def _attempt(slot: str, reason: str) -> None:
+        try:
+            barrier.wait(timeout=30)
+            loaded = Case.objects.get(pk=case_pk)
+            open_post_closure_issue(loaded, reason=reason, user=nir_user, role=NIR_ROLE)
+            outcomes[slot] = "ok"
+        except Exception as exc:  # noqa: BLE001 — o resultado é assertido abaixo
+            outcomes[slot] = f"{type(exc).__name__}: {exc}"
+        finally:
+            connection.close()
+
+    first = threading.Thread(target=_attempt, args=("first", "primeiro motivo concorrente"))
+    second = threading.Thread(target=_attempt, args=("second", "segundo motivo concorrente"))
+    first.start()
+    second.start()
+    first.join(timeout=60)
+    second.join(timeout=60)
+    assert not first.is_alive() and not second.is_alive()
+
+    assert list(outcomes.values()).count("ok") == 1
+    losers = [value for value in outcomes.values() if value != "ok"]
+    assert len(losers) == 1
+    assert "ntercorrência" in losers[0]
+
+    fresh = Case.objects.get(pk=case_pk)
+    assert fresh.status == CaseStatus.AWAITING_SCHEDULING
+    assert fresh.post_schedule_issue_status == "opened"
+    opened_events = list(
+        fresh.events.filter(event_type=CaseEventType.CASE_POST_CLOSURE_ISSUE_OPENED)
+    )
+    assert len(opened_events) == 1
+    assert fresh.post_schedule_issue_reason == opened_events[0].payload["reason"]

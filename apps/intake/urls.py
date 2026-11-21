@@ -82,4 +82,15 @@ urlpatterns: list[URLPattern] = [
         views.case_resubmit,
         name="case_resubmit",
     ),
+    # Busca NIR de encerrados + detalhe histórico (paridade-ats, slice 003,
+    # D6): universo histórico de qualquer criador (rota própria com guarda de
+    # escopo — os guards criador das rotas de «meus casos» ficam intactos).
+    # O detalhe histórico responde GET (read-only) e POST (abertura da
+    # intercorrência em caso elegível).
+    path("closed-cases/", views.closed_cases_search, name="closed_cases_search"),
+    path(
+        "closed-cases/<uuid:case_id>/",
+        views.closed_case_detail,
+        name="closed_case_detail",
+    ),
 ]

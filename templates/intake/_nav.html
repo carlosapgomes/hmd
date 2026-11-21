@@ -9,8 +9,8 @@ OLI-005 (D11): contador único por `data-count` + pseudo-elemento CSS
 neutros; zero oculto por CSS.
 
 Contexto:
-  active_tab: "home" | "my_cases" | "closed" (opcional; nenhuma aba fica
-  ativa se ausente — página transversal fora da área do NIR).
+  active_tab: "home" | "my_cases" | "closed" | "closed_search" (opcional;
+  nenhuma aba fica ativa se ausente — página transversal fora da área do NIR).
   active_count / closed_count: int (opcionais, das views existentes;
   `data-count` só quando a view os calcula — sem query nova).
   filter_qs: str (opcional; só em meus casos — os links Meus Casos/
@@ -32,6 +32,11 @@ Uso:
     </li>
     <li class="nav-item">
       {% if closed_count is not None %}<a class="nav-link nav-count-badge nav-count-badge--neutral {% if active_tab == 'closed' %}active{% endif %}" {% if active_tab == 'closed' %}aria-current="page"{% endif %} data-count="{{ closed_count }}" href="{% url 'intake:my_cases' %}?tab=closed{% if filter_qs %}&{{ filter_qs }}{% endif %}">Casos Encerrados</a>{% else %}<a class="nav-link {% if active_tab == 'closed' %}active{% endif %}" {% if active_tab == 'closed' %}aria-current="page"{% endif %} href="{% url 'intake:my_cases' %}?tab=closed{% if filter_qs %}&{{ filter_qs }}{% endif %}">Casos Encerrados</a>{% endif %}
+    </li>
+    <li class="nav-item">
+      <a class="nav-link {% if active_tab == 'closed_search' %}active{% endif %}"
+         {% if active_tab == 'closed_search' %}aria-current="page"{% endif %}
+         href="{% url 'intake:closed_cases_search' %}">Buscar Encerrados</a>
     </li>
   </ul>
 </nav>

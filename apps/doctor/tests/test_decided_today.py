@@ -397,3 +397,44 @@ def test_backfill_fail_closed_null_actor(
     fresh = Case.objects.get(pk=legacy.pk)
     assert fresh.doctor_decided_at is None
     assert fresh.doctor_decided_by_id is None
+
+
+@pytest.mark.django_db
+def test_backfill_flow_lists_decision_in_decider_tab(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """Fluxo do backfill 0014 (P2 do slice 005): seed pré-deploy (decisão só em
+    evento+row, carimbos nulos, instante ``day_bounds``) → backfill → carimbos
+    com o ator → decisão na aba «Decididos Hoje» do decisor certo, fora da de
+    outro médico."""
+    doctor = user_factory("medico-backfill-fluxo", (DOCTOR_ROLE,))
+    other = user_factory("medico-backfill-outro", (DOCTOR_ROLE,))
+    legacy = _legacy_case_with_event(
+        nir_user, doctor, accepted=False, patient_name="Paciente Backfill Fluxo"
+    )
+    assert legacy.doctor_decided_at is None
+    start, _ = local_day_bounds()
+    decided_at = start + timedelta(hours=2)
+    CaseEvent.objects.filter(case=legacy).update(timestamp=decided_at)
+    CaseProcedure.objects.filter(case=legacy).update(doctor_decided_at=decided_at)
+
+    _run_doctor_backfill()
+
+    fresh = Case.objects.get(pk=legacy.pk)
+    assert fresh.doctor_decided_at == decided_at
+    assert fresh.doctor_decided_by_id == doctor.pk
+
+    login_user(doctor, DOCTOR_ROLE)
+    page, _ = _decided_bodies(client)
+
+    assert str(fresh.case_id) in page
+    assert "Paciente Backfill Fluxo" in page
+
+    login_user(other, DOCTOR_ROLE)
+    alien_page, _ = _decided_bodies(client)
+
+    assert str(fresh.case_id) not in alien_page
+    assert "Paciente Backfill Fluxo" not in alien_page

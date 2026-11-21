@@ -21,12 +21,16 @@ from uuid import uuid4
 import pytest
 from django.apps.registry import Apps
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
-from apps.cases.closure import POST_CLOSURE_ISSUE_STATUS_OPENED
+from apps.cases.closure import (
+    POST_CLOSURE_ISSUE_STATUS_OPENED,
+    acknowledge_case_receipt,
+    open_post_closure_issue,
+)
 from apps.cases.events import CaseEventType
 from apps.cases.models import (
     Case,
@@ -615,6 +619,57 @@ def test_reopened_case_in_history_with_neutral_badge(
 
 
 @pytest.mark.django_db
+def test_real_path_cleaned_reopened_in_history_universe(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """Caminho REAL até a issue pós-encerramento (P2 do slice 004): confirmação
+    → ciência → reabertura pelo serviço — sem estado fabricado.
+
+    O caso aparece no universo do histórico com issue ativa e o carimbo
+    ``scheduling_decided_*`` da confirmação preservado."""
+    doctor = user_factory("medico-caminho-real", ("doctor",))
+    scheduler = user_factory("agendador-caminho-real", ("scheduler",))
+    case = _awaiting_scheduling_case(nir_user, doctor, [CARDIO_TYPE])
+    Case.objects.filter(pk=case.pk).update(
+        agency_record_number="5040801",
+        patient_name="Paciente Caminho Real",
+    )
+    _confirm(Case.objects.get(pk=case.pk), scheduler)
+    confirmed = Case.objects.get(pk=case.pk)
+    assert confirmed.status == CaseStatus.FINAL_REPLY_POSTED
+    confirmed_at, confirmed_by = _decided_attrs(confirmed)
+    assert confirmed_at is not None
+
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=False):
+        acknowledge_case_receipt(confirmed, user=nir_user, role=NIR_ROLE)
+    cleaned = Case.objects.get(pk=case.pk)
+    assert cleaned.status == CaseStatus.CLEANED
+    assert cleaned.clinical_data_disposed_at is None
+
+    open_post_closure_issue(cleaned, reason=REOPEN_REASON, user=nir_user, role=NIR_ROLE)
+
+    reopened = Case.objects.get(pk=case.pk)
+    assert reopened.status == CaseStatus.AWAITING_SCHEDULING
+    assert reopened.post_schedule_issue_status == POST_CLOSURE_ISSUE_STATUS_OPENED
+    reopened_at, reopened_by = _decided_attrs(reopened)
+    assert reopened_at == confirmed_at
+    assert reopened_by == confirmed_by
+
+    login_user(scheduler, SCHEDULER_ROLE)
+    response = client.get(reverse(SEARCH_URL), {"q": "5040801"})
+
+    assert response.status_code == 200
+    assert [item["case"].pk for item in response.context["results"]] == [case.pk]
+    assert response.context["results"][0]["is_reopened"] is True
+    body = response.content.decode()
+    assert "Agendamento reaberto" in body
+    assert REOPEN_REASON in body
+
+
+@pytest.mark.django_db
 def test_search_cap_50_newest_first(
     client: Client,
     nir_user: User,
@@ -766,6 +821,55 @@ def test_historical_detail_pdf_denied_other_scheduler(
     assert response.status_code == 200
     assert "Visualizar PDF Original" not in response.content.decode()
     pdf_response = client.get(reverse("scheduler:case_pdf", args=[case.case_id, 1]))
+    assert pdf_response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_cleaned_pdf_same_decider_has_no_cards_and_404(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """CLEANED + PDF + mesmo decisor (P2 do slice 004): o detalhe histórico
+    omite os cards de PDF/texto extraído e o endpoint do PDF responde 404 —
+    ``CLEANED`` está fora de ``PDF_ALLOWED_STATUSES`` (gate fail-closed)."""
+    doctor = user_factory("medico-pdf-encerrado", ("doctor",))
+    scheduler = user_factory("agendador-pdf-encerrado", ("scheduler",))
+    case = _awaiting_scheduling_case(nir_user, doctor, [CARDIO_TYPE])
+    Case.objects.filter(pk=case.pk).update(
+        agency_record_number="5040802",
+        patient_name="Paciente PDF Encerrado",
+        extracted_text="trecho do relatório original",
+    )
+    _confirm(Case.objects.get(pk=case.pk), scheduler)
+    confirmed = Case.objects.get(pk=case.pk)
+    assert confirmed.status == CaseStatus.FINAL_REPLY_POSTED
+    CaseDocument.objects.create(
+        case=confirmed,
+        file=SimpleUploadedFile("relatorio.pdf", b"%PDF-1.4 fake", content_type="application/pdf"),
+        position=1,
+        original_filename="relatorio.pdf",
+        content_type="application/pdf",
+        size_bytes=12,
+        uploaded_by=nir_user,
+    )
+
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=False):
+        acknowledge_case_receipt(confirmed, user=nir_user, role=NIR_ROLE)
+    cleaned = Case.objects.get(pk=case.pk)
+    assert cleaned.status == CaseStatus.CLEANED
+    assert cleaned.documents.count() == 1
+
+    login_user(scheduler, SCHEDULER_ROLE)
+    response = client.get(reverse(DETAIL_URL, args=[cleaned.case_id]))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "Visualizar PDF Original" not in body
+    assert "Texto Extraído do PDF" not in body
+    assert "trecho do relatório original" not in body
+    pdf_response = client.get(reverse("scheduler:case_pdf", args=[cleaned.case_id, 1]))
     assert pdf_response.status_code == 404
 
 

@@ -4,6 +4,32 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.23] — 2026-11-21
+
+**Paridade operacional: sumário completo ao agendador, busca histórica,
+intercorrência pós-encerramento, abas «Hoje» por decisor** — 2 changes
+(`paridade-ats-filas-historico-intercorrencia`, 5 slices +
+`tests-hardening-paridade-ats`, test-only), com revisão independente por
+slice. Suíte 2219 → **2314** (+95 testes). **COM migrations
+(0012–0014):** intercorrência pós-encerramento + carimbos de decisão com
+backfill auditável — o passo `migrate` do deploy aplica schema.
+
+- **Sumário completo ao agendador**: detalhe do agendador/admin exibe o
+  sumário clínico completo re-identificado (antes: primeira linha);
+  estrutura extraída/alertas/sugestão seguem fora do escopo — paridade
+  ats-web.
+- **Busca histórica (NIR e agendador)**: páginas de busca server-side por
+  nº de ocorrência ou nome sobre casos `CLEANED` e intercorrências
+  ativas (escopo histórico com guarda própria; «meus casos» intacto),
+  cap de 50 resultados, detalhe histórico read-only.
+- **Intercorrência pós-encerramento**: o NIR pode reabrir caso `CLEANED`
+  para re-agendamento (FSM, marcador de disposição, issue única,
+  fan-out de notificação); ADR-0010 emendada (evidência canônica de
+  disposição + inelegibilidade fail-closed da reabertura).
+- **Abas «Hoje» por decisor**: «Decididos Hoje»/«Processados Hoje» com
+  janela do dia local (carimbos `doctor_decided_*`/`scheduling_decided_*`
+  com backfill auditável); spec nova `post-closure-issue` (16→17 specs).
+
 ## [0.1.22] — 2026-11-21
 
 **Trilha de eventos em todos os perfis (paridade com o painel)** — 1

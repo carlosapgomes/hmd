@@ -64,6 +64,7 @@ from django_fsm import TransitionNotAllowed
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
+from apps.cases.day_bounds import local_day_bounds
 from apps.cases.locks import (
     CaseLockConflictError,
     assert_case_lock,
@@ -101,9 +102,12 @@ PDF_CONTENT_TYPE = "application/pdf"
 QUEUE_PAGE_SIZE = 20
 
 # Estados por aba (R2/D4): ``aguardando`` (default) = SCHEDULER_REQUESTED ou
-# AWAITING_SCHEDULING; ``processados`` = SCHEDULING_CONFIRMED|
-# SCHEDULING_DENIED|FINAL_REPLY_POSTED (os dois primeiros transitórios do
-# encadeamento, incluídos inofensivos — mesmo critério da fila médica).
+# AWAITING_SCHEDULING (única aba por estado — slice 005). ``processados``
+# NÃO é mais um conjunto de estados: é a janela do dia corrente por
+# decisor (``scheduling_decided_by`` + ``scheduling_decided_at`` do slice
+# 004, confirmação OU negação — montada inline em ``_build_queue_context``),
+# qualquer status atual; o tuple abaixo segue como referência dos estados
+# pós-decisão e valida o ``?tab=`` (desconhecido cai em ``aguardando``).
 TAB_STATUSES: dict[str, tuple[CaseStatus, ...]] = {
     "aguardando": (CaseStatus.SCHEDULER_REQUESTED, CaseStatus.AWAITING_SCHEDULING),
     "processados": (
@@ -275,17 +279,35 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
     # lease vencida não pode continuar bloqueando o card.
     expire_stale_locks_for_statuses(TAB_STATUSES["aguardando"])
 
-    cases = Case.objects.filter(status__in=TAB_STATUSES[tab])
-    if procedure_type:
-        cases = cases.filter(
-            procedures__declared_by_nir=True,
-            procedures__procedure_type=procedure_type,
-        ).distinct()
-    cases = (
-        cases.order_by(F("days_on_screen").desc(nulls_last=True), "created_at", "case_id")
-        .select_related("locked_by")
-        .prefetch_related("procedures")
-    )
+    if tab == "processados":
+        # Slice 005 (R2/D5): «Processados Hoje» — decisões de agendamento
+        # (confirmação OU negação) do dia corrente NO FUSO LOCAL pelo próprio
+        # agendador, qualquer status atual; caso de dia anterior (ou decisor
+        # nulo do backfill fail-closed) fora das abas — consultável no
+        # Histórico do slice 004. Ordenação pela data/hora da decisão.
+        start, end = local_day_bounds()
+        cases = (
+            Case.objects.filter(
+                scheduling_decided_by=user,
+                scheduling_decided_at__gte=start,
+                scheduling_decided_at__lt=end,
+            )
+            .order_by("-scheduling_decided_at", "created_at", "case_id")
+            .select_related("locked_by")
+            .prefetch_related("procedures")
+        )
+    else:
+        cases = Case.objects.filter(status__in=TAB_STATUSES[tab])
+        if procedure_type:
+            cases = cases.filter(
+                procedures__declared_by_nir=True,
+                procedures__procedure_type=procedure_type,
+            ).distinct()
+        cases = (
+            cases.order_by(F("days_on_screen").desc(nulls_last=True), "created_at", "case_id")
+            .select_related("locked_by")
+            .prefetch_related("procedures")
+        )
     page = Paginator(cases, QUEUE_PAGE_SIZE).get_page(request.GET.get("page", "1"))
     items = [_queue_item(case, user=user) for case in page.object_list]
 
@@ -308,11 +330,14 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
 
 @role_required("scheduler", "admin")
 def queue(request: HttpRequest) -> HttpResponse:
-    """Fila do agendador por estado (abas), ordenada por tempo de tela (R2/D4).
+    """Fila do agendador por aba (R2/D4; slice 005).
 
-    ``days_on_screen`` desc nulls-last com desempate FIFO por ``created_at`` e
-    ``case_id`` — mesma expressão da fila médica. Sem filtro por unidade (fila
-    completa, plano §4). Aba desconhecida cai no default ``aguardando``.
+    Pendentes ordenadas por tempo de tela (``days_on_screen`` desc
+    nulls-last, desempate FIFO por ``created_at`` e ``case_id`` — mesma
+    expressão da fila médica); «Processados Hoje» pela data/hora da decisão
+    do próprio agendador no dia corrente (mais recente primeiro). Sem filtro
+    por unidade (fila completa, plano §4). Aba desconhecida cai no default
+    ``aguardando``.
     """
     return render(request, "scheduler/queue.html", _build_queue_context(request))
 

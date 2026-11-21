@@ -196,7 +196,8 @@ def test_queue_processed_card_received_label_and_unit_label(
         days_on_screen=4,
         unit=2,
     )
-    login_user(user_factory("agendador-paridade-proc", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: processados é escopado ao decisor.
+    login_user(scheduler, SCHEDULER_ROLE)
 
     body = client.get(reverse("scheduler:queue"), {"tab": "processados"}).content.decode()
 
@@ -223,7 +224,8 @@ def test_queue_has_no_legacy_nav_tabs_and_nav_pills_have_badges(
     _make_confirmed_case(
         nir_user, doctor, scheduler, (ANGIO_TYPE,), patient_name="Paciente Pill Processado"
     )
-    login_user(user_factory("agendador-pills-viewer", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: processados é escopado ao decisor — o visor decide hoje.
+    login_user(scheduler, SCHEDULER_ROLE)
 
     body = client.get(reverse("scheduler:queue")).content.decode()
 
@@ -231,7 +233,7 @@ def test_queue_has_no_legacy_nav_tabs_and_nav_pills_have_badges(
     assert "Aguardando agendamento</a>" not in body
     # ``_nav`` pills (change 1) com badges do context processor queue_counters.
     assert ">Pendentes" in body
-    assert ">Processados" in body
+    assert ">Processados Hoje" in body
     assert 'data-count="2"' in body
     assert 'data-count="1"' in body
     # Aba processados também usa pills, sem bloco legado.
@@ -344,7 +346,8 @@ def test_queue_partial_respects_tab_and_page(
     processed = _make_confirmed_case(
         nir_user, doctor, scheduler, (ANGIO_TYPE,), patient_name="Caso Aba Processado"
     )
-    login_user(user_factory("agendador-partial-aba-viewer", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: processados é escopado ao decisor — o visor é o próprio agendador.
+    login_user(scheduler, SCHEDULER_ROLE)
 
     awaiting_body = client.get(reverse("scheduler:queue_partial")).content.decode()
     assert str(awaiting.case_id) in awaiting_body
@@ -384,7 +387,8 @@ def test_queue_partial_lists_both_units_without_unit_filter(
     unit2 = _make_confirmed_case(
         nir_user, doctor, scheduler, (ANGIO_TYPE,), patient_name="Caso Unidade Dois", unit=2
     )
-    login_user(user_factory("agendador-partial-unidades-viewer", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: processados é escopado ao decisor — o visor é o próprio agendador.
+    login_user(scheduler, SCHEDULER_ROLE)
 
     body = client.get(reverse("scheduler:queue_partial"), {"tab": "processados"}).content.decode()
 
@@ -600,7 +604,8 @@ def test_queue_processed_card_keeps_status_badge(
         days_on_screen=1,
         unit=1,
     )
-    login_user(user_factory("agendador-oli-proc-view-par", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: processados é escopado ao decisor.
+    login_user(scheduler, SCHEDULER_ROLE)
 
     body = client.get(reverse("scheduler:queue"), {"tab": "processados"}).content.decode()
 

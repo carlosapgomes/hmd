@@ -40,6 +40,7 @@ DOCTOR_MARKERS = (
     "verificação de paciente",
     "alerta consultivo",
     "decisão por procedimento",
+    "Decididos Hoje",
 )
 SCHEDULER_MARKERS = (
     "Fila de agendamento",
@@ -47,6 +48,7 @@ SCHEDULER_MARKERS = (
     "Unidade 2",
     "intercorrência",
     "PDF do relatório",
+    "Processados Hoje",
 )
 CROSS_CUTTING_MARKERS = ("Notificações", "Painel", "PWA")
 

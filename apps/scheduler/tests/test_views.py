@@ -438,6 +438,12 @@ def test_queue_processed_tab(
     transitorio_confirmado.await_scheduling_confirmation(user=None, role=SYSTEM_ROLE)
     transitorio_confirmado.confirm_scheduling(user=None, role=SYSTEM_ROLE)
     transitorio_confirmado.refresh_from_db()
+    # Slice 005: processados é a janela do dia por decisor (não o status) —
+    # os estados transitórios entram com o carimbo de hoje do agendador.
+    Case.objects.filter(pk=transitorio_confirmado.pk).update(
+        scheduling_decided_at=timezone.now(), scheduling_decided_by=scheduler
+    )
+    transitorio_confirmado.refresh_from_db()
     assert transitorio_confirmado.status == CaseStatus.SCHEDULING_CONFIRMED
     _apply_metadata(
         transitorio_confirmado, patient_name="Confirmado Transitorio", agency_record_number="1102"
@@ -446,13 +452,18 @@ def test_queue_processed_tab(
     transitorio_negado.await_scheduling_confirmation(user=None, role=SYSTEM_ROLE)
     transitorio_negado.deny_scheduling(user=None, role=SYSTEM_ROLE)
     transitorio_negado.refresh_from_db()
+    Case.objects.filter(pk=transitorio_negado.pk).update(
+        scheduling_decided_at=timezone.now(), scheduling_decided_by=scheduler
+    )
+    transitorio_negado.refresh_from_db()
     assert transitorio_negado.status == CaseStatus.SCHEDULING_DENIED
     _apply_metadata(
         transitorio_negado, patient_name="Negado Transitorio", agency_record_number="1103"
     )
     aguardando = _awaiting_scheduling_case(nir_user, doctor, (CARDIO_TYPE,))
     _apply_metadata(aguardando, patient_name="Aguardando Fila", agency_record_number="1104")
-    login_user(user_factory("geral-processados", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: a aba é escopada ao decisor — o visor é o próprio agendador.
+    login_user(scheduler, SCHEDULER_ROLE)
 
     response = client.get(reverse("scheduler:queue"), {"tab": "processados"})
 
@@ -631,7 +642,8 @@ def test_queue_processed_tab_uses_received_label(
         2, created_by=nir_user, decided_by=doctor, scheduled_by=scheduler_user
     )
     _apply_metadata(processed, patient_name="Paciente Processado", patient_age=84)
-    login_user(user_factory("geral-label-processado", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: processados é escopado ao decisor.
+    login_user(scheduler_user, SCHEDULER_ROLE)
 
     body = client.get(reverse("scheduler:queue"), {"tab": "processados"}).content.decode()
 
@@ -694,7 +706,8 @@ def test_queue_cards_show_types_and_unit(
     scheduler = user_factory("agendador-cards", (SCHEDULER_ROLE,))
     processed = _confirmed_case(2, created_by=nir_user, decided_by=doctor, scheduled_by=scheduler)
     _apply_metadata(processed, patient_name="Beto Lima", agency_record_number="1302")
-    login_user(user_factory("geral-cards-agendador", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: a aba processados é escopada ao decisor.
+    login_user(scheduler, SCHEDULER_ROLE)
 
     response = client.get(reverse("scheduler:queue"), {"tab": "aguardando"})
 
@@ -857,7 +870,8 @@ def test_queue_processed_ignores_procedure_type_filter(
     scheduler = user_factory("agendador-oli-filtro-proc", (SCHEDULER_ROLE,))
     processed = _confirmed_case(2, created_by=nir_user, decided_by=doctor, scheduled_by=scheduler)
     _apply_metadata(processed, patient_name="Processado Sem Filtro")
-    login_user(user_factory("agendador-oli-filtro-proc-view", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: a aba processados é escopada ao decisor.
+    login_user(scheduler, SCHEDULER_ROLE)
 
     body = client.get(
         reverse("scheduler:queue"), {"tab": "processados", "procedure_type": CARDIO_TYPE}
@@ -1069,7 +1083,8 @@ def test_queue_processed_card_preserves_received_label_and_unit(
     scheduler = user_factory("agendador-oli-proc-preservado", (SCHEDULER_ROLE,))
     case = _confirmed_case(2, created_by=nir_user, decided_by=doctor, scheduled_by=scheduler)
     _apply_metadata(case, patient_name="Processado Preservado", patient_age=65, days_on_screen=3)
-    login_user(user_factory("agendador-oli-processado-view", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: a aba processados é escopada ao decisor.
+    login_user(scheduler, SCHEDULER_ROLE)
 
     body = client.get(reverse("scheduler:queue"), {"tab": "processados"}).content.decode()
 

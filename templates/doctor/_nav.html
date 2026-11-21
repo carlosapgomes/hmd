@@ -1,12 +1,14 @@
 {% comment %}
-Partial de navegação do médico com as abas Pendentes / Decididos, no
+Partial de navegação do médico com as abas Pendentes / Decididos Hoje, no
 vocabulário do ats-web (ui-parity-foundation slice 004). Adaptado do
 molde `doctor/_nav.html` do ats-web (D3) para as rotas do HMD.
 
-D4: a aba chama-se `Decididos` — fiel ao filtro por estado atual
-(`?tab=decididos` = DOCTOR_DENIED|DOCTOR_ACCEPTED|SCHEDULER_REQUESTED) —
-e NÃO `Decididos Hoje` (que no ats-web implica recorte de data e aqui
-mentiria). O recorte de data fica como débito do change 2.
+Slice 005 (D5/D7): a aba chama-se `Decididos Hoje` — decisões do dia
+corrente no fuso local pelo próprio médico (`?tab=decididos` =
+`doctor_decided_by` + `doctor_decided_at` na janela local, qualquer status
+atual). O médico NÃO tem superfície de histórico própria (perda aprovada
+por paridade, registrada no manual); casos antigos seguem visíveis ao
+agendador (Histórico) e ao NIR.
 
 OLI-005 (D11): contador único por `data-count` + pseudo-elemento CSS
 (`.nav-count-badge`); sem badge `<span>` inline. Pendentes usa estilo
@@ -43,11 +45,11 @@ Uso:
       <a class="nav-link nav-count-badge nav-count-badge--neutral {% if active_tab == 'decididos' %}active{% endif %}"
          data-count="{{ decided_count }}"
          {% if active_tab == 'decididos' %}aria-current="page"{% endif %}
-         href="{% url 'doctor:queue' %}?tab=decididos{% if subtype %}&subtype={{ subtype }}{% endif %}">Decididos</a>
+         href="{% url 'doctor:queue' %}?tab=decididos{% if subtype %}&subtype={{ subtype }}{% endif %}">Decididos Hoje</a>
       {% else %}
       <a class="nav-link {% if active_tab == 'decididos' %}active{% endif %}"
          {% if active_tab == 'decididos' %}aria-current="page"{% endif %}
-         href="{% url 'doctor:queue' %}?tab=decididos{% if subtype %}&subtype={{ subtype }}{% endif %}">Decididos</a>
+         href="{% url 'doctor:queue' %}?tab=decididos{% if subtype %}&subtype={{ subtype }}{% endif %}">Decididos Hoje</a>
       {% endif %}
     </li>
   </ul>

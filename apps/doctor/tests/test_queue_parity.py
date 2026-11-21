@@ -135,7 +135,7 @@ def test_queue_has_no_legacy_nav_tabs_and_nav_pills_have_badges(
     assert "Aguardando decisão</a>" not in body
     # ``_nav`` pills (change 1) com badges do context processor queue_counters.
     assert ">Pendentes" in body
-    assert ">Decididos" in body
+    assert ">Decididos Hoje" in body
     assert "3" in body
     # Aba decididos também usa pills, sem bloco legado.
     decided_body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
@@ -399,7 +399,8 @@ def test_queue_decided_card_shows_per_procedure_result(
     row = decided.procedures.get(procedure_type=ANGIO_TYPE)
     assert row.doctor_decided_at is not None
     expected_time = timezone.localtime(row.doctor_decided_at).strftime("%d/%m/%Y %H:%M")
-    login_user(user_factory("geral-paridade-dec", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+    # Slice 005: a aba decididos é escopada ao decisor.
+    login_user(doctor, DOCTOR_ROLE)
 
     body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
 
@@ -429,7 +430,8 @@ def test_queue_decided_render_query_count_bounded_independent_of_card_count(
     ``prefetch_related("procedures")``, nunca de query/event por card).
     """
     doctor = user_factory("medico-queries-dec", (DOCTOR_ROLE,))
-    login_user(user_factory("geral-queries-dec", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+    # Slice 005: a aba decididos é escopada ao decisor (preserva o N+1 real).
+    login_user(doctor, DOCTOR_ROLE)
     queue_url = reverse("doctor:queue")
     partial_url = reverse("doctor:queue_partial")
 

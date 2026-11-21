@@ -232,6 +232,23 @@ class Case(FSMModelMixin, models.Model):
         related_name="cases_scheduling_decided",
     )
 
+    # Carimbos históricos de decisão médica (slice 005 da change
+    # paridade-ats, D5): gravados no MESMO atomic pela decisão médica
+    # (``record_doctor_procedure_decisions`` — a row ``CaseProcedure``
+    # continua sendo o fato por procedimento; teste anti-drift compara
+    # ``Case.doctor_decided_at`` com ``Max(rows)``). Alimentam a aba
+    # «Decididos Hoje» do slice 005; backfill por eventos na migration 0014
+    # (fail-closed: sem evento com ator ⇒ nulos). O médico não tem
+    # superfície de histórico própria (perda aprovada por paridade, D7).
+    doctor_decided_at = models.DateTimeField(null=True, blank=True)
+    doctor_decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="cases_doctor_decided",
+    )
+
     # Intercorrência pós-encerramento (slice 002 da change paridade-ats, D3):
     # issue ativa como campo compacto (status + motivo + autor + instante) —
     # sem espelhar os ~12 campos nem ``cycle_id`` do ats-web; ciclos múltiplos

@@ -29,11 +29,15 @@ Contrato: [slice-002-nir-medico.md](slices/slice-002-nir-medico.md). Depende de 
 
 ## 3. Slice 003 — Trilha no detalhe do agendador
 
-Contrato: [slice-003-agendador.md](slices/slice-003-agendador.md). Depende de 001. Design D3/D4; specs delta `scheduling` + `account-access` (superfícies de rótulo).
+Contrato: [slice-003-agendador.md](slices/slice-003-agendador.md). Depende de 001. Design D3/D4; specs delta `scheduling` + `account-access` (superfícies de rótulo). Embute os P2s deferidos do slice 002.
 
-- [ ] 3.1 Demonstrar RED: detalhe do agendador renderiza «Trilha de eventos» fechado por padrão com criação (NIR) e decisão médica (médico) nomeados com papel pt-BR (cenário do delta `account-access`); one-liner e restrições de pipeline preservados.
-- [ ] 3.2 Implementar: `event_trail` em `build_scheduler_case_detail_context` + include ao final, fora dos gates de PDF/texto; verificar R1.
-- [ ] 3.3 Executar bateria completa e gates do slice; produzir relatório em `/tmp/`.
+- [x] 3.1 Demonstrar RED: detalhe do agendador renderiza «Trilha de eventos» fechado por padrão com criação (NIR) e decisão médica (médico) nomeados com papel pt-BR (cenário do delta `account-access`); one-liner e restrições de pipeline preservados.
+- [x] 3.2 Implementar: `event_trail` em `build_scheduler_case_detail_context` + include ao final, fora dos gates de PDF/texto; verificar R1.
+- [x] 3.3 Apertar o pin da decisão B (P2 deferido): assert positivo do `test_procedure_review_recovery.py` passa a fixar fragmento do valor da justificativa em `follow.content` (sem RED — comportamento já verde); executar bateria completa e gates do slice; produzir relatório em `/tmp/`.
+
+> Nota de execução do 003: P2 deferido pela revisão — o teste de autoria valida atores/papéis/datas de forma
+> agregada (uma única data checada); endurecer isolando cada item da trilha por rótulo e verificando nele o
+> trio ator+papel+timestamp (candidata a polimento futuro, fora dos loops concluídos).
 
 ## Encerramento (após 003)
 

@@ -15,11 +15,17 @@ Contrato: [slice-001-fundacao-compartilhada.md](slices/slice-001-fundacao-compar
 
 Contrato: [slice-002-nir-medico.md](slices/slice-002-nir-medico.md). Depende de 001. Design D3/D4/D5/D6; specs delta `intake-nir` + `doctor-decision`.
 
-- [ ] 2.1 Demonstrar RED nos cenários das specs: NIR vê trilha fechada por padrão com ator/papel pt-BR de decisão médica e agendamento; médico (decisão e decidido) vê trilha ao final; FAILED mantém badge sem motivo técnico.
-- [ ] 2.2 Implementar NIR: `event_trail` em `_assemble_case_detail_context` + include ao final do template; badge de erro intocado; verificar R1.
-- [ ] 2.3 Implementar médico: `event_trail` no presenter + derivação de `decision_event` da lista (query dedicada removida, card inalterado) + include ao final; verificar R2.
-- [ ] 2.4 Reescrever os asserts de ausência (`test_my_cases`, `test_detail`, `test_decision`, `test_role_labels`) para presença com propriedades contratuais (fechado por padrão, rótulo, ator, papel, data); verificar R3.
-- [ ] 2.5 Executar bateria completa e gates do slice; produzir relatório em `/tmp/`.
+- [x] 2.1 Demonstrar RED nos cenários das specs: NIR vê trilha fechada por padrão com ator/papel pt-BR de decisão médica e agendamento; médico (decisão e decidido) vê trilha ao final; FAILED mantém badge sem motivo técnico.
+- [x] 2.2 Implementar NIR: `event_trail` em `_assemble_case_detail_context` + include ao final do template; badge de erro intocado; verificar R1.
+- [x] 2.3 Implementar médico: `event_trail` no presenter + derivação de `decision_event` da lista (query dedicada removida, card inalterado) + include ao final; verificar R2.
+- [x] 2.4 Reescrever os asserts de ausência (`test_my_cases`, `test_detail`, `test_decision`, `test_role_labels`) para presença com propriedades contratuais (fechado por padrão, rótulo, ator, papel, data); verificar R3.
+- [x] 2.5 Executar bateria completa e gates do slice; produzir relatório em `/tmp/`.
+
+> Nota de execução (decisão do dono 2026-11-21, opção B): durante o 2.5 o worker bloqueou no pin de PHI do
+> `test_procedure_review_recovery.py` (justificativa livre no detalhe NIR × paridade D4); decisão B registrada no
+> design D4, expected_files ampliado para 9 (re-escopo do pin) e concluído por fix-worker fresh. P2s deferidos:
+> (1) assert positivo fixa só o rótulo «Justificativa:», não o valor livre; (2) gate (a) literal do slice inexequível
+> (título vive no partial — check real é `_event_trail`).
 
 ## 3. Slice 003 — Trilha no detalhe do agendador
 

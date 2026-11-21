@@ -96,10 +96,22 @@ Posição: partial incluído após o último card existente de cada detalhe
 ### D4 — Trilha integral, sem filtro por papel
 
 Todos os papéis veem a mesma trilha (45 tipos), incluindo eventos técnicos
-(locks, anonimização, dispatch de OCR). Justificativa: paridade de auditoria
-— trilhas divergentes por papel criam ambiguidade de «versão oficial» e
-multiplicam testes. O ruído é contido pelo card fechado por padrão. Badge de
-erro do NIR em `FAILED` é mantido (atalho para o estado sem abrir a trilha).
+(locks, anonimização, dispatch de OCR) **e as linhas de detalhe projetadas
+de payload** — decisão REFORÇADA pelo dono em 2026-11-21 (opção B, paridade
+total) após conflito descoberto na implementação do slice 002: o teste
+`apps/pipeline/tests/test_procedure_review_recovery.py` pinava que o texto
+livre da justificativa da confirmação de procedimento não apareceria no body
+do detalhe NIR. Decisão registrada: a justificativa (texto livre do criador)
+passa a ser visível na trilha em TODAS as superfícies — igual ao que o painel
+já exibia ao supervisor; o pin «auditoria terse» do teste é re-escopo para as
+superfícies que seguem PHI-free (args do Schedule de recuperação, payload do
+evento de falha, logs/caplog), deixando de cobrir o HTML renderizado da
+trilha. Justificativa: o valor da change é «quem fez o quê» com paridade de
+auditoria; o criador digitou a justificativa e o painel já a exibia; a UI
+interna do HMD mostra identificação completa por papel autorizado (política
+PHI vigente — painel-ats-parity). O ruído é contido pelo card fechado por
+padrão. Badge de erro do NIR em `FAILED` é mantido (atalho para o estado sem
+abrir a trilha).
 
 ### D5 — Specs: títulos verbatim, corpos governam (quirk D5b)
 

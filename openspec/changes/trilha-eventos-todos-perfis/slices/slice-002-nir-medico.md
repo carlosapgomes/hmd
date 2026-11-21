@@ -10,6 +10,7 @@ expected_files:
   - apps/doctor/tests/test_detail.py
   - apps/doctor/tests/test_decision.py
   - apps/accounts/tests/test_role_labels.py
+  - apps/pipeline/tests/test_procedure_review_recovery.py
 ```
 
 Depende de: slice 001 (builder + partial em `apps/cases`).
@@ -83,3 +84,9 @@ padrão, ao final) com ator/papel pt-BR/data — quem fez o quê visível.
 
 - Agendador (slice 003); mudar `EVENT_LABELS`; filtros por papel; mover
   `decision_event` para fora do presenter.
+- Nota (decisão do dono 2026-11-21, opção B): `apps/pipeline/tests/
+  test_procedure_review_recovery.py` ENTRO no escopo EXCLUSIVAMENTE para
+  re-escopar o pin «auditoria terse» — `follow.content` (detalhe NIR) sai do
+  composite `sensitive` porque a trilha agora exibe a justificativa por
+  paridade total (design D4 revisado); os pins sobre `sched.args`, payload
+do evento de falha e caplog PERMANECEM intactos.

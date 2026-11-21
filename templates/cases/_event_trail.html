@@ -1,0 +1,41 @@
+{% comment %}
+Card «Trilha de eventos» (change trilha-eventos-todos-perfis, slice 001, R2):
+partial compartilhado extraído 1:1 do detalhe do painel — mesmo markup
+(mesmas classes, aria e comportamento do collapse FECHADO por padrão).
+Itera ``event_trail`` (chave única do partial).
+{% endcomment %}
+{% load role_labels %}
+<div class="card mb-3">
+  <div class="card-header d-flex flex-wrap align-items-center gap-2">
+    <span>Trilha de eventos</span>
+    <button class="btn btn-sm btn-outline-secondary ms-auto" type="button"
+            data-bs-toggle="collapse" data-bs-target="#case-event-trail"
+            aria-expanded="false" aria-controls="case-event-trail">Mostrar trilha</button>
+  </div>
+  <div class="collapse" id="case-event-trail">
+    <ul class="list-group list-group-flush">
+      {% for event in event_trail %}
+      <li class="list-group-item">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div>
+            <span class="badge rounded-pill {{ event.badge_css }}">{{ event.label }}</span>
+            <div class="small text-muted mt-1">
+              {{ event.actor_display }}{% if event.actor_role %} · papel {{ event.actor_role|role_label }}{% endif %}
+            </div>
+            {% if event.details %}
+            <ul class="small text-muted mt-1 mb-0">
+              {% for line in event.details %}
+              <li>{{ line }}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </div>
+          <span class="small text-muted text-nowrap">{{ event.timestamp|date:"d/m/Y H:i" }}</span>
+        </div>
+      </li>
+      {% empty %}
+      <li class="list-group-item text-muted">Sem eventos registrados.</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>

@@ -43,9 +43,9 @@ from django.utils import timezone
 from apps.accounts.models import Role, User
 from apps.attachments.models import AttachmentStatus, CaseAttachment
 from apps.cases.closure import purge_closed_case_data
+from apps.cases.event_trail import event_label
 from apps.cases.events import CaseEventType
 from apps.cases.models import ActorType, Case, CaseDocument, CaseEvent, CaseStatus
-from apps.dashboard.event_labels import event_label
 
 SYSTEM_ROLE = "system"
 

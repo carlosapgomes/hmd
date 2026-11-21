@@ -38,6 +38,7 @@ from django.utils import timezone
 
 from apps.accounts.models import Role, User
 from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS, administratively_close_case
+from apps.cases.event_trail import EVENT_LABELS
 from apps.cases.events import CaseEventType
 from apps.cases.models import (
     ActorType,
@@ -51,7 +52,6 @@ from apps.cases.models import (
 )
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.dashboard.case_labels import CASE_NEXT_STEP_LABELS, CASE_RESULT_LABELS
-from apps.dashboard.event_labels import EVENT_LABELS
 from apps.dashboard.views import CASE_LIST_PAGE_SIZE, CLOSE_SUCCESS_MESSAGE
 
 SYSTEM_ROLE = "system"

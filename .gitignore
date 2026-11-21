@@ -33,3 +33,6 @@ tmp/verification/
 *.log
 .idea/
 .vscode/
+
+# Runtime pi-subagents (sessoes/artefatos de agentes — nao versionar)
+.pi/subagents/

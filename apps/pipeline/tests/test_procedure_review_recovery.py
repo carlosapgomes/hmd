@@ -333,6 +333,10 @@ def test_dispatch_failure_preserves_confirmation_and_schedules_recovery(
     # no detalhe do NIR exibe a justificativa do evento
     # CASE_PROCEDURE_REVIEW_CONFIRMED, como o painel.
     assert "Justificativa:" in follow.content.decode()
+    # Anti-drift do slice 003 (trilha-eventos-todos-perfis): pinar também um
+    # fragmento distintivo do VALOR enviado — o rótulo sozinho passaria mesmo
+    # se o texto livre deixasse de ser exibido (decisão B exige o texto).
+    assert "Confirmo apos leitura" in follow.content.decode()
 
 
 @pytest.mark.django_db(transaction=True)

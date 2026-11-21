@@ -13,4 +13,4 @@ Contrato: [slice-001-endurecimento-testes.md](slices/slice-001-endurecimento-tes
 
 ## Encerramento (após 001)
 
-- [ ] `openspec validate --strict`, atualizar `PROJECT_CONTEXT.md` no arquivamento (quitar P2 #2/#3 da change de paridade; P2 #1 permanece documentação).
+- [x] `openspec validate --strict`, atualizar `PROJECT_CONTEXT.md` no arquivamento (quitar P2 #2/#3 da change de paridade; P2 #1 permanece documentação).

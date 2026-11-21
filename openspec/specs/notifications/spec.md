@@ -8,18 +8,7 @@ Notificações in-app por marcos do ciclo do caso (resposta final, pronto para a
 
 ### Requirement: Notificações por marcos do caso
 
-O sistema SHALL criar notificação in-app quando eventos-marco da FSM ocorrem:
-resposta final publicada e reabertura por intercorrência notificam o criador
-do caso; caso pronto para agendamento notifica todos os usuários com papel
-scheduler; encerramento administrativo notifica o criador do caso. As
-notificações SHALL ser idempotentes (evento reprocessado não duplica), SHALL
-conter apenas texto fixo e identificador do caso (sem dados de paciente) e
-uma falha na criação SHALL jamais impedir a transição do caso. Textos
-canônicos (implementação): preview de agendamento = "Caso aguardando
-confirmação de agendamento"; preview de reabertura = "Reconfirme os dados
-do caso"; fallback de resposta final = "Resposta final disponível para o
-caso"; título e preview de encerramento administrativo = "Caso encerrado
-administrativamente" (o motivo NÃO entra na notificação — texto fixo).
+O sistema SHALL criar notificação in-app quando eventos-marco da FSM ocorrem: resposta final publicada notifica o criador do caso; caso pronto para agendamento notifica todos os usuários com papel scheduler; reabertura por intercorrência (retorno à fila de agendamento com motivo, incluindo a reabertura pós-encerramento) notifica o criador do caso E todos os usuários com papel scheduler com conta ativa; encerramento administrativo notifica o criador do caso. As notificações SHALL ser idempotentes (evento reprocessado não duplica), SHALL conter apenas texto fixo e identificador do caso (sem dados de paciente) e uma falha na criação SHALL jamais impedir a transição do caso. Textos canônicos (implementação): preview de agendamento = "Caso aguardando confirmação de agendamento"; preview de reabertura = "Reconfirme os dados do caso" (criador) e "Caso reaberto aguardando novo agendamento" (agendadores); fallback de resposta final = "Resposta final disponível para o caso"; título e preview de encerramento administrativo = "Caso encerrado administrativamente" (o motivo NÃO entra na notificação — texto fixo).
 
 #### Scenario: Resposta final notifica o criador
 
@@ -38,6 +27,12 @@ administrativamente" (o motivo NÃO entra na notificação — texto fixo).
 - **GIVEN** um caso respondido reaberto por intercorrência (evento de retorno à fila de agendamento com motivo)
 - **WHEN** o evento é gravado
 - **THEN** o criador recebe notificação de reabertura
+
+#### Scenario: Reabertura notifica também os agendadores
+
+- **GIVEN** um caso reaberto por intercorrência (pré-ciência ou pós-encerramento), com o evento de retorno à fila de agendamento com motivo
+- **WHEN** o evento é gravado
+- **THEN** todos os usuários com papel scheduler e conta ativa recebem a notificação de caso reaberto, além da notificação do criador — o caso reentrou na fila de pendentes do agendador
 
 #### Scenario: Encerramento administrativo notifica o criador
 

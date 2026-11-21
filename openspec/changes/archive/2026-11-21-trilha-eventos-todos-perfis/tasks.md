@@ -41,4 +41,4 @@ Contrato: [slice-003-agendador.md](slices/slice-003-agendador.md). Depende de 00
 
 ## Encerramento (após 003)
 
-- [ ] Revisar deltas contra o comportamento entregue, `openspec validate` strict, atualizar `PROJECT_CONTEXT.md` no arquivamento e registrar no design a reversão formal da decisão D4 do `painel-ats-parity`.
+- [x] Revisar deltas contra o comportamento entregue, `openspec validate` strict, atualizar `PROJECT_CONTEXT.md` no arquivamento e registrar no design a reversão formal da decisão D4 do `painel-ats-parity`.

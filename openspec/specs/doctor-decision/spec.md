@@ -167,7 +167,7 @@ nunca apenas no template.
 
 ### Requirement: Presenter re-identificado sob papel autorizado
 
-O detalhe do caso SHALL apresentar, apenas para `doctor`/`admin`, os dados reais do paciente (identificação, número de ocorrência) e a demografia do caso — idade, sexo e raça/cor extraídas do cabeçalho padrão SESAB — e os artefatos do pipeline re-identificados: histórico e sumário, estrutura extraída, alertas da policy com a recomendação por procedimento e o resultado agregado, requisitos gerais acionáveis e o PDF original. A re-identificação SHALL ocorrer apenas na renderização para papel autorizado; nenhum artefato re-identificado é persistido nem enviado a qualquer LLM. A ordem dos cards SHALL seguir a leitura clínica: identificação, «Procedimentos do caso», sumário clínico e estrutura extraída (o quadro clínico) ANTES dos alertas consultivos e demais cards da automação. O detalhe NÃO exibe a trilha de eventos (vive no painel). O card «Procedimentos do caso» exibe TODAS as rows — inclusive a detectada não-declarada que sobrevive ao bypass da divergência — com badges de origem (Declarado/Detectado na extração) e de detecção após a reconciliação. O `<title>`, o breadcrumb e os links de navegação entre detalhe e decisão SHALL usar a **referência humana** do caso — nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel) — e o uid completo NÃO aparece em texto visível nessas superfícies (permanece apenas como chave das URLs).
+O detalhe do caso SHALL apresentar, apenas para `doctor`/`admin`, os dados reais do paciente (identificação, número de ocorrência) e a demografia do caso — idade, sexo e raça/cor extraídas do cabeçalho padrão SESAB — e os artefatos do pipeline re-identificados: histórico e sumário, estrutura extraída, alertas da policy com a recomendação por procedimento e o resultado agregado, requisitos gerais acionáveis e o PDF original. A re-identificação SHALL ocorrer apenas na renderização para papel autorizado; nenhum artefato re-identificado é persistido nem enviado a qualquer LLM. A ordem dos cards SHALL seguir a leitura clínica: identificação, «Procedimentos do caso», sumário clínico e estrutura extraída (o quadro clínico) ANTES dos alertas consultivos e demais cards da automação. O detalhe exibe a trilha de eventos em card collapsible «Trilha de eventos» ao final da página — a mesma trilha do painel (paridade total de auditoria): cada evento com rótulo legível, badge por categoria, ator com papel em português e data/hora, card fechado por padrão. O card «Procedimentos do caso» exibe TODAS as rows — inclusive a detectada não-declarada que sobrevive ao bypass da divergência — com badges de origem (Declarado/Detectado na extração) e de detecção após a reconciliação. O `<title>`, o breadcrumb e os links de navegação entre detalhe e decisão SHALL usar a **referência humana** do caso — nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel) — e o uid completo NÃO aparece em texto visível nessas superfícies (permanece apenas como chave das URLs).
 
 #### Scenario: Médico vê o sumário re-identificado
 
@@ -209,7 +209,13 @@ O detalhe do caso SHALL apresentar, apenas para `doctor`/`admin`, os dados reais
 
 - **GIVEN** um caso em `AWAITING_DOCTOR` com trilha de eventos
 - **WHEN** o médico abre o detalhe
-- **THEN** nenhum bloco de trilha de eventos é renderizado
+- **THEN** o card «Trilha de eventos» é renderizado ao final da página, fechado por padrão; ao abrir, cada evento exibe rótulo legível, ator com papel em português e data/hora
+
+#### Scenario: Trilha do médico mostra criação e pós-decisão
+
+- **GIVEN** um caso em `AWAITING_DOCTOR` criado por um NIR, com pipeline concluído
+- **WHEN** o médico autorizado abre o detalhe e expande a trilha de eventos
+- **THEN** os eventos exibem o NIR como ator da criação, os eventos do pipeline com ator «Sistema» e as datas/horas de cada etapa
 
 #### Scenario: Detalhe médico exibe row detectada não-declarada
 
@@ -313,13 +319,13 @@ usuário.
 
 ### Requirement: Caso decidido consultável
 
-O sistema SHALL exibir, para `doctor`/`admin` com acesso ao caso (regra de subtipo), o detalhe read-only de casos decididos com as decisões por procedimento, motivos, ator e data — **sem a trilha de eventos** (vive no painel) — e sem permitir nova decisão fora de `AWAITING_DOCTOR`.
+O sistema SHALL exibir, para `doctor`/`admin` com acesso ao caso (regra de subtipo), o detalhe read-only de casos decididos com as decisões por procedimento, motivos, ator e data — e a trilha de eventos em card collapsible «Trilha de eventos» ao final (a mesma do painel, fechado por padrão) — e sem permitir nova decisão fora de `AWAITING_DOCTOR`.
 
 #### Scenario: Detalhe decidido read-only
 
 - **GIVEN** um caso em `DOCTOR_DENIED`
 - **WHEN** o médico autorizado abre o detalhe
-- **THEN** as decisões e motivos são exibidos, nenhum formulário de decisão é renderizado e nenhum bloco de trilha de eventos aparece
+- **THEN** as decisões e motivos são exibidos, nenhum formulário de decisão é renderizado e o card «Trilha de eventos» aparece ao final, fechado por padrão
 
 ### Requirement: Reserva de caso durante a avaliação médica
 

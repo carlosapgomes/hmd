@@ -1,9 +1,15 @@
-"""Rótulos legíveis da trilha de eventos do painel (painel-ats-parity, slice 003).
+"""Trilha de eventos compartilhada (change trilha-eventos-todos-perfis, slice 001, R1).
+
+Casa neutra do domínio da trilha (``CaseEvent`` vive em ``apps.cases``):
+rótulos legíveis, badges por categoria e o builder do contexto renderizado
+pelo partial ``templates/cases/_event_trail.html`` em todas as superfícies
+de detalhe. MIGRADO do módulo de rótulos do dashboard (removido neste slice)
+— o painel passa a importar daqui (dependência unidirecional preservada).
 
 Fonte canônica dos textos da trilha (R1/D3), no molde do dashboard do ats-web
 (``EVENT_LABELS.get(t, t)``): o supervisor lê «Caso criado» em vez de
 ``CASE_CREATED``. O mapa cobre **todos** os valores de ``CaseEventType`` —
-tipo novo sem rótulo quebra o teste anti-drift (``test_event_labels.py``) em
+tipo novo sem rótulo quebra o teste anti-drift (``test_event_trail.py``) em
 vez de aparecer cru no painel; tipos desconhecidos caem no fallback (valor
 bruto). As categorias de badge (``EVENT_BADGE_CSS``) separam etapa do sistema,
 ação de usuário e falha; ``payload`` com ``status=FAILED`` força o vermelho
@@ -14,7 +20,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from django.utils import timezone
+
 from apps.cases.events import CaseEventType
+from apps.cases.models import Case
+from apps.cases.procedure_review import event_detail_lines
 
 # Classes Bootstrap 5.3 do badge por categoria (R1): sistema (etapas
 # automáticas), NIR (ações do operador), médico, agendador, atenção (retenção),
@@ -182,3 +192,29 @@ def _payload_files_failed(payload: Mapping[str, object] | None) -> bool:
         return False
     value = payload.get("files_failed", 0)
     return isinstance(value, int) and value > 0
+
+
+def build_event_trail_context(case: Case) -> list[dict[str, object]]:
+    """Contexto da trilha de eventos do caso (R1) — fonte única do partial
+    ``templates/cases/_event_trail.html``.
+
+    UMA query ``case.events.select_related("actor")`` NA ORDEM do queryset
+    (``CaseEvent.Meta.ordering`` = timestamp, id — cronológica ascendente,
+    paridade com o painel); por evento — ``label`` (``event_label``),
+    ``badge_css`` (``event_badge_css`` com o payload), ``actor_display``
+    (``actor.display_name`` ou «Sistema»), ``actor_role``, ``timestamp``
+    (``timezone.localtime``) e ``details`` (``event_detail_lines``). Puro, sem
+    request.
+    """
+    return [
+        {
+            "event_type": event.event_type,
+            "label": event_label(event.event_type),
+            "badge_css": event_badge_css(event.event_type, event.payload),
+            "actor_display": event.actor.display_name if event.actor else "Sistema",
+            "actor_role": event.actor_role,
+            "timestamp": timezone.localtime(event.timestamp),
+            "details": event_detail_lines(event),
+        }
+        for event in case.events.select_related("actor")
+    ]

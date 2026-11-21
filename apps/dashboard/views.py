@@ -57,15 +57,14 @@ from apps.accounts.decorators import role_required
 from apps.accounts.models import User
 from apps.attachments.models import CaseAttachment
 from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS, administratively_close_case
+from apps.cases.event_trail import build_event_trail_context
 from apps.cases.events import CaseEventType
 from apps.cases.models import Case, CaseDocument, CaseEvent, CaseStatus, SchedulingUnit
 from apps.cases.navigation import resolve_safe_next_url
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
-from apps.cases.procedure_review import event_detail_lines
 from apps.cases.units import unit_label
 
 from .case_labels import CASE_NEXT_STEP_LABELS, CASE_RESULT_LABELS, PROCEDURE_TYPE_OPTIONS
-from .event_labels import event_badge_css, event_label
 from .metrics import (
     DEFAULT_PERIOD,
     VALID_PERIODS,
@@ -451,7 +450,7 @@ def _case_detail_context(case: Case, *, filters: Mapping[str, str]) -> dict[str,
     Identificação completa (nome, idade, sexo, raça/cor, unidade de origem, nº de
     ocorrência ou uid curto, inserção e fase/status), procedimentos declarados, a
     TRILHA de eventos com rótulos legíveis (slice 003, R1/R2 — mapa
-    ``event_labels``, ator e timestamp localizado) e o destino do encerramento
+    ``apps.cases.event_trail``, ator e timestamp localizado) e o destino do encerramento
     administrativo (casos ≠ ``CLEANED``) com os filtros da lista preservados no
     retorno.
 
@@ -493,18 +492,7 @@ def _case_detail_context(case: Case, *, filters: Mapping[str, str]) -> dict[str,
         "next_step_label": CASE_NEXT_STEP_LABELS[case.status],
         "procedure_labels": _procedure_labels(declared_types),
         "can_close": case.status != CaseStatus.CLEANED,
-        "events": [
-            {
-                "event_type": event.event_type,
-                "label": event_label(event.event_type),
-                "badge_css": event_badge_css(event.event_type, event.payload),
-                "actor_display": event.actor.display_name if event.actor else "Sistema",
-                "actor_role": event.actor_role,
-                "timestamp": timezone.localtime(event.timestamp),
-                "details": event_detail_lines(event),
-            }
-            for event in case.events.select_related("actor")
-        ],
+        "event_trail": build_event_trail_context(case),
         "filter_qs": urlencode(_filter_params(filters)),
         "back_url": _dashboard_url(filters),
     }

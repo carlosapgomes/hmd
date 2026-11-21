@@ -707,9 +707,27 @@ def test_presenter_decision_section_after_decision(
     assert decision_event["actor_display"] == decider.username
     assert decision_event["actor_role"] == DOCTOR_ROLE
     assert decision_event["timestamp"]
-    # Slice 003 (painel-ats-parity): a trilha saiu do detalhe médico — o
-    # presenter não monta mais ``events`` (vive no painel).
+    # Slice 002 (trilha-eventos-todos-perfis, R2): a trilha volta ao detalhe
+    # médico — ``event_trail`` montado pelo builder compartilhado; o
+    # ``decision_event`` é DERIVADO da lista carregada (último
+    # ``CASE_DOCTOR_DECISIONS_RECORDED``), sem query dedicada.
     assert "events" not in context
+    event_trail = context["event_trail"]
+    assert isinstance(event_trail, list)
+    assert event_trail
+    trail_types = [item["event_type"] for item in event_trail]
+    assert CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED in trail_types
+    # Derivação: o ``decision_event`` espelha o ÚLTIMO
+    # ``CASE_DOCTOR_DECISIONS_RECORDED`` da trilha (há eventos de status do
+    # encadeamento após a decisão — o último item da trilha NÃO é a decisão).
+    decision_entries = [
+        item
+        for item in event_trail
+        if item["event_type"] == CaseEventType.CASE_DOCTOR_DECISIONS_RECORDED
+    ]
+    assert decision_entries
+    assert decision_event["actor_display"] == decision_entries[-1]["actor_display"]
+    assert decision_event["actor_role"] == decision_entries[-1]["actor_role"]
     # Os eventos continuam na TRILHA do caso (append-only), com a decisão e o
     # encadeamento da decisão mista (≥1 aprovado) → SCHEDULER_REQUESTED.
     event_types = [event.event_type for event in case.events.order_by("id")]
@@ -750,11 +768,17 @@ def test_decided_detail_readonly(
     assert RADIO_LABEL in body
     assert "sem indicação clínica" in body
     assert "risco elevado" in body
-    # Ator/data do evento de decisão.
+    # Ator/data do evento de decisão (card «Decisões registradas» inalterado).
     assert decider.username in body
-    # A trilha de eventos saiu do detalhe médico (vive no painel).
-    assert "Trilha de eventos" not in body
-    assert "Decisões médicas por procedimento registradas" not in body
+    # Trilha de eventos ao final, FECHADA por padrão (mesmo partial do painel).
+    assert "Trilha de eventos" in body
+    assert '<div class="collapse" id="case-event-trail">' in body
+    assert 'aria-expanded="false"' in body
+    assert "collapse show" not in body
+    trail = body.split("Trilha de eventos")[-1]
+    assert "Decisões médicas por procedimento registradas" in trail
+    assert decider.username in trail
+    assert "papel médico" in trail
     # Read-only: nenhum formulário/campo de decisão fora de AWAITING_DOCTOR
     # (o único <form> da página é o de logout do base.html — sem ação de
     # decisão nem campos dinâmicos do DoctorDecisionForm).

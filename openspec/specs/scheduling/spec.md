@@ -196,7 +196,7 @@ O sistema SHALL permitir desmarcar, por intercorrência, um caso confirmado na u
 
 ### Requirement: Visão do agendador limitada ao necessário
 
-O detalhe do caso para o agendador SHALL exibir apenas a identificação do paciente (nome, data de nascimento, número de ocorrência), o diagnóstico resumido (primeira linha do sumário, re-identificada apenas na renderização), os procedimentos com as decisões médicas (incluindo motivos das negativas), os dados de agendamento e a thread de comunicações — sem os demais artefatos do pipeline (linhas seguintes do sumário, estrutura extraída, alertas da policy, sugestão). O `<title>` e o breadcrumb do detalhe SHALL usar a **referência humana** do caso — nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel) — e o uid completo NÃO aparece em texto visível (permanece apenas como chave das URLs). O PDF do relatório original e o texto extraído SHALL ficar disponíveis ao agendador somente após a decisão de agendamento, para casos processados por ele mesmo — por documento do relatório (o relatório pode chegar em múltiplos PDFs ordenados) — nos cards `Texto Extraído do PDF` e `Visualizar PDF Original` (spec `pdf-original-viewer`).
+O detalhe do caso para o agendador SHALL exibir apenas a identificação do paciente (nome, data de nascimento, número de ocorrência), o diagnóstico resumido (primeira linha do sumário, re-identificada apenas na renderização), os procedimentos com as decisões médicas (incluindo motivos das negativas), os dados de agendamento, a thread de comunicações e, ao final, a trilha de eventos em card collapsible «Trilha de eventos» (a mesma do painel: rótulos legíveis com badge por categoria, ator com papel em português, data/hora; fechado por padrão) — sem os demais artefatos do pipeline (linhas seguintes do sumário, estrutura extraída, alertas da policy, sugestão). O `<title>` e o breadcrumb do detalhe SHALL usar a **referência humana** do caso — nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel) — e o uid completo NÃO aparece em texto visível (permanece apenas como chave das URLs). O PDF do relatório original e o texto extraído SHALL ficar disponíveis ao agendador somente após a decisão de agendamento, para casos processados por ele mesmo — por documento do relatório (o relatório pode chegar em múltiplos PDFs ordenados) — nos cards `Texto Extraído do PDF` e `Visualizar PDF Original` (spec `pdf-original-viewer`).
 
 #### Scenario: Agendador vê o diagnóstico resumido re-identificado
 
@@ -208,7 +208,7 @@ O detalhe do caso para o agendador SHALL exibir apenas a identificação do paci
 
 - **GIVEN** um caso com sumário completo, estrutura extraída e alertas da policy persistidos
 - **WHEN** o agendador abre o detalhe do agendamento
-- **THEN** identificação, diagnóstico resumido e decisões médicas são exibidas e nenhum conteúdo de estrutura extraída, alerta da policy ou sugestão aparece na página
+- **THEN** identificação, diagnóstico resumido e decisões médicas são exibidos e nenhum conteúdo de estrutura extraída, alerta da policy ou sugestão aparece na página
 
 #### Scenario: PDF disponível apenas de caso processado pelo próprio agendador
 
@@ -233,6 +233,12 @@ O detalhe do caso para o agendador SHALL exibir apenas a identificação do paci
 - **GIVEN** um caso confirmado pelo agendador autenticado, com texto extraído
 - **WHEN** ele abre o detalhe do agendamento
 - **THEN** o card `Texto Extraído do PDF` exibe o texto; em caso de outro agendador ou fora do gate, nem o card de texto nem o de PDF aparecem
+
+#### Scenario: Trilha do agendador mostra quem decidiu e quem criou
+
+- **GIVEN** um caso pronto para agendamento, criado por um NIR, com decisão médica registrada por um médico
+- **WHEN** o agendador abre o detalhe e expande a trilha de eventos
+- **THEN** os eventos de criação e de decisão médica exibem o nome do ator com o papel em português e a data/hora; o card permanece fechado por padrão e nenhuma linha adicional do sumário aparece
 
 ### Requirement: Rótulos de unidade configuráveis por ambiente
 

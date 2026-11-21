@@ -33,9 +33,12 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.attachments.models import AttachmentStatus, CaseAttachment, ExtractionMethod, PatientMatch
+from apps.cases.events import CaseEventType
 from apps.cases.models import (
+    ActorType,
     Case,
     CaseDocument,
+    CaseEvent,
     CaseProcedure,
     CaseStatus,
     DetectionStatus,
@@ -586,7 +589,10 @@ class TestBuildCaseDetailContext:
         assert prior_card["reason"] == (
             "Paciente com INR elevado e plaquetas baixas — não liberar."
         )
-        assert "<ANONIMIZADO>" not in json.dumps(context, ensure_ascii=False)
+        # ``default=str``: o contexto agora inclui a trilha (slice 002, R2),
+        # cujos timestamps são datetimes — a asserção mira os tokens, não os
+        # tipos do contexto.
+        assert "<ANONIMIZADO>" not in json.dumps(context, ensure_ascii=False, default=str)
 
     def test_case_reference_uses_record_number(
         self,
@@ -1238,37 +1244,59 @@ def test_detail_page_renders_status_and_nonprocessed_badges(
     assert body.count("Laudo assinado por") == 1
 
 
-# ── Slice 003 (painel-ats-parity): trilha sai do detalhe; badge de falha ───
+# ── Slice 002 (trilha-eventos-todos-perfis): trilha no detalhe médico ─────
 
 
 @pytest.mark.django_db
-def test_detail_has_no_event_trail(
+def test_detail_renders_event_trail_collapsed(
     client: Client,
     nir_user: User,
     user_factory: Callable[..., User],
 ) -> None:
-    """R3/D4: a trilha de eventos saiu do detalhe médico (vive no painel) e
-    nenhum rótulo de evento aparece no lugar dela."""
+    """R2/cenário spec: o detalhe em ``AWAITING_DOCTOR`` exibe a trilha de
+    eventos ao final, FECHADA por padrão — a mesma trilha do painel, com a
+    criação tendo o NIR como ator."""
     case = _make_awaiting_case_with_artifacts(nir_user)
-    doctor = user_factory("geral-sem-trilha", (DOCTOR_ROLE,))
+    # Declaração do NIR como ator da criação (na produção, o intake grava
+    # ``CASE_PROCEDURES_DECLARED`` com o criador; o helper acima monta as
+    # rows direto no ORM, sem o evento).
+    CaseEvent.objects.create(
+        case=case,
+        actor_type=ActorType.USER,
+        actor=nir_user,
+        actor_role="nir",
+        event_type=CaseEventType.CASE_PROCEDURES_DECLARED,
+        payload={},
+    )
+    doctor = user_factory("geral-com-trilha", (DOCTOR_ROLE,))
     _login(client, doctor, DOCTOR_ROLE)
 
     response = client.get(reverse("doctor:case_detail", args=[case.case_id]))
     body = response.content.decode()
 
     assert response.status_code == 200
-    assert "Trilha de eventos" not in body
-    # Rótulos de evento do caso (transições + declaração) não são renderizados.
-    assert "Caso encaminhado para avaliação médica" not in body
-    assert "Procedimentos declarados pelo NIR" not in body
+    assert "Trilha de eventos" in body
+    trail = body.split("Trilha de eventos")[-1]
+    # Card collapsible FECHADO por padrão (mesmo partial do painel).
+    assert '<div class="collapse" id="case-event-trail">' in body
+    assert 'aria-expanded="false"' in body
+    assert 'data-bs-toggle="collapse"' in body
+    assert "collapse show" not in body
+    # Rótulos legíveis (transições + declaração), nunca os tipos brutos.
+    assert "Caso encaminhado para avaliação médica" in trail
+    assert "Procedimentos declarados pelo NIR" in trail
+    assert "CASE_STATUS_AWAITING_DOCTOR" not in trail
+    # Criação com o NIR como ator (papel pt-BR).
+    assert nir_user.username in trail
+    assert "papel nir" in trail
 
 
 @pytest.mark.django_db
-def test_detail_failed_case_shows_error_badge(
+def test_detail_failed_case_shows_error_badge_and_trail(
     client: Client,
     user_factory: Callable[..., User],
 ) -> None:
-    """R3/D4: caso ``FAILED`` acessível exibe badge de erro (sem trilha/motivo)."""
+    """R2: caso ``FAILED`` acessível exibe badge de erro E a trilha fechada."""
     creator = user_factory("nir-caso-falho", ("nir",))
     case = _create_case_with_declared(creator, (ANGIO_TYPE,))
     case.start_pdf_extraction(user=None, role=SYSTEM_ROLE)
@@ -1285,7 +1313,10 @@ def test_detail_failed_case_shows_error_badge(
         r'<span class="badge rounded-pill text-bg-danger[^"]*">Falha no processamento</span>',
         body,
     )
-    assert "Trilha de eventos" not in body
+    assert "Trilha de eventos" in body
+    assert '<div class="collapse" id="case-event-trail">' in body
+    assert "collapse show" not in body
+    assert "Falha no processamento" in body.split("Trilha de eventos")[-1]
 
 
 # ── detected-procedures-visible (slice 002): origem × detecção no card ─────

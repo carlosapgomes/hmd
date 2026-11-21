@@ -51,8 +51,17 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.cases.events import CaseEventType
 from apps.cases.locks import claim_case_lock
-from apps.cases.models import Case, CaseDocument, CaseProcedure, CaseStatus, MessageType
+from apps.cases.models import (
+    ActorType,
+    Case,
+    CaseDocument,
+    CaseEvent,
+    CaseProcedure,
+    CaseStatus,
+    MessageType,
+)
 from apps.cases.procedures import record_doctor_procedure_decisions
+from apps.scheduler.presenters import build_scheduler_case_detail_context
 from apps.scheduler.services import (
     REPLY_DENY_TEMPLATE,
     REPLY_REOPEN_TEMPLATE,
@@ -2597,3 +2606,90 @@ def test_detail_without_record_number_uses_short_uid_label(
     assert f"— Caso uid {short_id}" in body
     assert f'aria-current="page">Caso uid {short_id}</li>' in body
     assert str(case.case_id) not in _visible_text(body)
+
+
+# ── trilha-eventos-todos-perfis (slice 003): trilha no detalhe do agendador ──
+
+
+@pytest.mark.django_db
+def test_scheduler_presenter_mounts_event_trail(
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R1: o presenter monta ``event_trail`` (builder compartilhado de cases)."""
+    doctor = user_factory("medico-trilha-contexto", (DOCTOR_ROLE,))
+    case = _detail_case(nir_user, doctor)
+
+    context = build_scheduler_case_detail_context(case)
+
+    assert isinstance(context["event_trail"], list)
+    assert context["event_trail"]
+
+
+@pytest.mark.django_db
+def test_detail_renders_event_trail_collapsed_with_creation_and_decision(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2/cenário spec: o detalhe do agendador exibe a trilha ao final, FECHADA
+    por padrão — fora dos gates de PDF/texto (caso pré-decisão, sem
+    ``scheduled_by``) — com a criação (ator NIR) e a decisão médica (ator
+    médico) em nome + papel pt-BR + data/hora; one-liner preservado e nenhum
+    artefato clínico além da trilha."""
+    doctor = user_factory("medico-trilha-agendador", (DOCTOR_ROLE,))
+    case = _detail_case(nir_user, doctor)
+    # Declaração do NIR como ator da criação (mesmo padrão do detalhe médico —
+    # o helper monta as rows direto no ORM, sem o evento).
+    CaseEvent.objects.create(
+        case=case,
+        actor_type=ActorType.USER,
+        actor=nir_user,
+        actor_role="nir",
+        event_type=CaseEventType.CASE_PROCEDURES_DECLARED,
+        payload={},
+    )
+    viewer = user_factory("geral-trilha-agendador", (SCHEDULER_ROLE,))
+    _login(client, viewer, SCHEDULER_ROLE)
+
+    response = client.get(reverse("scheduler:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    # Gate 1: trilha presente em caso pré-decisão (fora do gate can_view_pdf —
+    # sem cards de PDF/texto para quem não decidiu o agendamento).
+    assert reverse("scheduler:case_pdf", args=[case.case_id, 1]) not in body
+    assert "Texto Extraído do PDF" not in body
+    assert "Trilha de eventos" in body
+    trail = body.split("Trilha de eventos")[-1]
+    # Card collapsible FECHADO por padrão (mesmo partial do painel).
+    assert '<div class="collapse" id="case-event-trail">' in body
+    assert 'aria-expanded="false"' in body
+    assert 'data-bs-toggle="collapse"' in body
+    assert "collapse show" not in body
+    # Rótulos legíveis (nunca os tipos brutos) + atores com papel pt-BR.
+    assert "Procedimentos declarados pelo NIR" in trail
+    assert nir_user.username in trail
+    assert "papel nir" in trail
+    assert "Decisões médicas por procedimento registradas" in trail
+    assert doctor.username in trail
+    assert "papel médico" in trail
+    assert "CASE_PROCEDURES_DECLARED" not in trail
+    assert "CASE_DOCTOR_DECISIONS_RECORDED" not in trail
+    # Data/hora localizada em cada evento.
+    assert re.search(r"\d{2}/\d{2}/\d{4} \d{2}:\d{2}", trail)
+    # One-liner preservado (primeira linha re-identificada, sem as demais).
+    assert "Primeira linha: paciente MARIA DA SILVA nascido em 05/03/1972." in body
+    assert "Segunda linha oculta" not in body
+    # Gate 2: nada de pipeline além da trilha (mesmos segredos do teste de
+    # ausência de artefatos clínicos).
+    for secret in (
+        "estrutura oculta",
+        "varfarina",
+        "80000",
+        "policy oculta",
+        "recomenda_recusar",
+        "sugestao oculta",
+        "detalhe clínico reservado",
+    ):
+        assert secret not in body

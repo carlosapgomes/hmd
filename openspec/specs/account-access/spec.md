@@ -251,11 +251,13 @@ O formulário de seleção de papel SHALL submeter a chave crua (não o rótulo)
 
 Superfícies cobertas: badge de papel ativo (`base.html`), seleção de papel
 (`accounts/switch_role.html`), lista de papéis da home da conta
-(`accounts/home.html`) e do perfil (`accounts/profile.html`), e as menções a
+(`accounts/home.html`) e do perfil (`accounts/profile.html`), as menções a
 papel nas comunicações dos detalhes de caso (`intake/case_detail.html`,
-`scheduler/case_detail.html`) e na trilha de eventos do **detalhe do caso no
-painel** (`dashboard/case_detail.html`) — os detalhes de NIR e médico não
-exibem mais trilha (change `painel-ats-parity`; a trilha vive no painel).
+`scheduler/case_detail.html`) e a trilha de eventos dos detalhes de caso em
+TODAS as superfícies que a exibem — painel (`dashboard/case_detail.html`),
+NIR (`intake/case_detail.html`), médico (`doctor/case_detail.html`) e
+agendador (`scheduler/case_detail.html`), via partial compartilhado (change
+`trilha-eventos-todos-perfis`).
 
 #### Scenario: Badge de papel ativo mostra o rótulo
 
@@ -287,15 +289,17 @@ exibem mais trilha (change `painel-ats-parity`; a trilha vive no painel).
 #### Scenario: Papel desconhecido exibe a própria chave
 
 - **GIVEN** uma trilha de eventos cujo `actor_role` é `system`
-- **WHEN** o detalhe do caso é renderizado no painel
+- **WHEN** o detalhe do caso é renderizado em qualquer superfície com trilha
+  (painel, NIR, médico, agendador)
 - **THEN** o papel do evento exibe `system`, sem erro
 
 #### Scenario: Trilha e comunicações mostram o rótulo do papel
 
 - **GIVEN** um caso com evento decidido por `doctor` e comunicação postada por
   `manager`
-- **WHEN** o detalhe do caso é renderizado: trilha no painel, comunicações no NIR
-- **THEN** a trilha do painel exibe "papel médico" e a comunicação do NIR exibe
+- **WHEN** o detalhe do caso é renderizado nas superfícies com trilha (painel,
+  NIR, médico, agendador) e nas comunicações do NIR
+- **THEN** as trilhas exibem "papel médico" e a comunicação do NIR exibe
   o badge "supervisor" (não as chaves)
 
 #### Scenario: Troca de papel continua funcionando por chave
@@ -304,3 +308,4 @@ exibem mais trilha (change `painel-ats-parity`; a trilha vive no painel).
   ativo `doctor`
 - **WHEN** seleciona o botão rotulado "supervisor" na tela de seleção
 - **THEN** a sessão passa a indicar `manager` como papel ativo
+

@@ -20,6 +20,7 @@ from datetime import datetime
 from django.utils.timezone import localtime
 
 from apps.anonymization.reidentify import reidentify_text
+from apps.cases.event_trail import build_event_trail_context
 from apps.cases.models import Case, CaseStatus, DoctorDisposition, SchedulingUnit
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.procedures import get_declared_procedure_types
@@ -71,6 +72,8 @@ def build_scheduler_case_detail_context(case: Case) -> dict[str, object]:
     decididas), dados de agendamento atuais (unidade/data/local/ator/reason)
     e a thread de comunicações. Nenhum artefato clínico (structured_data/
     policy_result/suggested_action) e nenhuma linha além da primeira do resumo.
+    A trilha de eventos (``event_trail`` — a mesma do painel, ao final do
+    detalhe, fora dos gates de PDF/texto) acompanha o contexto.
     """
     summary_line = _first_non_empty_line(case.summary_text)
     # Re-identificação exclusiva na renderização — nunca persistida (D3).
@@ -132,6 +135,9 @@ def build_scheduler_case_detail_context(case: Case) -> dict[str, object]:
         # Thread de comunicações (change 03) — mesmo padrão de render do detalhe
         # do intake; o contexto entrega as mensagens, o template renderiza.
         "communications": list(case.communication_messages.select_related("author")),
+        # Trilha de eventos (trilha-eventos-todos-perfis, slice 003): o mesmo
+        # builder do painel — histórico do caso, fora dos gates de PDF/texto.
+        "event_trail": build_event_trail_context(case),
         # Flag de leitura por estado: a página detalhe exibe ações apenas em
         # SCHEDULER_REQUESTED/AWAITING_SCHEDULING (confirmar/negar).
         "can_decide_scheduling": case.status

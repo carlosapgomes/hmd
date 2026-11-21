@@ -8,7 +8,7 @@ Confirmar, negar e reabrir o agendamento de casos aceitos pelo médico nas duas 
 
 ### Requirement: Fila do agendador completa
 
-O sistema SHALL exibir ao papel ativo `scheduler`/`admin` as abas `Pendentes` (`SCHEDULER_REQUESTED`/`AWAITING_SCHEDULING`) e `Processados`, ordenadas por `days_on_screen` desc nulls-last e FIFO, paginadas e sem filtro de unidade. Pendentes terá filtro server-side opcional por tipo de procedimento, busca client-side e cards 8/12 + tempo/ação 4/12 em desktop, com espera única, decisões médicas por procedimento e ações de reserva. Guards, partial a cada 20 s, contadores, unidade exibida quando definida e apresentação da aba processada são preservados; uid nunca é exibido.
+O sistema SHALL exibir ao papel ativo `scheduler`/`admin` as abas `Pendentes` (`SCHEDULER_REQUESTED`/`AWAITING_SCHEDULING`) e `Processados Hoje` — decisões de agendamento (confirmação ou negação) registradas no dia corrente pelo próprio agendador, independentemente do status atual do caso. Pendentes permanecem ordenadas por `days_on_screen` desc nulls-last e FIFO; Processados Hoje SHALL ser ordenada pela data/hora da decisão de agendamento, mais recente primeiro, paginada e sem filtro de unidade. Pendentes terá filtro server-side opcional por tipo de procedimento, busca client-side e cards 8/12 + tempo/ação 4/12 em desktop, com espera única, decisões médicas por procedimento e ações de reserva. Guards, partial a cada 20 s, contadores, unidade exibida quando definida e apresentação da aba processada são preservados; uid nunca é exibido. Casos decididos em dias anteriores NÃO aparecem nas abas — a consulta de casos antigos é atendida pelo «Histórico do agendador».
 
 #### Scenario: Agendador vê a fila completa
 
@@ -33,6 +33,18 @@ O sistema SHALL exibir ao papel ativo `scheduler`/`admin` as abas `Pendentes` (`
 - **GIVEN** casos aguardando com `days_on_screen` 10, 3 e um sem cabeçalho (upload mais antigo)
 - **WHEN** o agendador acessa a fila
 - **THEN** a ordem é 10, 3 e o caso sem cabeçalho ao fim (desempate FIFO), independentemente do momento do upload
+
+#### Scenario: Processados Hoje limita-se às decisões do dia corrente
+
+- **GIVEN** um caso com decisão de agendamento hoje pelo agendador autenticado e outro caso decidido ontem ainda não encerrado
+- **WHEN** o agendador acessa a aba processados
+- **THEN** apenas o caso decidido hoje aparece, ordenado pela data/hora da decisão (mais recente primeiro); o caso de ontem não aparece em nenhuma aba e permanece consultável pelo «Histórico do agendador»
+
+#### Scenario: Processados Hoje inclui apenas as próprias decisões
+
+- **GIVEN** decisões de agendamento registradas hoje por outro agendador
+- **WHEN** o agendador autenticado acessa a aba processados
+- **THEN** nenhuma delas é listada — a aba é escopada ao decisor
 
 #### Scenario: Aba processada usa rótulo de recebimento
 
@@ -102,7 +114,7 @@ O sistema SHALL exibir ao papel ativo `scheduler`/`admin` as abas `Pendentes` (`
 
 #### Scenario: Badges de contagem nas abas
 
-- **GIVEN** 2 casos aguardando e 4 processados acessíveis ao agendador
+- **GIVEN** 2 casos aguardando e 4 decisões de agendamento do dia corrente pelo próprio agendador
 - **WHEN** a fila é renderizada
 - **THEN** as abas exibem as contagens 2 e 4
 
@@ -196,19 +208,19 @@ O sistema SHALL permitir desmarcar, por intercorrência, um caso confirmado na u
 
 ### Requirement: Visão do agendador limitada ao necessário
 
-O detalhe do caso para o agendador SHALL exibir apenas a identificação do paciente (nome, data de nascimento, número de ocorrência), o diagnóstico resumido (primeira linha do sumário, re-identificada apenas na renderização), os procedimentos com as decisões médicas (incluindo motivos das negativas), os dados de agendamento, a thread de comunicações e, ao final, a trilha de eventos em card collapsible «Trilha de eventos» (a mesma do painel: rótulos legíveis com badge por categoria, ator com papel em português, data/hora; fechado por padrão) — sem os demais artefatos do pipeline (linhas seguintes do sumário, estrutura extraída, alertas da policy, sugestão). O `<title>` e o breadcrumb do detalhe SHALL usar a **referência humana** do caso — nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel) — e o uid completo NÃO aparece em texto visível (permanece apenas como chave das URLs). O PDF do relatório original e o texto extraído SHALL ficar disponíveis ao agendador somente após a decisão de agendamento, para casos processados por ele mesmo — por documento do relatório (o relatório pode chegar em múltiplos PDFs ordenados) — nos cards `Texto Extraído do PDF` e `Visualizar PDF Original` (spec `pdf-original-viewer`).
+O detalhe do caso para o agendador SHALL exibir a identificação do paciente (nome, data de nascimento, número de ocorrência), o **sumário clínico completo re-identificado apenas na renderização** (paridade ats-web — o truncamento à primeira linha é removido), os procedimentos com as decisões médicas (incluindo motivos das negativas), os dados de agendamento, a thread de comunicações e, ao final, a trilha de eventos em card collapsible «Trilha de eventos» (a mesma do painel: rótulos legíveis com badge por categoria, ator com papel em português, data/hora; fechado por padrão) — sem os demais artefatos do pipeline (estrutura extraída, alertas da policy, sugestão). O `<title>` e o breadcrumb do detalhe SHALL usar a **referência humana** do caso — nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel) — e o uid completo NÃO aparece em texto visível (permanece apenas como chave das URLs). O PDF do relatório original e o texto extraído SHALL ficar disponíveis ao agendador somente após a decisão de agendamento, para casos processados por ele mesmo — por documento do relatório (o relatório pode chegar em múltiplos PDFs ordenados) — nos cards `Texto Extraído do PDF` e `Visualizar PDF Original` (spec `pdf-original-viewer`).
 
 #### Scenario: Agendador vê o diagnóstico resumido re-identificado
 
 - **GIVEN** um caso com `summary_text` de múltiplas linhas contendo pseudônimos e o mapa de pseudônimos do caso
 - **WHEN** o agendador abre o detalhe do agendamento
-- **THEN** apenas a primeira linha do sumário é exibida, já re-identificada (sem tokens), e nenhuma outra linha do sumário aparece na página
+- **THEN** o diagnóstico é exibido pelo sumário completo, já re-identificado (sem tokens), preservando as linhas do texto
 
 #### Scenario: Agendador não vê artefatos clínicos além do permitido
 
 - **GIVEN** um caso com sumário completo, estrutura extraída e alertas da policy persistidos
 - **WHEN** o agendador abre o detalhe do agendamento
-- **THEN** identificação, diagnóstico resumido e decisões médicas são exibidos e nenhum conteúdo de estrutura extraída, alerta da policy ou sugestão aparece na página
+- **THEN** identificação, sumário completo e decisões médicas são exibidos e nenhum conteúdo de estrutura extraída, alerta da policy ou sugestão aparece na página
 
 #### Scenario: PDF disponível apenas de caso processado pelo próprio agendador
 
@@ -238,7 +250,8 @@ O detalhe do caso para o agendador SHALL exibir apenas a identificação do paci
 
 - **GIVEN** um caso pronto para agendamento, criado por um NIR, com decisão médica registrada por um médico
 - **WHEN** o agendador abre o detalhe e expande a trilha de eventos
-- **THEN** os eventos de criação e de decisão médica exibem o nome do ator com o papel em português e a data/hora; o card permanece fechado por padrão e nenhuma linha adicional do sumário aparece
+- **THEN** os eventos de criação e de decisão médica exibem o nome do ator com o papel em português e a data/hora; o card permanece fechado por padrão e o sumário completo permanece visível acima
+
 
 ### Requirement: Rótulos de unidade configuráveis por ambiente
 
@@ -278,3 +291,50 @@ O sistema SHALL reservar o caso para o agendador quando ele abre a página de co
 - **GIVEN** um caso pronto para agendamento reservado pelo agendador
 - **WHEN** ele aciona «Sair sem decidir»
 - **THEN** a reserva é liberada na hora e ele volta à fila com o caso disponível
+
+### Requirement: Histórico do agendador
+
+O sistema SHALL oferecer ao papel ativo `scheduler`/`admin` uma página de histórico com
+busca server-side por nº de ocorrência OU nome do paciente sobre os casos que passaram
+por decisão de agendamento (confirmação, negação ou cancelamento por intercorrência),
+incluindo casos encerrados (`CLEANED`) e casos com intercorrência ativa, de qualquer
+médico e agendador — com no máximo 50 resultados por consulta, estado vazio sem critério
+e link para o detalhe do caso no escopo histórico (leitura, sem ações de agendamento).
+A busca SHALL usar a referência humana nos resultados e o uid completo NÃO aparece em
+texto visível.
+
+#### Scenario: Busca por nome encontra caso antigo encerrado
+
+- **GIVEN** um caso `CLEANED` decidido há vários dias, cujo nome do paciente contém o termo buscado
+- **WHEN** o agendador busca pelo nome no histórico
+- **THEN** o caso é listado com referência humana, status legível e dados do agendamento anterior, mesmo não estando mais em nenhuma aba da fila
+
+#### Scenario: Busca por número de ocorrência
+
+- **GIVEN** casos com nº de ocorrência distinto
+- **WHEN** o agendador busca pelo nº
+- **THEN** apenas os casos correspondentes são listados, incluindo casos de outros agendadores
+
+#### Scenario: Sem critério mantém estado vazio
+
+- **GIVEN** a página de histórico aberta sem termo de busca
+- **WHEN** renderizada
+- **THEN** nenhum resultado é exibido e um estado vazio orienta o uso da busca
+
+#### Scenario: Detalhe histórico sem ações de agendamento
+
+- **GIVEN** um resultado de busca no histórico
+- **WHEN** o agendador abre o detalhe do caso
+- **THEN** o detalhe é exibido em leitura (mesmo conteúdo do detalhe do agendador) sem botões de confirmação, negação ou desmarcação, e o PDF/texto extraído seguem o gate de casos processados por ele mesmo
+
+#### Scenario: Negativa médica encerrada não entra no histórico
+
+- **GIVEN** um caso `CLEANED` que foi negado pelo médico sem nunca passar por decisão de agendamento
+- **WHEN** o agendador busca pelo nome ou nº dele no histórico
+- **THEN** o caso não é listado — o universo do histórico exige decisão de agendamento registrada
+
+#### Scenario: Papel não agendador recebe 403
+
+- **GIVEN** usuário com papel ativo `nir`
+- **WHEN** acessa a página de histórico do agendador
+- **THEN** recebe HTTP 403

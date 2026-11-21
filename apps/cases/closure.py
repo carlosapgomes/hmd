@@ -34,6 +34,7 @@ from apps.cases.models import (
     CaseProcedure,
     CaseStatus,
     DoctorDisposition,
+    SchedulingUnit,
 )
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES, get_procedure_profile
 
@@ -41,6 +42,49 @@ if TYPE_CHECKING:
     from apps.accounts.models import User
 
 logger = logging.getLogger(__name__)
+
+# Intercorrência pós-encerramento (change paridade-ats, slice 002, D3/D4):
+# status compacto da issue ativa — sem espelhar os ~12 campos do ats-web.
+POST_CLOSURE_ISSUE_STATUS_OPENED = "opened"
+
+# Motivos legíveis de inelegibilidade (R1): um por ramo, sem PHI.
+_POST_CLOSURE_INELIGIBLE_ACTIVE_ISSUE = "Já existe uma intercorrência ativa neste caso."
+_POST_CLOSURE_INELIGIBLE_NOT_CLEANED = "Caso não está encerrado (CLEANED)."
+_POST_CLOSURE_INELIGIBLE_DATA_DISPOSED = (
+    "Os dados clínicos do caso foram dispostos (minimização ou purga) — reabertura indisponível."
+)
+_POST_CLOSURE_INELIGIBLE_UNIT_2 = (
+    "Intercorrência pós-encerramento disponível apenas para agendamento na unidade 1."
+)
+_POST_CLOSURE_INELIGIBLE_NO_SCHEDULING = "Caso sem agendamento confirmado na unidade 1."
+
+# Comunicação da abertura ao NIR (D4): motivo de texto livre interpolado no
+# template — reuso do padrão do desmarcar (decisão do dono, D3); o caso
+# retorna à fila para novo agendamento.
+POST_CLOSURE_REOPEN_TEMPLATE = (
+    "Intercorrência pós-encerramento — agendamento desmarcado ({reason}); "
+    "caso retorna à fila para novo agendamento"
+)
+
+# Campos tocados pela abertura (D4): os 5 de agendamento corrente são limpos
+# (mesmos do desmarcar em apps/scheduler; o histórico vive nos eventos) e o
+# ``scheduling_reopen_reason`` + as colunas da issue são persistidos.
+_POST_CLOSURE_REOPEN_FIELDS: tuple[str, ...] = (
+    "scheduled_unit",
+    "scheduled_datetime",
+    "scheduled_location",
+    "scheduled_by",
+    "scheduled_decided_at",
+    "scheduling_reopen_reason",
+    "post_schedule_issue_status",
+    "post_schedule_issue_reason",
+    "post_schedule_issue_opened_by",
+    "post_schedule_issue_opened_at",
+)
+
+# Vias de fechamento da issue registradas no evento de auditoria (D9).
+_POST_CLOSURE_CLOSE_VIA_ACK = "acknowledge"
+_POST_CLOSURE_CLOSE_VIA_ADMINISTRATIVE = "administrative_closure"
 
 # Resposta final da negativa médica ao NIR (D1, plano §6): o NIR é o
 # destinatário e vê dados REAIS — o template é interpolado com um item por
@@ -177,6 +221,15 @@ def acknowledge_case_receipt(case: Case, *, user: User, role: str) -> None:
         locked.start_cleaning(user=user, role=role)
         if minimize:
             _clean_acknowledged_clinical_data(locked)
+            # D2 (slice 002): o marcador de disposição é gravado no MESMO
+            # atomic da minimização — a elegibilidade lê só esta coluna.
+            locked.clinical_data_disposed_at = timezone.now()
+            locked.save(update_fields=["clinical_data_disposed_at"])
+        # R3/D9 (slice 002): QUALQUER chegada a CLEANED zera a issue ativa no
+        # mesmo atomic, com evento de auditoria próprio quando havia issue.
+        _close_post_closure_issue(
+            case=locked, user=user, role=role, via=_POST_CLOSURE_CLOSE_VIA_ACK
+        )
         locked.complete_cleaning(user=user, role=role)
         if minimize:
             transaction.on_commit(lambda: _delete_files_best_effort(file_names))
@@ -215,6 +268,150 @@ def post_doctor_denial_reply(case: Case, *, user: User, role: str) -> None:
         locked.post_final_reply(user=user, role=role)
         body = DENIAL_REPLY_TEMPLATE.format(denied_items=_denial_items(denied_rows))
         post_user_communication(locked, user=user, role=role, body=body)
+
+
+# ── Intercorrência pós-encerramento (change paridade-ats, slice 002, D2–D4) ──
+
+
+def get_post_closure_issue_ineligibility_reason(case: Case) -> str:
+    """Motivo legível da inelegibilidade à intercorrência — ``""`` se elegível (R1).
+
+    Elegível: ``CLEANED`` + agendamento anterior confirmado na unidade 1 + dados
+    clínicos retidos (coluna ``clinical_data_disposed_at`` NULA — D2, nunca
+    proxy de campos) + sem issue ativa. A ordem dos ramos é contrato dos
+    testes: issue ativa → não encerrado → dados dispostos → unidade 2 → sem
+    agendamento confirmado.
+    """
+    if case.post_schedule_issue_status == POST_CLOSURE_ISSUE_STATUS_OPENED:
+        return _POST_CLOSURE_INELIGIBLE_ACTIVE_ISSUE
+    if case.status != CaseStatus.CLEANED:
+        return _POST_CLOSURE_INELIGIBLE_NOT_CLEANED
+    if case.clinical_data_disposed_at is not None:
+        return _POST_CLOSURE_INELIGIBLE_DATA_DISPOSED
+    if case.scheduled_unit == SchedulingUnit.UNIT_2:
+        return _POST_CLOSURE_INELIGIBLE_UNIT_2
+    if case.scheduled_unit != SchedulingUnit.UNIT_1:
+        return _POST_CLOSURE_INELIGIBLE_NO_SCHEDULING
+    return ""
+
+
+def is_post_closure_issue_eligible(case: Case) -> bool:
+    """O caso pode abrir intercorrência pós-encerramento? (R1, fail-closed)."""
+    return get_post_closure_issue_ineligibility_reason(case) == ""
+
+
+def _scheduling_snapshot(case: Case) -> dict[str, object]:
+    """Snapshot administrativo do agendamento anterior (D4, sem PHI).
+
+    Unidade/data-hora/local — os mesmos dados administrativos do precedente
+    vigente do evento de reabertura do desmarcar; nada clínico vai ao payload.
+    """
+    scheduled_at = case.scheduled_datetime
+    return {
+        "scheduled_unit": case.scheduled_unit,
+        "scheduled_datetime": scheduled_at.isoformat() if scheduled_at is not None else None,
+        "scheduled_location": case.scheduled_location,
+    }
+
+
+def _close_post_closure_issue(*, case: Case, user: User, role: str, via: str) -> bool:
+    """Zera a issue ativa no atomic corrente, com evento de auditoria (R3/D9).
+
+    Chamada DENTRO do atomic de cada chegada a ``CLEANED`` (ciência do novo
+    ciclo OU encerramento administrativo). Sem issue ativa é no-op total (sem
+    save, sem evento). Com issue ativa: zera as 4 colunas e grava
+    ``CASE_POST_CLOSURE_ISSUE_CLOSED`` com via/autor/papel. Devolve se havia
+    issue ativa.
+    """
+    if case.post_schedule_issue_status != POST_CLOSURE_ISSUE_STATUS_OPENED:
+        return False
+    case.post_schedule_issue_status = ""
+    case.post_schedule_issue_reason = ""
+    case.post_schedule_issue_opened_by = None
+    case.post_schedule_issue_opened_at = None
+    case.save(
+        update_fields=[
+            "post_schedule_issue_status",
+            "post_schedule_issue_reason",
+            "post_schedule_issue_opened_by",
+            "post_schedule_issue_opened_at",
+        ]
+    )
+    CaseEvent.objects.create(
+        case_id=case.case_id,
+        event_type=CaseEventType.CASE_POST_CLOSURE_ISSUE_CLOSED,
+        actor_type=ActorType.USER,
+        actor=user,
+        actor_role=role,
+        payload={
+            "via": via,
+            "by": user.username,
+            "role": role,
+        },
+    )
+    return True
+
+
+def open_post_closure_issue(case: Case, *, reason: str, user: User, role: str) -> Case:
+    """Abre intercorrência pós-encerramento e reabre o caso ao agendador (R2).
+
+    Motivo de texto livre obrigatório (reuso do padrão do desmarcar — decisão
+    do dono, D3: sem catálogo, sem mensagem separada). Validações nomeadas
+    ``ValueError`` ANTES de qualquer escrita (motivo vazio, caso inelegível).
+    No MESMO atomic com ``select_for_update``: revalidação de elegibilidade
+    sob lock (a corrida abertura×encerramento-administrativo resolve aqui — o
+    perdedor falha sem escrita parcial) → transição ``reopen_post_closure``
+    (``CLEANED → AWAITING_SCHEDULING``; o motivo entra no payload do evento
+    ``CASE_STATUS_AWAITING_SCHEDULING``) → limpeza dos 5 campos de
+    agendamento com snapshot prévio + persistência do motivo e da issue →
+    evento ``CASE_POST_CLOSURE_ISSUE_OPENED`` (motivo + snapshot
+    administrativo) → comunicação ao NIR com o motivo interpolado. As
+    notificações (criador + fan-out dos agendadores, R4) disparam pelo signal
+    do evento de transição e jamais bloqueiam a abertura. Quem chama traduz
+    ``ValueError`` em mensagem + redirect, nunca 500.
+    """
+    stripped_reason = reason.strip()
+    if not stripped_reason:
+        raise ValueError("informe o motivo da intercorrência pós-encerramento")
+    with transaction.atomic():
+        locked = Case.objects.select_for_update().get(pk=case.pk)
+        ineligibility = get_post_closure_issue_ineligibility_reason(locked)
+        if ineligibility:
+            raise ValueError(
+                f"Caso não elegível para intercorrência pós-encerramento: {ineligibility}"
+            )
+        snapshot = _scheduling_snapshot(locked)
+        now = timezone.now()
+
+        locked.reopen_post_closure(reason=stripped_reason, user=user, role=role)
+
+        locked.scheduled_unit = None
+        locked.scheduled_datetime = None
+        locked.scheduled_location = ""
+        locked.scheduled_by = None
+        locked.scheduled_decided_at = None
+        locked.scheduling_reopen_reason = stripped_reason
+        locked.post_schedule_issue_status = POST_CLOSURE_ISSUE_STATUS_OPENED
+        locked.post_schedule_issue_reason = stripped_reason
+        locked.post_schedule_issue_opened_by = user
+        locked.post_schedule_issue_opened_at = now
+        locked.save(update_fields=_POST_CLOSURE_REOPEN_FIELDS)
+
+        CaseEvent.objects.create(
+            case_id=locked.case_id,
+            event_type=CaseEventType.CASE_POST_CLOSURE_ISSUE_OPENED,
+            actor_type=ActorType.USER,
+            actor=user,
+            actor_role=role,
+            payload={
+                "reason": stripped_reason,
+                "scheduling_snapshot": snapshot,
+            },
+        )
+        body = POST_CLOSURE_REOPEN_TEMPLATE.format(reason=stripped_reason)
+        post_user_communication(locked, user=user, role=role, body=body)
+    locked.refresh_from_db()
+    return locked
 
 
 # ── Encerramento administrativo (change painel-lista-encerramento, slice 001) ──
@@ -336,12 +533,25 @@ def administratively_close_case(
                 if attachment.file.name
             )
             _clean_acknowledged_clinical_data(locked)
+            # D2 (slice 002): marcador de disposição no MESMO atomic.
+            locked.clinical_data_disposed_at = timezone.now()
+            locked.save(update_fields=["clinical_data_disposed_at"])
         locked.administratively_close(
             user=user,
             role=active_role,
             reason_code=reason_code,
             reason_text=reason_text,
             lock_snapshot=lock_snapshot,
+        )
+        # R3/D9 (slice 002): QUALQUER chegada a CLEANED zera a issue ativa no
+        # mesmo atomic, com evento de auditoria próprio registrando quem a
+        # fechou. A corrida abertura×encerramento é resolvida pelo
+        # ``select_for_update`` + revalidação do ``open_post_closure_issue``.
+        _close_post_closure_issue(
+            case=locked,
+            user=user,
+            role=active_role,
+            via=_POST_CLOSURE_CLOSE_VIA_ADMINISTRATIVE,
         )
         if minimize:
             transaction.on_commit(lambda: _delete_files_best_effort(file_names))
@@ -482,6 +692,10 @@ def purge_closed_case_data(case: Case) -> PurgeResult:
             )
         file_names = _retained_file_names(locked)
         _clean_acknowledged_clinical_data(locked)
+        # D2 (slice 002): a purga dispõe dados — grava o marcador no MESMO
+        # atomic da limpeza; a elegibilidade lê só esta coluna.
+        locked.clinical_data_disposed_at = timezone.now()
+        locked.save(update_fields=["clinical_data_disposed_at"])
         files_attempted = len(file_names)
         CaseEvent.objects.create(
             case_id=locked.case_id,

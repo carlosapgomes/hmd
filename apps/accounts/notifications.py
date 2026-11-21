@@ -10,10 +10,12 @@ conjunto canônico de notificações in-app de D1:
   ``scheduler`` (papel do modelo ``Role``, não papel de sessão) com conta
   ativa e não bloqueada;
 - ``CASE_STATUS_AWAITING_SCHEDULING`` **com ``"reason" in payload"``** →
-  criador do caso. É assim que a reabertura por intercorrência se marca
-  (``Case.reopen_scheduling`` carrega ``extra_payload={"reason": ...}``); a
-  entrada NORMAL na fila (``await_scheduling_confirmation``) não carrega
-  ``reason`` e NÃO notifica;
+  criador do caso + fan-out dos agendadores ativos (slice 002, spec
+  ``notifications`` MODIFIED — cobre a reabertura pré-ciência E a
+  pós-encerramento). É assim que a reabertura por intercorrência se marca
+  (``Case.reopen_scheduling``/``Case.reopen_post_closure`` carregam
+  ``extra_payload={"reason": ...}``); a entrada NORMAL na fila
+  (``await_scheduling_confirmation``) não carrega ``reason`` e NÃO notifica;
 - ``CASE_ADMINISTRATIVELY_CLOSED`` → criador do caso, com título e preview
   FIXOS "Caso encerrado administrativamente" (o motivo do encerramento é do
   supervisor e NUNCA entra no texto da notificação).
@@ -56,6 +58,10 @@ SCHEDULER_REQUESTED_PREVIEW = "Caso aguardando confirmação de agendamento"
 SCHEDULING_REOPENED_TITLE = "Caso reaberto por intercorrência"
 # O motivo da intercorrência é interno do fluxo — nunca entra no preview.
 SCHEDULING_REOPENED_PREVIEW = "Reconfirme os dados do caso"
+# Preview fixo do fan-out aos agendadores (slice 002, spec `notifications`
+# MODIFIED + decisão do dono D8: mesmo título do criador, preview canônico
+# paralelo ao de caso novo, diferenciado por "reaberto" + "novo").
+SCHEDULING_REOPENED_SCHEDULER_PREVIEW = "Caso reaberto aguardando novo agendamento"
 
 # Marco do encerramento administrativo (spec notifications): título e preview
 # FIXOS — o motivo registrado pelo supervisor nunca entra no texto.
@@ -140,9 +146,28 @@ def _create_scheduler_notifications(event: CaseEvent) -> list[UserNotification]:
     ]
 
 
+def _active_schedulers() -> list[User]:
+    """Agendadores com conta ativa — público do fan-out (R2)."""
+    return list(
+        User.objects.filter(
+            roles__name=SCHEDULER_ROLE_NAME,
+            is_active=True,
+            account_status="active",
+        ).distinct()
+    )
+
+
 def _create_scheduling_reopened_notification(event: CaseEvent) -> list[UserNotification]:
-    """Reabertura por intercorrência → criador, com preview fixo (D1)."""
-    return [
+    """Reabertura por intercorrência → criador + fan-out dos agendadores (R4).
+
+    O marco cobre a reabertura pré-ciência E a pós-encerramento (slice 002,
+    spec ``notifications`` MODIFIED): o caso reentrou na fila de pendentes do
+    agendador. Criador mantém título/preview vigentes; agendadores recebem o
+    MESMO título (decisão do dono, D8) com o preview fixo novo — texto 100%
+    fixo, sem PHI. Idempotente por (``recipient``, ``event``) nos dois
+    públicos (``get_or_create`` do ``_create_notification``).
+    """
+    created = [
         _create_notification(
             event=event,
             recipient=event.case.created_by,
@@ -151,6 +176,17 @@ def _create_scheduling_reopened_notification(event: CaseEvent) -> list[UserNotif
             body_preview=SCHEDULING_REOPENED_PREVIEW,
         )
     ]
+    created.extend(
+        _create_notification(
+            event=event,
+            recipient=recipient,
+            notification_type=NotificationType.SCHEDULING_REOPENED,
+            title=SCHEDULING_REOPENED_TITLE,
+            body_preview=SCHEDULING_REOPENED_SCHEDULER_PREVIEW,
+        )
+        for recipient in _active_schedulers()
+    )
+    return created
 
 
 def _create_administratively_closed_notification(event: CaseEvent) -> list[UserNotification]:

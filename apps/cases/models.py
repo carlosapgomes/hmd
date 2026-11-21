@@ -120,8 +120,10 @@ class Case(FSMModelMixin, models.Model):
         related_name="cases_created",
     )
 
-    # Identidade/origem (gate 04 e prior-case 06).
-    agency_record_number = models.CharField(max_length=20, blank=True)
+    # Identidade/origem (gate 04 e prior-case 06). Índices da busca histórica
+    # (slice 002 da change paridade-ats — ``icontains`` não usa btree, mas o
+    # cap 50 + volume hospitalar torna aceitável; pg_trgm em change própria).
+    agency_record_number = models.CharField(max_length=20, blank=True, db_index=True)
     agency_record_extracted_at = models.DateTimeField(null=True, blank=True)
 
     # Resultado da extração/retenção do gate (change intake-nir-upload,
@@ -140,7 +142,7 @@ class Case(FSMModelMixin, models.Model):
     anonymized_text = models.TextField(blank=True)
     pseudonym_map = models.JSONField(default=dict, blank=True)
     anonymization_report = models.JSONField(default=dict, blank=True)
-    patient_name = models.CharField(max_length=255, blank=True)
+    patient_name = models.CharField(max_length=255, blank=True, db_index=True)
     patient_birth_date = models.DateField(null=True, blank=True)
 
     # Metadados do cabeçalho padrão SESAB (change sesab-header-extraction,
@@ -215,6 +217,29 @@ class Case(FSMModelMixin, models.Model):
     scheduled_decided_at = models.DateTimeField(null=True, blank=True)
     scheduling_denial_reason = models.TextField(blank=True)
     scheduling_reopen_reason = models.TextField(blank=True)
+
+    # Intercorrência pós-encerramento (slice 002 da change paridade-ats, D3):
+    # issue ativa como campo compacto (status + motivo + autor + instante) —
+    # sem espelhar os ~12 campos nem ``cycle_id`` do ats-web; ciclos múltiplos
+    # são reconstruíveis pela trilha (evento dedicado por abertura). A coluna
+    # de status vazia = sem issue ativa; viabiliza o guard de elegibilidade e
+    # o queryset da busca sem varredura de eventos.
+    post_schedule_issue_status = models.CharField(max_length=20, blank=True, default="")
+    post_schedule_issue_reason = models.TextField(blank=True, default="")
+    post_schedule_issue_opened_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="cases_post_closure_issue_opened",
+    )
+    post_schedule_issue_opened_at = models.DateTimeField(null=True, blank=True)
+
+    # Marcador persistente de disposição de dados clínicos (slice 002, D2):
+    # timestamp gravado no MESMO atomic pelos dois caminhos que dispõem dados
+    # — encerramento com minimização ativa e purga retroativa. A elegibilidade
+    # de reabertura lê APENAS esta coluna (nunca proxy de campos).
+    clinical_data_disposed_at = models.DateTimeField(null=True, blank=True)
 
     # Reenvio corrigido (change nir-result-closure, design D4): um caso
     # encerrado (``CLEANED``) reenviado com correção gera um NOVO caso
@@ -391,6 +416,22 @@ class Case(FSMModelMixin, models.Model):
     )
     def _fsm_post_final_reply(self) -> None:
         """Hook FSM {DOCTOR_DENIED, SCHEDULING_CONFIRMED, SCHEDULING_DENIED} → FINAL_REPLY_POSTED."""
+
+    @transition(
+        field="status",
+        source=CaseStatus.CLEANED,
+        target=CaseStatus.AWAITING_SCHEDULING,
+    )
+    def _fsm_reopen_post_closure(self) -> None:
+        """Hook FSM CLEANED → AWAITING_SCHEDULING (intercorrência pós-encerramento).
+
+        Quarta transição adicionada pós-change-03 (guardrail: transições sim,
+        estados não) — a abertura de intercorrência devolve à fila de
+        agendamento um caso ENCERRADO com agendamento anterior confirmado na
+        unidade 1 e dados retidos. Quem valida elegibilidade, limpa os campos
+        de agendamento e registra a issue é o serviço
+        ``open_post_closure_issue`` (apps/cases/closure.py) no mesmo atomic.
+        """
 
     @transition(
         field="status",
@@ -701,6 +742,32 @@ class Case(FSMModelMixin, models.Model):
         """
         self._run_transition(
             self._fsm_reopen_scheduling,
+            user=user,
+            role=role,
+            extra_payload={"reason": reason},
+        )
+
+    def reopen_post_closure(
+        self,
+        *,
+        reason: str,
+        user: User | None = None,
+        role: str | None = None,
+    ) -> None:
+        """CLEANED → AWAITING_SCHEDULING (intercorrência pós-encerramento).
+
+        Transição NOVA da change paridade-ats (slice 002): reabre na fila um
+        caso encerrado com agendamento anterior confirmado na unidade 1. O
+        ``reason`` obrigatório entra no payload do evento
+        ``CASE_STATUS_AWAITING_SCHEDULING`` via ``_run_transition`` (que já
+        carrega o ``source`` real ``CLEANED``). Quem valida elegibilidade sob
+        lock, limpa os campos de agendamento, registra a issue e posta a
+        comunicação ao NIR é o serviço ``open_post_closure_issue``
+        (apps/cases/closure.py) no mesmo atomic. Source inválido →
+        ``TransitionNotAllowed`` sem efeito (django-fsm).
+        """
+        self._run_transition(
+            self._fsm_reopen_post_closure,
             user=user,
             role=role,
             extra_payload={"reason": reason},

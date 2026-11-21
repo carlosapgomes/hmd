@@ -151,6 +151,20 @@ class CaseEventType(models.TextChoices):
         "Desfecho da remoção dos arquivos da purga",
     )
 
+    # Intercorrência pós-encerramento (change paridade-ats-filas-historico-
+    # intercorrencia, slice 002, D3/D4): eventos não-transicionais gravados pelo
+    # serviço ``apps/cases/closure.py::open_post_closure_issue`` (abertura, com
+    # motivo + snapshot administrativo) e pela zeragem da issue em qualquer
+    # chegada a CLEANED (fechamento, com via/autor — D9). Payloads PHI-free.
+    CASE_POST_CLOSURE_ISSUE_OPENED = (
+        "CASE_POST_CLOSURE_ISSUE_OPENED",
+        "Intercorrência pós-encerramento aberta",
+    )
+    CASE_POST_CLOSURE_ISSUE_CLOSED = (
+        "CASE_POST_CLOSURE_ISSUE_CLOSED",
+        "Intercorrência pós-encerramento encerrada",
+    )
+
     # Revisão humana de procedimento do NIR (change confirm-nir-procedure-review,
     # slice 001, D1/D3): marcador de contrato (ENABLED, payload {version: 1}),
     # autoridade humana versionada (CONFIRMED), pedido FSM de reprocessamento

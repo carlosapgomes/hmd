@@ -4,6 +4,25 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.22] — 2026-11-21
+
+**Trilha de eventos em todos os perfis (paridade com o painel)** — 1
+change (`trilha-eventos-todos-perfis`), 3 slices TDD com revisão
+independente por slice. Suíte 2210 → **2219** (+9 testes). Sem
+migrations (deploy direto).
+
+- A trilha de eventos (`CaseEvent`, append-only, ator/papel/timestamp)
+  deixa de ser exclusiva do painel: NIR, médico e agendador passam a ver
+  a mesma trilha no detalhe do caso — quem agiu, não só o quê e quando.
+- Novo módulo de domínio `apps/cases/event_trail.py` (rótulos legíveis
+  45/45 tipos, badges por papel, `role_label` em português, linhas de
+  detalhe) migrado do dashboard sem quebrar a dependência unidirecional;
+  serviço puro com `select_related("actor")`, sem N+1.
+- Partial compartilhado `cases/_event_trail.html` (card collapsible
+  «Trilha de eventos», fechado por padrão, markup idêntico ao do painel);
+  guards por papel preservados — cada perfil vê só os eventos do seu
+  escopo.
+
 ## [0.1.21] — 2026-11-20
 
 **Confirmação autoritativa de procedimento pelo NIR (paridade ats-web)** —

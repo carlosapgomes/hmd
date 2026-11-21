@@ -37,9 +37,11 @@ Contrato: [slice-003-busca-nir-encerrados.md](slices/slice-003-busca-nir-encerra
 
 Contrato: [slice-004-historico-agendador.md](slices/slice-004-historico-agendador.md). Depende de 002. Design D5 (par de agendamento)/D6; spec delta `scheduling` (ADDED «Histórico do agendador»).
 
-- [ ] 4.1 Demonstrar RED: carimbos `scheduling_decided_at/by` (confirmação E negação carimbam no atomic; hoje a negação não carimba nada), backfill legado por eventos, e a busca por nome/nº sobre o universo de processados (incluindo CLEANED e issue ativa, qualquer decisor, cap 50, negativa médica encerrada excluída, estado vazio, referência humana), detalhe em leitura sem ações com gate de PDF, 403 para não-agendador.
-- [ ] 4.2 Implementar migration (carimbos + backfill por eventos com fail-closed de ator nulo), carimbo nos serviços de confirmação/negação (reabertura NÃO zera), view/urls/template do histórico com queryset por `scheduling_decided_at` e link de detalhe em modo leitura; verificar cenários do delta.
-- [ ] 4.3 Executar bateria completa e produzir relatório em `/tmp/hmd-slice-004-report.md`.
+- [x] 4.1 Demonstrar RED: carimbos `scheduling_decided_at/by` (confirmação E negação carimbam no atomic; hoje a negação não carimba nada), backfill legado por eventos, e a busca por nome/nº sobre o universo de processados (incluindo CLEANED e issue ativa, qualquer decisor, cap 50, negativa médica encerrada excluída, estado vazio, referência humana), detalhe em leitura sem ações com gate de PDF, 403 para não-agendador.
+- [x] 4.2 Implementar migration (carimbos + backfill por eventos com fail-closed de ator nulo), carimbo nos serviços de confirmação/negação (reabertura NÃO zera), view/urls/template do histórico com queryset por `scheduling_decided_at` e link de detalhe em modo leitura; verificar cenários do delta.
+- [x] 4.3 Executar bateria completa e produzir relatório em `/tmp/hmd-slice-004-report.md`.
+
+> Nota de execução: loop controlado pela pai (pi-subagents-openspec-loop/2) — implementação 1 rodada + review 1 (BLOCK: 2×P1 — dados de agendamento ausentes no resultado; badge de reaberto mentiroso) + fix 1 rodada + review 2 FINAL («OK with notes», isolamento do blast radius do fix verificado pela pai por fingerprints); gate pai pós-fix: ruff/format/mypy verdes, pytest 2288 passed. **P2 deferido**: teste de `CLEANED` com PDF/mesmo decisor + exercício de `open_post_closure_issue` na página de histórico (estado de issue ativa hoje fabricado em teste). Nota residual aceita em review: registro legado com carimbo mas sem dados/motivos cai no badge «confirmado» (inatingível pelo fluxo real dos serviços). Evidências: `/tmp/hmd-slice-004-report.md`, `/tmp/hmd-slice-004-fix-1-report.md`, raiz `slice-004-20261121T180922`.
 
 ## 5. Slice 005 — Abas «Hoje» (entregar por último)
 

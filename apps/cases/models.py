@@ -217,6 +217,20 @@ class Case(FSMModelMixin, models.Model):
     scheduled_decided_at = models.DateTimeField(null=True, blank=True)
     scheduling_denial_reason = models.TextField(blank=True)
     scheduling_reopen_reason = models.TextField(blank=True)
+    # Carimbos históricos de decisão de agendamento (slice 004 da change
+    # paridade-ats, D5): gravados no MESMO atomic por ``confirm_case_scheduling``
+    # E ``deny_case_scheduling``, atualizados em re-decisões e NUNCA zerados pela
+    # reabertura (a reabertura limpa só os 5 campos do agendamento corrente; o
+    # carimbo é o fato histórico «passou por decisão de agendamento» e alimenta
+    # o universo da busca histórica + as abas «Processados Hoje» do slice 005).
+    scheduling_decided_at = models.DateTimeField(null=True, blank=True)
+    scheduling_decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="cases_scheduling_decided",
+    )
 
     # Intercorrência pós-encerramento (slice 002 da change paridade-ats, D3):
     # issue ativa como campo compacto (status + motivo + autor + instante) —

@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections import Counter
 from datetime import datetime
 from typing import cast
 from urllib.parse import urlencode
@@ -53,7 +54,7 @@ from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -326,6 +327,117 @@ def queue_partial(request: HttpRequest) -> HttpResponse:
     efeito colateral de expiração lazy de leases (D9).
     """
     return render(request, "scheduler/_queue_content.html", _build_queue_context(request))
+
+
+# ── Histórico do agendador (slice 004, D5/D6) ─────────────────────────────
+
+# Cap da busca histórica (D6): no máximo 50 resultados por consulta, os mais
+# novos primeiro (``order_by("-created_at")`` antes do slice) — mesmo padrão
+# da busca NIR de encerrados do slice 003.
+_HISTORICAL_SEARCH_CAP = 50
+
+
+def _stripped_record(case: Case) -> str:
+    """Nº de ocorrência sem bordas — chave da duplicidade (padrão NIR, D4)."""
+    return case.agency_record_number.strip()
+
+
+@role_required("scheduler", "admin")
+def historical_search(request: HttpRequest) -> HttpResponse:
+    """Busca histórica do agendador por nº de ocorrência OU nome (R2, D1/D6).
+
+    Universo = ``scheduling_decided_at`` preenchido (confirmações E negações,
+    reabertos, ``CLEANED`` e issue ativa, qualquer decisor; negativa médica
+    encerrada nunca teve decisão de agendamento — fora por construção). O termo
+    casa ``agency_record_number__icontains`` OU ``patient_name__icontains``;
+    cap 50 (``-created_at`` antes do slice); sem critério → estado vazio.
+    Leitura pura — nenhuma escrita. Cada resultado traz a referência humana
+    (nº + sufixo curto quando duplicado), o status legível e os dados do
+    agendamento anterior, com link ao detalhe em escopo histórico.
+    """
+    query = request.GET.get("q", "").strip()
+    results: list[dict[str, object]] = []
+    if query:
+        matches = list(
+            Case.objects.filter(scheduling_decided_at__isnull=False)
+            .filter(Q(agency_record_number__icontains=query) | Q(patient_name__icontains=query))
+            .select_related("scheduling_decided_by")
+            .order_by("-created_at")[:_HISTORICAL_SEARCH_CAP]
+        )
+        # Nºs repetidos NOS RESULTADOS (mesma regra de «meus casos», D4):
+        # contagem sobre a lista já carregada; nº em branco nunca é chave.
+        repeated = Counter(record for record in map(_stripped_record, matches) if record)
+        for case in matches:
+            decided_by = case.scheduling_decided_by
+            scheduled_unit = case.scheduled_unit
+            denial_reason = case.scheduling_denial_reason.strip()
+            reopen_reason = case.scheduling_reopen_reason.strip()
+            results.append(
+                {
+                    "case": case,
+                    "status_label": case.get_status_display(),
+                    "patient_name": case.patient_name,
+                    "agency_record_number": case.agency_record_number or "—",
+                    # Sufixo só para nº duplicado E preenchido; senão "".
+                    "reference_suffix": (
+                        f" · {case.short_id}" if repeated[_stripped_record(case)] > 1 else ""
+                    ),
+                    "decided_by": decided_by.display_name if decided_by is not None else "",
+                    "decided_at": case.scheduling_decided_at,
+                    "unit_label": unit_label(scheduled_unit) if scheduled_unit else "",
+                    # Dados do agendamento anterior (R3): data/hora e local
+                    # disponíveis; ausentes → "—" no template.
+                    "scheduled_datetime": case.scheduled_datetime,
+                    "scheduled_location": case.scheduled_location.strip(),
+                    "denial_reason": denial_reason,
+                    "reopen_reason": reopen_reason,
+                    # Reaberto por intercorrência = motivo persistido +
+                    # agendamento corrente limpo (após re-confirmação o motivo
+                    # persiste mas o agendamento volta a existir → confirmado).
+                    "is_reopened": bool(reopen_reason) and case.scheduled_datetime is None,
+                }
+            )
+    return render(
+        request,
+        "scheduler/historical_search.html",
+        {"query": query, "results": results},
+    )
+
+
+@role_required("scheduler", "admin")
+def historical_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    """Detalhe do caso em escopo histórico: leitura, sem ações (R3/R4).
+
+    Guarda de escopo histórico (fail-closed): só caso com
+    ``scheduling_decided_at`` preenchido — fora disso → 404 sem vazar conteúdo.
+    Reutiliza o presenter do detalhe vigente (mesmo conteúdo) com as flags de
+    ação forçadas a ``False`` (sem claim de reserva, sem forms de
+    confirmação/negação/desmarcação, sem banner de intercorrência) e o gate de
+    PDF/texto preservado (``scheduled_by == request.user`` E status em
+    ``PDF_ALLOWED_STATUSES`` — ``CLEANED`` segue fora, paridade ats-web).
+    """
+    user = _require_user(request)
+    case = get_object_or_404(
+        Case.objects.select_related("scheduling_decided_by"),
+        case_id=case_id,
+        scheduling_decided_at__isnull=False,
+    )
+    context = build_scheduler_case_detail_context(case)
+    # Escopo histórico é leitura: nenhuma ação de agendamento, nenhuma reserva.
+    context["lock_token"] = ""
+    context["can_decide_scheduling"] = False
+    context["can_reopen"] = False
+    context["incident_disabled"] = False
+    context["is_historical"] = True
+
+    can_view_pdf = case.scheduled_by_id == user.pk and case.status in PDF_ALLOWED_STATUSES
+    context["can_view_pdf"] = can_view_pdf
+    if can_view_pdf:
+        context["case"] = case
+        documents: list[CaseDocument] = list(case.documents.all())
+        context["pdf_items"] = _build_pdf_items(case, documents)
+        context["detail_url"] = reverse("scheduler:historical_case_detail", args=[case.case_id])
+    return render(request, "scheduler/case_detail.html", context)
 
 
 # ── R3/R4: detalhe ────────────────────────────────────────────────────────

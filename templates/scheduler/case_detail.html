@@ -11,7 +11,13 @@
   <div class="col-12 col-lg-10">
     <nav aria-label="breadcrumb" class="mb-3">
       <ol class="breadcrumb mb-0">
+        {% comment %} Escopo histórico (slice 004, R3): leitura — o voltar
+        retorna à busca do histórico, nunca à fila de trabalho. {% endcomment %}
+        {% if is_historical %}
+        <li class="breadcrumb-item"><a href="{% url 'scheduler:historical_search' %}">Histórico do agendador</a></li>
+        {% else %}
         <li class="breadcrumb-item"><a href="{% url 'scheduler:queue' %}">Fila de agendamento</a></li>
+        {% endif %}
         <li class="breadcrumb-item active" aria-current="page">Caso {{ case_reference }}</li>
       </ol>
     </nav>

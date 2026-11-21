@@ -71,8 +71,10 @@ def reply_unit_2_text() -> str:
     )
 
 
-# Campos persistidos na decisão do agendador (D1), salvos no mesmo atomic das
-# transições FSM.
+# Campos persistidos na decisão do agendador (D1 + slice 004/D5), salvos no
+# mesmo atomic das transições FSM: os 5 campos do agendamento corrente +
+# ``scheduling_denial_reason`` + o par histórico ``scheduling_decided_*``
+# (confirmação E negação carimbam; a reabertura NÃO os zera — fato histórico).
 _SCHEDULING_FIELDS = (
     "scheduled_unit",
     "scheduled_datetime",
@@ -80,6 +82,8 @@ _SCHEDULING_FIELDS = (
     "scheduled_by",
     "scheduled_decided_at",
     "scheduling_denial_reason",
+    "scheduling_decided_at",
+    "scheduling_decided_by",
 )
 
 # Campos tocados pela intercorrência (slice 002, R2): os 5 campos de
@@ -179,7 +183,8 @@ def confirm_case_scheduling(
     ``SCHEDULER_REQUESTED``) → ``confirm_scheduling`` → ``post_final_reply``
     (3 ou 2 eventos ``CASE_STATUS_*``), persiste os 5 campos
     (``scheduled_unit``/``scheduled_datetime``/``scheduled_location``/
-    ``scheduled_by=user``/``scheduled_decided_at=now``) e posta a resposta
+    ``scheduled_by=user``/``scheduled_decided_at=now``) + o par histórico
+    ``scheduling_decided_*`` (slice 004/D5) e posta a resposta
     final ao NIR por unidade (unidade 1 interpola local + data/hora local;
     unidade 2 usa ``reply_unit_2_text()`` — rótulo vigente, sem ponto final).
     """
@@ -199,6 +204,9 @@ def confirm_case_scheduling(
         locked.scheduled_location = location
         locked.scheduled_by = user
         locked.scheduled_decided_at = timezone.now()
+        # Slice 004/D5: o carimbo histórico acompanha a confirmação no MESMO atomic.
+        locked.scheduling_decided_at = timezone.now()
+        locked.scheduling_decided_by = user
         locked.save(update_fields=_SCHEDULING_FIELDS)
 
         if unit == SchedulingUnit.UNIT_1:
@@ -223,7 +231,9 @@ def deny_case_scheduling(
     confirmar (em ``AWAITING_SCHEDULING`` pula o ``await``). No MESMO atomic:
     encadeia ``await`` (só da origem ``SCHEDULER_REQUESTED``) →
     ``deny_scheduling`` → ``post_final_reply``, persiste
-    ``scheduling_denial_reason`` e posta a resposta final ao NIR com o motivo.
+    ``scheduling_denial_reason`` + o par histórico ``scheduling_decided_*``
+    (slice 004/D5 — a negação passa a carimbar decisor+timestamp) e posta a
+    resposta final ao NIR com o motivo.
     """
     stripped_reason = reason.strip()
     with transaction.atomic():
@@ -237,6 +247,9 @@ def deny_case_scheduling(
         locked.post_final_reply(user=user, role=role)
 
         locked.scheduling_denial_reason = stripped_reason
+        # Slice 004/D5: a negação carimba o par histórico no MESMO atomic.
+        locked.scheduling_decided_at = timezone.now()
+        locked.scheduling_decided_by = user
         locked.save(update_fields=_SCHEDULING_FIELDS)
 
         body = REPLY_DENY_TEMPLATE.format(reason=stripped_reason)

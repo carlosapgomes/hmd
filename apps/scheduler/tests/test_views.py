@@ -15,8 +15,8 @@ Cobre:
   unidade**;
 - R3: detalhe ``scheduler:case_detail`` — identificação real
   (``patient_name``/``patient_birth_date``/``agency_record_number``),
-  diagnóstico resumido = primeira linha não-vazia de ``summary_text``
-  re-identificada **só na renderização** (sem tokens na página), decisões
+  diagnóstico = sumário clínico COMPLETO (``summary_text`` inteiro,
+  re-identificado **só na renderização**, quebras preservadas via ``linebreaks``), decisões
   médicas por procedimento (disposição + motivo das negativas), dados de
   agendamento atuais, thread de comunicações e **nenhum** conteúdo de
   structured_data/policy_result/suggested_action (assert de ausência com
@@ -1194,13 +1194,16 @@ def test_detail_shows_identification_and_decisions(
 
 
 @pytest.mark.django_db
-def test_detail_one_liner_reidentified(
+def test_detail_full_summary_reidentified(
     client: Client,
     nir_user: User,
     user_factory: Callable[..., User],
 ) -> None:
-    """R3: one-liner re-identificado = primeira linha não-vazia do summary_text,
-    re-identificada na renderização — sem tokens e sem as demais linhas."""
+    """R1 (slice 001): sumário COMPLETO re-identificado no detalhe do agendador.
+
+    O detalhe exibe o ``summary_text`` INTEIRO, re-identificado na
+    renderização — paridade ats-web (fim do truncamento à primeira linha).
+    Sem tokens (escaped inclusive) na página."""
     doctor = user_factory("medico-oneliner", (DOCTOR_ROLE,))
     case = _detail_case(nir_user, doctor)
     viewer = user_factory("geral-oneliner", (SCHEDULER_ROLE,))
@@ -1210,14 +1213,59 @@ def test_detail_one_liner_reidentified(
 
     assert response.status_code == 200
     body = response.content.decode()
-    # Primeira linha re-identificada com os valores reais do mapa.
+    # Sumário completo re-identificado com os valores reais do mapa.
     assert "Primeira linha: paciente MARIA DA SILVA nascido em 05/03/1972." in body
-    # Demais linhas do resumo ausentes.
-    assert "Segunda linha oculta" not in body
+    assert "Segunda linha oculta com 111.222.333-44 e detalhe clínico reservado." in body
     # Nenhum token do mapa do caso sobrevive (escaped inclusive).
     for token in ("<PESSOA_1>", "<DATA_1>", "<CPF_1>"):
         assert token not in body
         assert token.replace("<", "&lt;").replace(">", "&gt;") not in body
+
+
+@pytest.mark.django_db
+def test_detail_full_summary_preserves_all_breaks(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R1 (slice 001, rodada 3): TODAS as quebras do texto são preservadas.
+
+    Linha vazia na borda inicial, TRÊS quebras consecutivas no meio e quebra
+    final — cada ``\\n`` vira um ``<br>``, sem colapso nem strip
+    (``linebreaksbr`` sobre o texto inteiro re-identificado)."""
+    doctor = user_factory("medico-linhas-vazias", (DOCTOR_ROLE,))
+    case = _detail_case(nir_user, doctor)
+    case.summary_text = "\nLinha A.\n\n\nLinha B com <PESSOA_1>.\n"
+    case.save(update_fields=["summary_text"])
+    viewer = user_factory("geral-linhas-vazias", (SCHEDULER_ROLE,))
+    _login(client, viewer, SCHEDULER_ROLE)
+
+    response = client.get(reverse("scheduler:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "<br>Linha A.<br><br><br>Linha B com MARIA DA SILVA.<br>" in body
+    assert "<PESSOA_1>" not in body
+
+
+@pytest.mark.django_db
+def test_detail_summary_whitespace_only_shows_placeholder(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R1 (slice 001, rodada 3): sumário só com espaços/quebras exibe o placeholder."""
+    doctor = user_factory("medico-somente-espacos", (DOCTOR_ROLE,))
+    case = _detail_case(nir_user, doctor)
+    case.summary_text = "  \n  "
+    case.save(update_fields=["summary_text"])
+    viewer = user_factory("geral-somente-espacos", (SCHEDULER_ROLE,))
+    _login(client, viewer, SCHEDULER_ROLE)
+
+    response = client.get(reverse("scheduler:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    assert "Diagnóstico não disponível para este caso." in response.content.decode()
 
 
 @pytest.mark.django_db
@@ -1226,8 +1274,10 @@ def test_detail_has_no_clinical_artifacts(
     nir_user: User,
     user_factory: Callable[..., User],
 ) -> None:
-    """R3: structured_data/policy_result/suggested_action jamais renderizados —
-    assert de ausência com os artefatos populados no caso."""
+    """R3/R2 (slice 001): structured_data/policy_result/suggested_action jamais
+    renderizados — assert de ausência com os artefatos populados no caso. O
+    sumário completo (todas as linhas de ``summary_text``) É permitido — só os
+    demais artefatos do pipeline seguem fora do detalhe."""
     doctor = user_factory("medico-artefatos", (DOCTOR_ROLE,))
     case = _detail_case(nir_user, doctor)
     # Garantia: os artefatos estão mesmo persistidos (senão o assert seria vazio).
@@ -1249,8 +1299,6 @@ def test_detail_has_no_clinical_artifacts(
         "policy oculta",
         "recomenda_recusar",
         "sugestao oculta",
-        "Segunda linha oculta",
-        "detalhe clínico reservado",
     ):
         assert secret not in body
 
@@ -2635,7 +2683,7 @@ def test_detail_renders_event_trail_collapsed_with_creation_and_decision(
     """R2/cenário spec: o detalhe do agendador exibe a trilha ao final, FECHADA
     por padrão — fora dos gates de PDF/texto (caso pré-decisão, sem
     ``scheduled_by``) — com a criação (ator NIR) e a decisão médica (ator
-    médico) em nome + papel pt-BR + data/hora; one-liner preservado e nenhum
+    médico) em nome + papel pt-BR + data/hora; sumário completo preservado e nenhum
     artefato clínico além da trilha."""
     doctor = user_factory("medico-trilha-agendador", (DOCTOR_ROLE,))
     case = _detail_case(nir_user, doctor)
@@ -2678,9 +2726,9 @@ def test_detail_renders_event_trail_collapsed_with_creation_and_decision(
     assert "CASE_DOCTOR_DECISIONS_RECORDED" not in trail
     # Data/hora localizada em cada evento.
     assert re.search(r"\d{2}/\d{2}/\d{4} \d{2}:\d{2}", trail)
-    # One-liner preservado (primeira linha re-identificada, sem as demais).
+    # Sumário completo preservado (todas as linhas re-identificadas).
     assert "Primeira linha: paciente MARIA DA SILVA nascido em 05/03/1972." in body
-    assert "Segunda linha oculta" not in body
+    assert "Segunda linha oculta com 111.222.333-44 e detalhe clínico reservado." in body
     # Gate 2: nada de pipeline além da trilha (mesmos segredos do teste de
     # ausência de artefatos clínicos).
     for secret in (
@@ -2690,6 +2738,5 @@ def test_detail_renders_event_trail_collapsed_with_creation_and_decision(
         "policy oculta",
         "recomenda_recusar",
         "sugestao oculta",
-        "detalhe clínico reservado",
     ):
         assert secret not in body

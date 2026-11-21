@@ -1,16 +1,17 @@
-"""Presenter do detalhe do caso para o agendador (scheduler-multi-unit, D3/R3).
+"""Presenter do detalhe do caso para o agendador (scheduler-multi-unit, D3/R3;
+paridade ats-web, slice 001 da change paridade-ats-filas-historico-intercorrencia).
 
 Serviço puro ``build_scheduler_case_detail_context(case)`` (sem request) que
 monta o dict de contexto a partir dos artefatos persistidos — o template
 apenas renderiza. Detalhe **limitado ao necessário** (decisão do dono
-2026-09-08, design D3): identificação real, diagnóstico resumido = a
-**primeira linha não-vazia** de ``summary_text`` re-identificada
+2026-09-08, design D3; visibilidade in-app liberada pela decisão D1 da change
+de paridade): identificação real, diagnóstico = o **sumário clínico COMPLETO**
+(o ``summary_text`` INTEIRO) re-identificado
 EXCLUSIVAMENTE na renderização via ``reidentify_text`` (a mesma função do
 presenter médico), decisões médicas por procedimento (disposição + motivo das
 negativas) e dados de agendamento atuais. NENHUM conteúdo de
-``structured_data``/``policy_result``/``suggested_action`` nem as demais
-linhas do resumo saem daqui — o guard é o próprio presenter (assert de
-ausência nos testes com artefatos populados).
+``structured_data``/``policy_result``/``suggested_action`` sai daqui — o guard
+é o próprio presenter (assert de ausência nos testes com artefatos populados).
 """
 
 from __future__ import annotations
@@ -47,14 +48,6 @@ def _procedure_subtype(procedure_type: str) -> str:
     return profile.doctor_subtipo if profile is not None else ""
 
 
-def _first_non_empty_line(text: str) -> str:
-    """Primeira linha não-vazia do resumo (diagnóstico resumido — D3)."""
-    for line in text.splitlines():
-        if line.strip():
-            return line.strip()
-    return ""
-
-
 def _format_datetime(value: datetime | None) -> str:
     """Data/hora exibível (fuso local da aplicação) ou vazio quando nula."""
     if value is None:
@@ -63,22 +56,26 @@ def _format_datetime(value: datetime | None) -> str:
 
 
 def build_scheduler_case_detail_context(case: Case) -> dict[str, object]:
-    """Contexto limitado do detalhe para o agendador (puro, R3/D3).
+    """Contexto limitado do detalhe para o agendador (puro, R3/D3; slice 001:
+    sumário completo).
 
-    Identificação real (``patient_name``/``patient_birth_date``/
-    ``agency_record_number``), diagnóstico resumido (primeira linha não-vazia
-    de ``summary_text`` re-identificada só aqui, na renderização), decisões
-    médicas por procedimento declarado (disposição + motivo/data das rows já
-    decididas), dados de agendamento atuais (unidade/data/local/ator/reason)
-    e a thread de comunicações. Nenhum artefato clínico (structured_data/
-    policy_result/suggested_action) e nenhuma linha além da primeira do resumo.
-    A trilha de eventos (``event_trail`` — a mesma do painel, ao final do
-    detalhe, fora dos gates de PDF/texto) acompanha o contexto.
+        Identificação real (``patient_name``/``patient_birth_date``/
+        ``agency_record_number``), diagnóstico (o ``summary_text`` INTEIRO
+        re-identificado só aqui, na renderização — quebras preservadas 1:1 via
+        ``linebreaksbr`` no template), decisões
+        médicas por procedimento declarado (disposição + motivo/data das rows já
+        decididas), dados de agendamento atuais (unidade/data/local/ator/reason)
+        e a thread de comunicações. Nenhum artefato clínico (structured_data/
+        policy_result/suggested_action).
+        A trilha de eventos (``event_trail`` — a mesma do painel, ao final do
+        detalhe, fora dos gates de PDF/texto) acompanha o contexto.
     """
-    summary_line = _first_non_empty_line(case.summary_text)
     # Re-identificação exclusiva na renderização — nunca persistida (D3).
-    if summary_line:
-        summary_line = reidentify_text(case, summary_line)
+    # Paridade ats-web (slice 001, rodada 3): o summary_text INTEIRO, sem
+    # qualquer strip — o template usa `linebreaksbr` (cada `\\n` vira um `<br>`,
+    # sem colapso de múltiplas vazias nem perda das bordas). O placeholder de
+    # vazio é decidido no template (`{% if summary_text.strip %}`).
+    summary_text = reidentify_text(case, case.summary_text)
 
     declared: list[dict[str, object]] = []
     rows_by_type = {row.procedure_type: row for row in case.procedures.all()}
@@ -126,7 +123,7 @@ def build_scheduler_case_detail_context(case: Case) -> dict[str, object]:
             "agency_record_number": case.agency_record_number,
             "birth_date": case.patient_birth_date,
         },
-        "summary_line": summary_line,
+        "summary_text": summary_text,
         "declared": declared,
         "scheduling": scheduling,
         "has_scheduling": bool(

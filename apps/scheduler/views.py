@@ -11,7 +11,7 @@ desempate FIFO por ``created_at``), paginada (``Paginator``) e
 tipos declarados e unidade quando definida.
 
 R3/R4: ``scheduler:case_detail`` renderiza o contexto do presenter puro
-(identificação real + one-liner re-identificado + decisões médicas + dados de
+(identificação real + sumário completo re-identificado + decisões médicas + dados de
 agendamento + thread — sem artefatos clínicos) acrescido das ações por estado:
 em ``SCHEDULER_REQUESTED``/``AWAITING_SCHEDULING`` os forms de confirmar
 (unidade 1|2 + data/hora futura + local) e negar (motivo); em
@@ -336,7 +336,7 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     """Detalhe limitado do caso para o agendador (R3/D3).
 
     Guard de papel ativo (scheduler/admin); caso inexistente → 404. Contexto
-    do presenter puro (one-liner re-identificado exclusivamente na
+    do presenter puro (sumário completo re-identificado exclusivamente na
     renderização) acrescido dos forms de ação por estado (confirmar/negar em
     SCHEDULER_REQUESTED/AWAITING_SCHEDULING; desmarcar em FINAL_REPLY_POSTED
     com unidade 1) e dos documentos PDF apenas quando a condição R7 vale

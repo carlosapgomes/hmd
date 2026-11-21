@@ -73,6 +73,7 @@ from apps.accounts.decorators import role_required
 from apps.accounts.models import User
 from apps.attachments.models import CaseAttachment
 from apps.cases.closure import post_doctor_denial_reply
+from apps.cases.day_bounds import local_day_bounds
 from apps.cases.locks import (
     CaseLockConflictError,
     assert_case_lock,
@@ -101,10 +102,12 @@ PDF_CONTENT_TYPE = "application/pdf"
 # anterior no HMD (my_cases não pagina).
 QUEUE_PAGE_SIZE = 20
 
-# Estados por aba (R3/D5): ``aguardando`` (default) = AWAITING_DOCTOR;
-# ``decididos`` = DOCTOR_DENIED|DOCTOR_ACCEPTED|SCHEDULER_REQUESTED —
-# DOCTOR_ACCEPTED é transitório no encadeamento do slice 003; incluí-lo no
-# filtro é inofensivo e cobre casos de borda.
+# Estados por aba (R3/D5): ``aguardando`` (default) = AWAITING_DOCTOR
+# (única aba por estado — slice 005). ``decididos`` NÃO é mais um conjunto
+# de estados: é a janela do dia corrente por decisor
+# (``doctor_decided_by`` + ``doctor_decided_at`` — ``_decided_today_cases``),
+# qualquer status atual; o tuple abaixo segue como referência dos estados
+# pós-decisão e valida o ``?tab=`` (desconhecido cai em ``aguardando``).
 TAB_STATUSES: dict[str, tuple[CaseStatus, ...]] = {
     "aguardando": (CaseStatus.AWAITING_DOCTOR,),
     "decididos": (
@@ -207,6 +210,47 @@ def _accessible_cases(
         ).distinct()
     return (
         cases.order_by(F("days_on_screen").desc(nulls_last=True), "created_at", "case_id")
+        .select_related("locked_by")
+        .prefetch_related("procedures")
+    )
+
+
+def _decided_today_cases(
+    *,
+    user: User,
+    access: DoctorAccess,
+    subtype: str,
+) -> QuerySet[Case]:
+    """Casos da aba «Decididos Hoje» (slice 005, R1/D5/D7).
+
+    Decisões médicas do dia corrente NO FUSO LOCAL pelo próprio médico
+    (``doctor_decided_by`` + ``doctor_decided_at`` na janela ``[start,
+    end)``), INDEPENDENTEMENTE do status atual — inclui caso encerrado no
+    mesmo dia; decisão de dia anterior (ou decisor nulo do backfill
+    fail-closed) não aparece na aba de ninguém. Ordenação pela data/hora
+    da decisão (mais recente primeiro). A matriz de subtipo (D2) e o filtro
+    server-side valem como nos pendentes; o médico NÃO tem superfície de
+    histórico própria (perda aprovada por paridade, D7).
+    """
+    start, end = local_day_bounds()
+    cases = Case.objects.filter(
+        doctor_decided_by=user,
+        doctor_decided_at__gte=start,
+        doctor_decided_at__lt=end,
+    )
+    allowed_types = access.allowed_types
+    if allowed_types is not None:
+        cases = cases.filter(
+            procedures__declared_by_nir=True,
+            procedures__procedure_type__in=allowed_types,
+        ).distinct()
+    if subtype:
+        cases = cases.filter(
+            procedures__declared_by_nir=True,
+            procedures__procedure_type__in=_TYPES_BY_SUBTYPE[subtype],
+        ).distinct()
+    return (
+        cases.order_by("-doctor_decided_at", "created_at", "case_id")
         .select_related("locked_by")
         .prefetch_related("procedures")
     )
@@ -347,7 +391,10 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
     requested_subtype = request.GET.get("subtype", "")
     subtype = requested_subtype if requested_subtype in subtype_options else ""
 
-    cases = _accessible_cases(statuses=TAB_STATUSES[tab], access=access, subtype=subtype)
+    if tab == "decididos":
+        cases = _decided_today_cases(user=user, access=access, subtype=subtype)
+    else:
+        cases = _accessible_cases(statuses=TAB_STATUSES[tab], access=access, subtype=subtype)
     if tab == "aguardando":
         # Expiração LAZY das reservas vencidas (D2/R8) antes de montar a fila:
         # sem isso uma aba abandonada bloquearia o card de outro médico até a
@@ -389,10 +436,11 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
 
 @role_required("doctor", "admin")
 def queue(request: HttpRequest) -> HttpResponse:
-    """Fila médica por estado (abas) com filtro de subtipo (R2–R5, D2/D5).
+    """Fila médica por aba com filtro de subtipo (R2–R5, D2/D5; slice 005).
 
-    Ordenada por tempo de tela (``days_on_screen`` desc nulls-last, desempate
-    FIFO) em TODAS as abas — o tempo de tela persiste pós-decisão.
+    Pendentes ordenadas por tempo de tela (``days_on_screen`` desc
+    nulls-last, desempate FIFO); «Decididos Hoje» pela data/hora da decisão
+    do próprio médico no dia corrente (mais recente primeiro).
     """
     return render(request, "doctor/queue.html", _build_queue_context(request))
 

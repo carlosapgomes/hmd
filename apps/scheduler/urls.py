@@ -22,6 +22,14 @@ app_name = "scheduler"
 urlpatterns: list[URLPattern] = [
     path("", views.queue, name="queue"),
     path("partials/queue/", views.queue_partial, name="queue_partial"),
+    # Histórico do agendador (slice 004, D6): busca por nº OU nome sobre o
+    # universo com decisão de agendamento + detalhe em escopo histórico.
+    path("historical/", views.historical_search, name="historical_search"),
+    path(
+        "historical/<uuid:case_id>/",
+        views.historical_case_detail,
+        name="historical_case_detail",
+    ),
     path("case/<uuid:case_id>/", views.case_detail, name="case_detail"),
     path("case/<uuid:case_id>/pdf/<int:position>/", views.case_pdf, name="case_pdf"),
     # Viewer mobile do PDF original (slice PVP-004, R1): mesmo gate de

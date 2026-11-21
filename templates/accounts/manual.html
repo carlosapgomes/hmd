@@ -165,9 +165,18 @@
     <h2 id="medico-titulo" class="h4">Médico — decisão por procedimento</h2>
     <ul>
       <li>
-        <strong>Fila médica</strong> (<em>Fila médica</em>): casos aguardando
-        decisão (<code>AWAITING_DOCTOR</code>) e já decididos, ordenados por
-        chegada, com filtro por subtipo (médico generalista e admin veem todos).
+        <strong>Fila médica</strong> (<em>Fila médica</em>): a aba
+        <em>Pendentes</em> traz os casos aguardando decisão
+        (<code>AWAITING_DOCTOR</code>), ordenados por tempo de tela, com filtro
+        por subtipo (médico generalista e admin veem todos); a aba
+        <em>Decididos Hoje</em> traz apenas as decisões do dia corrente
+        registradas por você mesmo, ordenadas da mais recente para a mais
+        antiga — incluindo casos que já foram encerrados no mesmo dia.
+        Decisões de dias anteriores não aparecem em nenhuma aba: o médico não
+        possui histórico próprio de decisões antigas (paridade com o sistema de
+        referência; casos que passaram por decisão de agendamento seguem visíveis
+        ao agendador pelo
+        <em>Histórico do agendador</em> e ao NIR pelas suas superfícies).
       </li>
       <li>
         <strong>Detalhe re-identificado</strong>: identificação do paciente,
@@ -218,10 +227,15 @@
     <h2 id="agendador-titulo" class="h4">Agendador — confirmação por unidade</h2>
     <ul>
       <li>
-        <strong>Fila de agendamento</strong> (<em>Fila de agendamento</em>): casos
-        prontos para agendamento (<code>SCHEDULER_REQUESTED</code> e casos
-        reabertos por intercorrência em <code>AWAITING_SCHEDULING</code>),
-        ordenados por chegada, com aba de casos já processados. A fila não é
+        <strong>Fila de agendamento</strong> (<em>Fila de agendamento</em>): a aba
+        <em>Pendentes</em> traz os casos prontos para agendamento
+        (<code>SCHEDULER_REQUESTED</code> e casos reabertos por intercorrência
+        em <code>AWAITING_SCHEDULING</code>), ordenados por tempo de tela;
+        a aba <em>Processados Hoje</em> traz apenas as suas confirmações e
+        negações do dia corrente (incluindo casos já encerrados no mesmo dia),
+        ordenadas da mais recente para a mais antiga. Decisões de dias
+        anteriores não aparecem em nenhuma aba — consulte o <em>Histórico do
+        agendador</em> (busca por nº de ocorrência ou nome). A fila não é
         separada por unidade.
       </li>
       <li>

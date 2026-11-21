@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ app_display_name }} — Casos encerrados{% endblock %}
+
+{% block page_title %}<h1 class="page-title">Casos encerrados</h1>{% endblock %}
+
+{% block nav %}{% include "intake/_nav.html" with active_tab="closed_search" %}{% endblock %}
+
+{% block content %}
+<div class="operational-list-page">
+  <!-- Busca NIR de encerrados (paridade-ats, slice 003, R1/D6): universo
+       CLEANED + intercorrências ativas, qualquer criador; o termo casa nº de
+       ocorrência OU nome do paciente; cap 50, mais novos primeiro. -->
+  <div class="card p-4 mb-4">
+    <form method="get" class="row g-3 align-items-end">
+      <div class="col-md-8">
+        <label for="closed-cases-search-input" class="form-label">Buscar por nº de ocorrência ou nome do paciente</label>
+        <input type="text" name="q" id="closed-cases-search-input" class="form-control" placeholder="Ex: 2026-0428 ou nome do paciente" value="{{ query }}">
+      </div>
+      <div class="col-md-4 d-flex gap-2">
+        <button type="submit" class="btn btn-primary">Buscar</button>
+        <a href="{% url 'intake:closed_cases_search' %}" class="btn btn-outline-secondary">Limpar</a>
+      </div>
+    </form>
+  </div>
+
+  <div class="card p-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+      <h2 class="mb-0">Resultados</h2>
+      <span class="badge-hospital-primary status-badge">{{ results|length }} caso{% if results|length != 1 %}s{% endif %}</span>
+    </div>
+    {% if results %}
+    <div class="row g-3">
+      {% for item in results %}
+      <div class="col-12">
+        <div class="case-card card p-3">
+          <div class="row">
+            <div class="col-md-4">
+              <div class="patient-name">{{ item.patient_name|default:"—" }}</div>
+              <div class="small text-muted case-meta">
+                Nº de ocorrência: <strong>{{ item.agency_record_number }}{{ item.reference_suffix }}</strong>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <span class="status-badge badge rounded-pill text-bg-secondary">{{ item.status_label }}</span>
+            </div>
+            <div class="col-md-3">
+              {% if item.eligible %}
+              <span class="badge rounded-pill text-bg-success">Elegível para intercorrência</span>
+              {% else %}
+              <span class="badge rounded-pill text-bg-warning badge-wrap">{{ item.ineligibility_reason }}</span>
+              {% endif %}
+            </div>
+            <div class="col-md-2 text-md-end mt-2 mt-md-0">
+              <a href="{% url 'intake:closed_case_detail' item.case.case_id %}"
+                 class="btn btn-sm btn-outline-primary stretched-link">Ver detalhes</a>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-center py-5">
+      {% if query %}
+      <p class="text-muted mb-3 fs-5">Nenhum caso encerrado encontrado para a busca.</p>
+      <a href="{% url 'intake:closed_cases_search' %}" class="btn btn-outline-primary">Limpar busca</a>
+      {% else %}
+      <p class="text-muted mb-3 fs-5">Informe um nº de ocorrência ou nome do paciente para buscar.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

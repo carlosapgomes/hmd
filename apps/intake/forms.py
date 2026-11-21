@@ -213,6 +213,37 @@ class CorrectedResubmissionForm(IntakeUploadForm):
         documents.widget.attrs.pop("multiple", None)
 
 
+# Mensagem do motivo da intercorrência pós-encerramento (paridade-ats,
+# slice 003, D3): texto livre obrigatório, reuso do padrão do desmarcar —
+# sem catálogo fechado e sem campo de mensagem separado.
+POST_CLOSURE_ISSUE_REASON_REQUIRED_MESSAGE = "Informe o motivo da intercorrência pós-encerramento."
+
+
+class PostClosureIssueForm(forms.Form):
+    """Abertura de intercorrência pós-encerramento pelo NIR (slice 003, R3).
+
+    Motivo único de texto livre, obrigatório após ``strip`` (mesmo critério
+    do serviço ``open_post_closure_issue``). A defesa de mutação continua no
+    serviço transacional — aqui apenas o valor é coletado e normalizado.
+    """
+
+    reason = forms.CharField(
+        label="Motivo da intercorrência",
+        required=False,
+        help_text="Descreva o motivo da reabertura (campo obrigatório).",
+        widget=forms.Textarea(
+            attrs={"class": "form-control", "rows": 3},
+        ),
+    )
+
+    def clean_reason(self) -> str:
+        """Motivo normalizado (strip) e obrigatório — erro nomeado quando vazio."""
+        value = self.cleaned_data.get("reason", "")
+        if not isinstance(value, str) or not value.strip():
+            raise forms.ValidationError(POST_CLOSURE_ISSUE_REASON_REQUIRED_MESSAGE)
+        return value.strip()
+
+
 # Opções do select de confirmação: exatamente os 13 tipos do catálogo
 # (confirm-nir-procedure-review, slice 002, R3/D2) — seleção única, sem
 # pacote/multiselect; a cardinalidade de campo repetido é validada na view

@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ app_display_name }} — Histórico do agendador{% endblock %}
+
+{% block page_title %}<h1 class="page-title">Histórico do agendador</h1>{% endblock %}
+
+{% block nav %}{% include "scheduler/_nav.html" with active_tab="historical" %}{% endblock %}
+
+{% block content %}
+<div class="operational-list-page">
+  <!-- Busca histórica do agendador (slice 004, D5/D6): universo com decisão de
+       agendamento (confirmações E negações, CLEANED e intercorrência ativa,
+       qualquer decisor); o termo casa nº de ocorrência OU nome do paciente;
+       cap 50, mais novos primeiro. Leitura pura — nenhuma escrita. -->
+  <div class="card p-4 mb-4">
+    <form method="get" class="row g-3 align-items-end">
+      <div class="col-md-8">
+        <label for="scheduler-historical-search-input" class="form-label">Buscar por nº de ocorrência ou nome do paciente</label>
+        <input type="text" name="q" id="scheduler-historical-search-input" class="form-control" placeholder="Ex: 2026-0428 ou nome do paciente" value="{{ query }}">
+      </div>
+      <div class="col-md-4 d-flex gap-2">
+        <button type="submit" class="btn btn-primary">Buscar</button>
+        <a href="{% url 'scheduler:historical_search' %}" class="btn btn-outline-secondary">Limpar</a>
+      </div>
+    </form>
+  </div>
+
+  <div class="card p-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+      <h2 class="mb-0">Resultados</h2>
+      <span class="badge-hospital-primary status-badge">{{ results|length }} caso{% if results|length != 1 %}s{% endif %}</span>
+    </div>
+    {% if results %}
+    <div class="row g-3">
+      {% for item in results %}
+      <div class="col-12">
+        <div class="case-card card p-3">
+          <div class="row">
+            <div class="col-md-4">
+              <div class="patient-name">{{ item.patient_name|default:"—" }}</div>
+              <div class="small text-muted case-meta">
+                Nº de ocorrência: <strong>{{ item.agency_record_number }}{{ item.reference_suffix }}</strong>
+              </div>
+              {% if item.decided_by %}
+              <div class="small text-muted case-meta">
+                Decidido por {{ item.decided_by }}{% if item.decided_at %} em {{ item.decided_at|date:"d/m/Y H:i" }}{% endif %}
+              </div>
+              {% endif %}
+              {% if item.unit_label %}
+              <div class="small text-muted case-meta">{{ item.unit_label }}</div>
+              {% endif %}
+              <div class="small text-muted case-meta">Data/hora do agendamento: {{ item.scheduled_datetime|date:"d/m/Y H:i"|default:"—" }}</div>
+              <div class="small text-muted case-meta">Local do agendamento: {{ item.scheduled_location|default:"—" }}</div>
+              {% if item.denial_reason %}
+              <div class="small text-muted case-meta">Motivo da negação: {{ item.denial_reason }}</div>
+              {% endif %}
+              {% if item.reopen_reason %}
+              <div class="small text-muted case-meta">Motivo da intercorrência: {{ item.reopen_reason }}</div>
+              {% endif %}
+            </div>
+            <div class="col-md-3">
+              <span class="status-badge badge rounded-pill text-bg-secondary">{{ item.status_label }}</span>
+            </div>
+            <div class="col-md-3">
+              {% if item.denial_reason %}
+              <span class="badge rounded-pill text-bg-danger">Agendamento negado</span>
+              {% elif item.is_reopened %}
+              <span class="badge rounded-pill text-bg-warning">Agendamento reaberto — aguardando</span>
+              {% else %}
+              <span class="badge rounded-pill text-bg-success">Agendamento confirmado</span>
+              {% endif %}
+            </div>
+            <div class="col-md-2 text-md-end mt-2 mt-md-0">
+              <a href="{% url 'scheduler:historical_case_detail' item.case.case_id %}"
+                 class="btn btn-sm btn-outline-primary stretched-link">Ver detalhes</a>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-center py-5">
+      {% if query %}
+      <p class="text-muted mb-3 fs-5">Nenhum caso com decisão de agendamento encontrado para a busca.</p>
+      <a href="{% url 'scheduler:historical_search' %}" class="btn btn-outline-primary">Limpar busca</a>
+      {% else %}
+      <p class="text-muted mb-3 fs-5">Informe um nº de ocorrência ou nome do paciente para buscar.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

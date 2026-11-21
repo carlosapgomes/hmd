@@ -11,7 +11,13 @@
   <div class="col-12 col-lg-10">
     <nav aria-label="breadcrumb" class="mb-3">
       <ol class="breadcrumb mb-0">
+        {% comment %} Escopo histórico (slice 004, R3): leitura — o voltar
+        retorna à busca do histórico, nunca à fila de trabalho. {% endcomment %}
+        {% if is_historical %}
+        <li class="breadcrumb-item"><a href="{% url 'scheduler:historical_search' %}">Histórico do agendador</a></li>
+        {% else %}
         <li class="breadcrumb-item"><a href="{% url 'scheduler:queue' %}">Fila de agendamento</a></li>
+        {% endif %}
         <li class="breadcrumb-item active" aria-current="page">Caso {{ case_reference }}</li>
       </ol>
     </nav>
@@ -40,15 +46,18 @@
       </div>
     </div>
 
-    <!-- Diagnóstico resumido (one-liner re-identificado na renderização) -->
+    <!-- Diagnóstico resumido (sumário clínico COMPLETO re-identificado na
+         renderização — paridade ats-web, slice 001; `linebreaksbr` preserva
+         cada quebra 1:1 (múltiplas vazias e bordas incluídas); o placeholder
+         vale para texto vazio ou só-espaços; sem artefatos do pipeline) -->
     <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Diagnóstico resumido</h2>
       </div>
       <div class="card-body report-block-body">
         <div class="summary-box">
-        {% if summary_line %}
-        <p class="mb-0">{{ summary_line }}</p>
+        {% if summary_text.strip %}
+        {{ summary_text|linebreaksbr }}
         {% else %}
         <p class="text-muted mb-0">Diagnóstico não disponível para este caso.</p>
         {% endif %}

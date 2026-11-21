@@ -306,6 +306,12 @@ def record_doctor_procedure_decisions(
         locked.record_doctor_decision(accepted=any_approved, user=user, role=role)
         if any_approved:
             locked.request_scheduling(user=None, role="system")
+        # Slice 005/D5: o carimbo histórico acompanha a decisão no MESMO
+        # atomic (a row continua sendo o fato por procedimento; o anti-drift
+        # compara ``Case.doctor_decided_at`` com ``Max(rows)``).
+        locked.doctor_decided_at = decided_at
+        locked.doctor_decided_by = user
+        locked.save(update_fields=["doctor_decided_at", "doctor_decided_by"])
 
 
 # ── R5: leitores para consumo (templates/workers) ──────────────────────────

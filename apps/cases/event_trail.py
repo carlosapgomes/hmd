@@ -90,6 +90,9 @@ EVENT_LABELS: dict[str, str] = {
     CaseEventType.CASE_ATTACHMENT_FAILED: "Falha no processamento do anexo",
     # Encerramento administrativo do supervisor.
     CaseEventType.CASE_ADMINISTRATIVELY_CLOSED: "Caso encerrado administrativamente",
+    # Intercorrência pós-encerramento (slice 002, D3/D4) — auditoria da issue.
+    CaseEventType.CASE_POST_CLOSURE_ISSUE_OPENED: "Intercorrência pós-encerramento aberta",
+    CaseEventType.CASE_POST_CLOSURE_ISSUE_CLOSED: ("Intercorrência pós-encerramento encerrada"),
     # Purga retroativa dos dados retidos (slice 003, R1) — ator Sistema.
     CaseEventType.CASE_RETAINED_DATA_PURGED: "Dados retidos purgados",
     CaseEventType.CASE_RETAINED_DATA_PURGE_OUTCOME: "Remoção dos arquivos da purga",
@@ -144,6 +147,8 @@ EVENT_BADGE_CSS: dict[str, str] = {
     CaseEventType.CASE_ATTACHMENT_PROCESSED: BADGE_SYSTEM,
     CaseEventType.CASE_ATTACHMENT_FAILED: BADGE_FAILURE,
     CaseEventType.CASE_ADMINISTRATIVELY_CLOSED: BADGE_ATTENTION,
+    CaseEventType.CASE_POST_CLOSURE_ISSUE_OPENED: BADGE_NIR,
+    CaseEventType.CASE_POST_CLOSURE_ISSUE_CLOSED: BADGE_CONCLUSION,
     CaseEventType.CASE_RETAINED_DATA_PURGED: BADGE_SYSTEM,
     # Desfecho físico da purga: neutro por padrão; ``files_failed > 0`` sobe
     # para perigo em ``event_badge_css`` (badge consciente do payload).

@@ -11,7 +11,7 @@ auditável, fechando o estágio entre a sumarização e o agendamento.
 
 ### Requirement: Fila médica operacional com filtro por estado e subtipo
 
-O sistema SHALL exibir ao papel ativo `doctor`/`admin` as abas `Pendentes` (`AWAITING_DOCTOR`) e `Decididos` (estados pós-decisão), ordenadas por `days_on_screen` desc nulls-last e FIFO, com filtro server-side único por subtipo e busca client-side por nome/ocorrência. Em desktop, cada card SHALL separar conteúdo (8/12) e tempo/ação (4/12). Pendentes exibem espera uma única vez e ações de reserva; decididos exibem disposição e data/hora por procedimento e «Ver detalhes», sem espera. Guards, paginação, partial a cada 20 s e contadores são preservados; uid nunca é exibido.
+O sistema SHALL exibir ao papel ativo `doctor`/`admin` as abas `Pendentes` (`AWAITING_DOCTOR`) e `Decididos Hoje` — casos com decisão médica registrada no dia corrente pelo próprio médico, independentemente do status atual do caso (paridade ats-web). Pendentes permanecem ordenadas por `days_on_screen` desc nulls-last e FIFO, com filtro server-side único por subtipo e busca client-side por nome/ocorrência; Decididos Hoje SHALL ser ordenada pela data/hora da decisão, mais recente primeira. Em desktop, cada card SHALL separar conteúdo (8/12) e tempo/ação (4/12). Pendentes exibem espera uma única vez e ações de reserva; decididos exibem disposição e data/hora por procedimento e «Ver detalhes», sem espera. Guards, paginação, partial a cada 20 s e contadores são preservados; uid nunca é exibido. Casos decididos em dias anteriores NÃO aparecem nas abas — paridade ats-web: o médico NÃO possui superfície de histórico própria (perda operacional aprovada pelo dono, registrada no design da change); o caso segue visível ao agendador e ao NIR pelas suas superfícies.
 
 #### Scenario: Médico de subtipo filtra a fila
 
@@ -45,9 +45,27 @@ O sistema SHALL exibir ao papel ativo `doctor`/`admin` as abas `Pendentes` (`AWA
 
 #### Scenario: Card decidido orientado ao resultado
 
-- **GIVEN** um caso decidido com dois procedimentos, disposições e horários persistidos
+- **GIVEN** um caso decidido hoje com dois procedimentos, disposições e horários persistidos
 - **WHEN** o médico acessa a aba decididos
 - **THEN** o card exibe nome/idade, ocorrência, disposição e data/hora de cada procedimento e o botão «Ver detalhes», sem «Aguardando há», «Recebido há» ou `waiting-time`
+
+#### Scenario: Decididos Hoje limita-se às decisões do dia corrente
+
+- **GIVEN** um caso decidido hoje pelo médico autenticado e outro decidido ontem ainda aguardando agendamento
+- **WHEN** o médico acessa a aba decididos
+- **THEN** apenas o caso decidido hoje aparece, ordenado pela data/hora da decisão (mais recente primeiro); o caso de ontem não aparece em nenhuma aba e segue visível ao agendador
+
+#### Scenario: Decididos Hoje inclui apenas as próprias decisões
+
+- **GIVEN** decisões médicas registradas hoje por outro médico
+- **WHEN** o médico autenticado acessa a aba decididos
+- **THEN** nenhuma delas é listada — a aba é escopada ao decisor
+
+#### Scenario: Caso decidido hoje aparece mesmo já encerrado
+
+- **GIVEN** um caso decidido hoje pelo médico que já completou o ciclo no mesmo dia (resposta final publicada, ciência registrada)
+- **WHEN** o médico acessa a aba decididos
+- **THEN** o caso permanece listado — o critério é a decisão do dia, independentemente do status atual
 
 #### Scenario: Decisões mistas não são agregadas visualmente
 
@@ -81,15 +99,15 @@ O sistema SHALL exibir ao papel ativo `doctor`/`admin` as abas `Pendentes` (`AWA
 
 #### Scenario: Abas usam Pendentes e Decididos
 
-- **GIVEN** casos aguardando e em estados pós-decisão (`DOCTOR_DENIED`, `DOCTOR_ACCEPTED`, `SCHEDULER_REQUESTED`)
+- **GIVEN** casos aguardando e casos decididos hoje pelo médico
 - **WHEN** o médico abre a fila
-- **THEN** as abas exibem `Pendentes` e `Decididos`, e decididos lista esses estados independentemente da data da decisão
+- **THEN** as abas exibem `Pendentes` e `Decididos Hoje`, e decididos lista as decisões do dia corrente do próprio médico, independentemente do status atual do caso
 
 #### Scenario: Título e container acompanham a aba
 
 - **GIVEN** a fila médica aberta em qualquer aba
 - **WHEN** a página é renderizada em desktop
-- **THEN** o título é «Casos aguardando decisão» em pendentes ou «Casos decididos» em decididos, e título, filtros, alertas e cards ocupam a mesma largura do container do header, sem margem superior extra
+- **THEN** o título é «Casos aguardando decisão» em pendentes ou «Casos decididos hoje» em decididos, e título, filtros, alertas e cards ocupam a mesma largura do container do header, sem margem superior extra
 
 #### Scenario: Card operacional tem duas regiões no desktop
 
@@ -129,7 +147,7 @@ O sistema SHALL exibir ao papel ativo `doctor`/`admin` as abas `Pendentes` (`AWA
 
 #### Scenario: Badges de contagem nas abas
 
-- **GIVEN** 3 casos aguardando e 5 decididos acessíveis ao médico
+- **GIVEN** 3 casos aguardando e 5 decisões do dia corrente pelo próprio médico
 - **WHEN** a fila é renderizada
 - **THEN** as abas exibem as contagens 3 e 5
 
@@ -137,7 +155,7 @@ O sistema SHALL exibir ao papel ativo `doctor`/`admin` as abas `Pendentes` (`AWA
 
 - **GIVEN** uma aba sem casos no escopo atual
 - **WHEN** ela é renderizada
-- **THEN** um alerta informativo informa que não há casos aguardando avaliação ou que não há casos decididos, sem um segundo card vazio redundante
+- **THEN** um alerta informativo informa que não há casos aguardando avaliação ou que não há casos decididos hoje, sem um segundo card vazio redundante
 
 #### Scenario: Layout permanece utilizável no mobile
 

@@ -1,20 +1,23 @@
 {% comment %}
-Partial de navegação do agendador com as abas Pendentes / Processados,
+Partial de navegação do agendador com as abas Pendentes / Processados Hoje,
 no vocabulário do ats-web (ui-parity-foundation slice 004). Adaptado do
 molde `scheduler/_nav.html` do ats-web (D3) para as rotas do HMD.
 
-D4 (análogo ao médico): a segunda aba chama-se `Processados` — fiel ao
-filtro por estado atual (`?tab=processados`) — e NÃO `Processados Hoje`.
-A terceira aba do molde (`Buscar caso antigo`) não tem rota no HMD e é
-omitida (sem historical_search). Os valores `?tab=` são preservados.
+Slice 005 (D5): a segunda aba chama-se `Processados Hoje` — decisões de
+agendamento (confirmação OU negação) do dia corrente no fuso local pelo
+próprio agendador (`?tab=processados` = `scheduling_decided_by` +
+`scheduling_decided_at` na janela local, qualquer status atual).
+A terceira entrada (`Histórico`, slice 004) é a busca por nº OU nome sobre
+o universo com decisão de agendamento — rota própria, fora das abas da fila.
+Os valores `?tab=` são preservados.
 
 OLI-005 (D11): contador único por `data-count` + pseudo-elemento CSS
 (`.nav-count-badge`); sem badge `<span>` inline. Pendentes usa estilo
 de ação (danger); demais contadores são neutros; zero oculto por CSS.
 
 Contexto:
-  active_tab: "aguardando" | "processados" (opcional; nenhuma aba fica
-  ativa se ausente — página transversal fora da fila).
+  active_tab: "aguardando" | "processados" | "historical" (opcional;
+  nenhuma aba fica ativa se ausente — página transversal fora da fila).
   pending_count / processed_count: int (opcionais; quando presentes —
   inclusive zero — vão para `data-count` via context processor
   `queue_counters` (scheduler_pending_count/scheduler_processed_count),
@@ -42,12 +45,17 @@ Uso:
       <a class="nav-link nav-count-badge nav-count-badge--neutral {% if active_tab == 'processados' %}active{% endif %}"
          data-count="{{ processed_count }}"
          {% if active_tab == 'processados' %}aria-current="page"{% endif %}
-         href="{% url 'scheduler:queue' %}?tab=processados">Processados</a>
+         href="{% url 'scheduler:queue' %}?tab=processados">Processados Hoje</a>
       {% else %}
       <a class="nav-link {% if active_tab == 'processados' %}active{% endif %}"
          {% if active_tab == 'processados' %}aria-current="page"{% endif %}
-         href="{% url 'scheduler:queue' %}?tab=processados">Processados</a>
+         href="{% url 'scheduler:queue' %}?tab=processados">Processados Hoje</a>
       {% endif %}
+    </li>
+    <li class="nav-item">
+      <a class="nav-link {% if active_tab == 'historical' %}active{% endif %}"
+         {% if active_tab == 'historical' %}aria-current="page"{% endif %}
+         href="{% url 'scheduler:historical_search' %}">Histórico</a>
     </li>
   </ul>
 </nav>

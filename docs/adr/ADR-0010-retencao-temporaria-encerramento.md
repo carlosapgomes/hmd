@@ -97,3 +97,26 @@ administrativo e o benchmark só corpus sintético.
 |---|---|---|---|---|
 | 2026-11-17 | dev (validação E2E da task 4.1) | 2 casos sintéticos (ciência + encerramento administrativo, ambos retidos) | Retenção confirmada nos dois caminhos (campos/rows/arquivos preservados + card do painel re-identizado); purga `--dry-run` revisada; purga real: 2 purgados, 4 arquivos removidos, 0 falhas, trilha em duas fases (`CASE_RETAINED_DATA_PURGED` + `CASE_RETAINED_DATA_PURGE_OUTCOME`) nos dois casos; cards com placeholders pós-purga. Dev deixado limpo (casos/Usuários/artefatos removidos). | Agente implementador (parent do loop), sob decisão do dono |
 | (pendente) | produção (piloto) | a definir pela gerência de TI no gatilho v1.0 | — | Gerência de TI do hospital |
+
+---
+
+## Emenda (2026-11-21) — Evidência canônica de disposição e intercorrência pós-encerramento
+
+Decisão registrada na change `paridade-ats-filas-historico-intercorrencia` (design D2,
+após revisão independente):
+
+1. **`Case.clinical_data_disposed_at` é a evidência canônica de disposição** — carimbo
+   gravado no MESMO atomic pelos dois caminhos que dispõem dados: (a) encerramento com
+   `CASE_CLOSURE_MINIMIZATION_ENABLED=true`; (b) purga retroativa
+   (`purge_closed_case_data`). A detecção por proxy de campos (ex.: `summary_text`
+   vazio) deixou de ser usada — é incompleta (não prova documentos/arquivos) e pode
+   produzir falso negativo em caso retido. Backfill da migration: `CLEANED` com
+   `summary_text` vazio ⇒ disposto (seguro: caso com agendamento confirmado passou
+   obrigatoriamente pelo pipeline com sumário não-vazio).
+2. **Intercorrência pós-encerramento é fail-closed sobre a disposição** — a reabertura
+   de caso `CLEANED` pelo NIR (`open_post_closure_issue`) exige dados retidos: caso
+   minimizado ou purgado é INELEGÍVEL, com motivo exibido. Sob o default vigente
+   (retenção), 100% dos casos encerrados elegíveis permanecem elegíveis.
+3. A reversão da guarda (reabrir caso disposto) é local (condição de elegibilidade +
+   emenda desta ADR), sem migração destrutiva — mantém o gatilho de reversão da
+   decisão original (versão 1.0) intacto.

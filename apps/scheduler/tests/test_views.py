@@ -15,8 +15,8 @@ Cobre:
   unidade**;
 - R3: detalhe ``scheduler:case_detail`` — identificação real
   (``patient_name``/``patient_birth_date``/``agency_record_number``),
-  diagnóstico resumido = primeira linha não-vazia de ``summary_text``
-  re-identificada **só na renderização** (sem tokens na página), decisões
+  diagnóstico = sumário clínico COMPLETO (``summary_text`` inteiro,
+  re-identificado **só na renderização**, quebras preservadas via ``linebreaks``), decisões
   médicas por procedimento (disposição + motivo das negativas), dados de
   agendamento atuais, thread de comunicações e **nenhum** conteúdo de
   structured_data/policy_result/suggested_action (assert de ausência com
@@ -438,6 +438,12 @@ def test_queue_processed_tab(
     transitorio_confirmado.await_scheduling_confirmation(user=None, role=SYSTEM_ROLE)
     transitorio_confirmado.confirm_scheduling(user=None, role=SYSTEM_ROLE)
     transitorio_confirmado.refresh_from_db()
+    # Slice 005: processados é a janela do dia por decisor (não o status) —
+    # os estados transitórios entram com o carimbo de hoje do agendador.
+    Case.objects.filter(pk=transitorio_confirmado.pk).update(
+        scheduling_decided_at=timezone.now(), scheduling_decided_by=scheduler
+    )
+    transitorio_confirmado.refresh_from_db()
     assert transitorio_confirmado.status == CaseStatus.SCHEDULING_CONFIRMED
     _apply_metadata(
         transitorio_confirmado, patient_name="Confirmado Transitorio", agency_record_number="1102"
@@ -446,13 +452,18 @@ def test_queue_processed_tab(
     transitorio_negado.await_scheduling_confirmation(user=None, role=SYSTEM_ROLE)
     transitorio_negado.deny_scheduling(user=None, role=SYSTEM_ROLE)
     transitorio_negado.refresh_from_db()
+    Case.objects.filter(pk=transitorio_negado.pk).update(
+        scheduling_decided_at=timezone.now(), scheduling_decided_by=scheduler
+    )
+    transitorio_negado.refresh_from_db()
     assert transitorio_negado.status == CaseStatus.SCHEDULING_DENIED
     _apply_metadata(
         transitorio_negado, patient_name="Negado Transitorio", agency_record_number="1103"
     )
     aguardando = _awaiting_scheduling_case(nir_user, doctor, (CARDIO_TYPE,))
     _apply_metadata(aguardando, patient_name="Aguardando Fila", agency_record_number="1104")
-    login_user(user_factory("geral-processados", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: a aba é escopada ao decisor — o visor é o próprio agendador.
+    login_user(scheduler, SCHEDULER_ROLE)
 
     response = client.get(reverse("scheduler:queue"), {"tab": "processados"})
 
@@ -631,7 +642,8 @@ def test_queue_processed_tab_uses_received_label(
         2, created_by=nir_user, decided_by=doctor, scheduled_by=scheduler_user
     )
     _apply_metadata(processed, patient_name="Paciente Processado", patient_age=84)
-    login_user(user_factory("geral-label-processado", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: processados é escopado ao decisor.
+    login_user(scheduler_user, SCHEDULER_ROLE)
 
     body = client.get(reverse("scheduler:queue"), {"tab": "processados"}).content.decode()
 
@@ -694,7 +706,8 @@ def test_queue_cards_show_types_and_unit(
     scheduler = user_factory("agendador-cards", (SCHEDULER_ROLE,))
     processed = _confirmed_case(2, created_by=nir_user, decided_by=doctor, scheduled_by=scheduler)
     _apply_metadata(processed, patient_name="Beto Lima", agency_record_number="1302")
-    login_user(user_factory("geral-cards-agendador", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: a aba processados é escopada ao decisor.
+    login_user(scheduler, SCHEDULER_ROLE)
 
     response = client.get(reverse("scheduler:queue"), {"tab": "aguardando"})
 
@@ -857,7 +870,8 @@ def test_queue_processed_ignores_procedure_type_filter(
     scheduler = user_factory("agendador-oli-filtro-proc", (SCHEDULER_ROLE,))
     processed = _confirmed_case(2, created_by=nir_user, decided_by=doctor, scheduled_by=scheduler)
     _apply_metadata(processed, patient_name="Processado Sem Filtro")
-    login_user(user_factory("agendador-oli-filtro-proc-view", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: a aba processados é escopada ao decisor.
+    login_user(scheduler, SCHEDULER_ROLE)
 
     body = client.get(
         reverse("scheduler:queue"), {"tab": "processados", "procedure_type": CARDIO_TYPE}
@@ -1069,7 +1083,8 @@ def test_queue_processed_card_preserves_received_label_and_unit(
     scheduler = user_factory("agendador-oli-proc-preservado", (SCHEDULER_ROLE,))
     case = _confirmed_case(2, created_by=nir_user, decided_by=doctor, scheduled_by=scheduler)
     _apply_metadata(case, patient_name="Processado Preservado", patient_age=65, days_on_screen=3)
-    login_user(user_factory("agendador-oli-processado-view", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
+    # Slice 005: a aba processados é escopada ao decisor.
+    login_user(scheduler, SCHEDULER_ROLE)
 
     body = client.get(reverse("scheduler:queue"), {"tab": "processados"}).content.decode()
 
@@ -1194,13 +1209,16 @@ def test_detail_shows_identification_and_decisions(
 
 
 @pytest.mark.django_db
-def test_detail_one_liner_reidentified(
+def test_detail_full_summary_reidentified(
     client: Client,
     nir_user: User,
     user_factory: Callable[..., User],
 ) -> None:
-    """R3: one-liner re-identificado = primeira linha não-vazia do summary_text,
-    re-identificada na renderização — sem tokens e sem as demais linhas."""
+    """R1 (slice 001): sumário COMPLETO re-identificado no detalhe do agendador.
+
+    O detalhe exibe o ``summary_text`` INTEIRO, re-identificado na
+    renderização — paridade ats-web (fim do truncamento à primeira linha).
+    Sem tokens (escaped inclusive) na página."""
     doctor = user_factory("medico-oneliner", (DOCTOR_ROLE,))
     case = _detail_case(nir_user, doctor)
     viewer = user_factory("geral-oneliner", (SCHEDULER_ROLE,))
@@ -1210,14 +1228,59 @@ def test_detail_one_liner_reidentified(
 
     assert response.status_code == 200
     body = response.content.decode()
-    # Primeira linha re-identificada com os valores reais do mapa.
+    # Sumário completo re-identificado com os valores reais do mapa.
     assert "Primeira linha: paciente MARIA DA SILVA nascido em 05/03/1972." in body
-    # Demais linhas do resumo ausentes.
-    assert "Segunda linha oculta" not in body
+    assert "Segunda linha oculta com 111.222.333-44 e detalhe clínico reservado." in body
     # Nenhum token do mapa do caso sobrevive (escaped inclusive).
     for token in ("<PESSOA_1>", "<DATA_1>", "<CPF_1>"):
         assert token not in body
         assert token.replace("<", "&lt;").replace(">", "&gt;") not in body
+
+
+@pytest.mark.django_db
+def test_detail_full_summary_preserves_all_breaks(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R1 (slice 001, rodada 3): TODAS as quebras do texto são preservadas.
+
+    Linha vazia na borda inicial, TRÊS quebras consecutivas no meio e quebra
+    final — cada ``\\n`` vira um ``<br>``, sem colapso nem strip
+    (``linebreaksbr`` sobre o texto inteiro re-identificado)."""
+    doctor = user_factory("medico-linhas-vazias", (DOCTOR_ROLE,))
+    case = _detail_case(nir_user, doctor)
+    case.summary_text = "\nLinha A.\n\n\nLinha B com <PESSOA_1>.\n"
+    case.save(update_fields=["summary_text"])
+    viewer = user_factory("geral-linhas-vazias", (SCHEDULER_ROLE,))
+    _login(client, viewer, SCHEDULER_ROLE)
+
+    response = client.get(reverse("scheduler:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "<br>Linha A.<br><br><br>Linha B com MARIA DA SILVA.<br>" in body
+    assert "<PESSOA_1>" not in body
+
+
+@pytest.mark.django_db
+def test_detail_summary_whitespace_only_shows_placeholder(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R1 (slice 001, rodada 3): sumário só com espaços/quebras exibe o placeholder."""
+    doctor = user_factory("medico-somente-espacos", (DOCTOR_ROLE,))
+    case = _detail_case(nir_user, doctor)
+    case.summary_text = "  \n  "
+    case.save(update_fields=["summary_text"])
+    viewer = user_factory("geral-somente-espacos", (SCHEDULER_ROLE,))
+    _login(client, viewer, SCHEDULER_ROLE)
+
+    response = client.get(reverse("scheduler:case_detail", args=[case.case_id]))
+
+    assert response.status_code == 200
+    assert "Diagnóstico não disponível para este caso." in response.content.decode()
 
 
 @pytest.mark.django_db
@@ -1226,8 +1289,10 @@ def test_detail_has_no_clinical_artifacts(
     nir_user: User,
     user_factory: Callable[..., User],
 ) -> None:
-    """R3: structured_data/policy_result/suggested_action jamais renderizados —
-    assert de ausência com os artefatos populados no caso."""
+    """R3/R2 (slice 001): structured_data/policy_result/suggested_action jamais
+    renderizados — assert de ausência com os artefatos populados no caso. O
+    sumário completo (todas as linhas de ``summary_text``) É permitido — só os
+    demais artefatos do pipeline seguem fora do detalhe."""
     doctor = user_factory("medico-artefatos", (DOCTOR_ROLE,))
     case = _detail_case(nir_user, doctor)
     # Garantia: os artefatos estão mesmo persistidos (senão o assert seria vazio).
@@ -1249,8 +1314,6 @@ def test_detail_has_no_clinical_artifacts(
         "policy oculta",
         "recomenda_recusar",
         "sugestao oculta",
-        "Segunda linha oculta",
-        "detalhe clínico reservado",
     ):
         assert secret not in body
 
@@ -2635,7 +2698,7 @@ def test_detail_renders_event_trail_collapsed_with_creation_and_decision(
     """R2/cenário spec: o detalhe do agendador exibe a trilha ao final, FECHADA
     por padrão — fora dos gates de PDF/texto (caso pré-decisão, sem
     ``scheduled_by``) — com a criação (ator NIR) e a decisão médica (ator
-    médico) em nome + papel pt-BR + data/hora; one-liner preservado e nenhum
+    médico) em nome + papel pt-BR + data/hora; sumário completo preservado e nenhum
     artefato clínico além da trilha."""
     doctor = user_factory("medico-trilha-agendador", (DOCTOR_ROLE,))
     case = _detail_case(nir_user, doctor)
@@ -2678,9 +2741,9 @@ def test_detail_renders_event_trail_collapsed_with_creation_and_decision(
     assert "CASE_DOCTOR_DECISIONS_RECORDED" not in trail
     # Data/hora localizada em cada evento.
     assert re.search(r"\d{2}/\d{2}/\d{4} \d{2}:\d{2}", trail)
-    # One-liner preservado (primeira linha re-identificada, sem as demais).
+    # Sumário completo preservado (todas as linhas re-identificadas).
     assert "Primeira linha: paciente MARIA DA SILVA nascido em 05/03/1972." in body
-    assert "Segunda linha oculta" not in body
+    assert "Segunda linha oculta com 111.222.333-44 e detalhe clínico reservado." in body
     # Gate 2: nada de pipeline além da trilha (mesmos segredos do teste de
     # ausência de artefatos clínicos).
     for secret in (
@@ -2690,6 +2753,5 @@ def test_detail_renders_event_trail_collapsed_with_creation_and_decision(
         "policy oculta",
         "recomenda_recusar",
         "sugestao oculta",
-        "detalhe clínico reservado",
     ):
         assert secret not in body

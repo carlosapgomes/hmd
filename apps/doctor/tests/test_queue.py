@@ -311,7 +311,9 @@ def test_queue_items_link_to_case_detail(
     """
     awaiting = _make_awaiting_case(nir_user, (ANGIO_TYPE,))
     doctor = user_factory("medico-link", (DOCTOR_ROLE,))
-    decided = _make_decided_case(nir_user, doctor, (CARDIO_TYPE,), accepted=False)
+    decided = _make_decided_case_with_decisions(
+        nir_user, doctor, (CARDIO_TYPE,), decisions={CARDIO_TYPE: ("denied", "")}
+    )
     login_user(doctor, DOCTOR_ROLE)
 
     response = client.get(reverse("doctor:queue"))
@@ -391,13 +393,17 @@ def test_queue_decided_tab(
     denied = _make_decided_case_with_decisions(
         nir_user, doctor, (ANGIO_TYPE,), decisions={ANGIO_TYPE: ("denied", "")}
     )
-    # DOCTOR_ACCEPTED transitório (FSM direta) segue na aba decididos.
-    accepted = _make_decided_case(nir_user, doctor, (CARDIO_TYPE,), accepted=True)
+    # Slice 005: a aba decididos é a janela do dia por decisor — a decisão
+    # aprovada de hoje (qualquer status atual) segue listada.
+    accepted = _make_decided_case_with_decisions(
+        nir_user, doctor, (CARDIO_TYPE,), decisions={CARDIO_TYPE: ("approved", "")}
+    )
     scheduled = _make_decided_case_with_decisions(
         nir_user, doctor, (NEURO_TYPE,), decisions={NEURO_TYPE: ("approved", "")}
     )
     awaiting = _make_awaiting_case(nir_user, (RADIO_TYPE,))
-    login_user(user_factory("geral-decidido", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+    # Slice 005: a aba decididos é escopada ao decisor.
+    login_user(doctor, DOCTOR_ROLE)
 
     response = client.get(reverse("doctor:queue"), {"tab": "decididos"})
 
@@ -589,7 +595,8 @@ def test_queue_decided_card_shows_result_without_waiting(
         patient_name="Paciente Decidido",
         patient_age=84,
     )
-    login_user(user_factory("geral-label-aba", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+    # Slice 005: a aba decididos é escopada ao decisor.
+    login_user(doctor, DOCTOR_ROLE)
 
     body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
 
@@ -637,7 +644,8 @@ def test_queue_decided_mixed_dispositions_per_procedure(
         patient_gender="Masculino",
         origin_unit="Unidade 2",
     )
-    login_user(user_factory("geral-misto", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+    # Slice 005: a aba decididos é escopada ao decisor.
+    login_user(doctor, DOCTOR_ROLE)
 
     body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
 
@@ -684,7 +692,8 @@ def test_queue_decided_card_structure_and_cta(
         patient_name="Paciente Cta Decidido",
         agency_record_number="OLI003",
     )
-    login_user(user_factory("geral-cta-dec", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+    # Slice 005: a aba decididos é escopada ao decisor.
+    login_user(doctor, DOCTOR_ROLE)
 
     body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
 
@@ -717,7 +726,7 @@ def test_queue_decided_empty_state_is_info_alert(
     body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
 
     assert "alert alert-info" in body
-    assert "Nenhum caso decidido" in body
+    assert "Nenhum caso decidido hoje" in body
     assert "card shadow-sm" not in body
     fragment = body.split('id="doctor-queue-content"', 1)[1]
     assert fragment.count("alert alert-info") == 1
@@ -1335,12 +1344,12 @@ def test_queue_decided_title(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """OLI-001 R1/D1: aba decididos titula «Casos decididos» (sem recorte de data)."""
+    """Slice 005 R4: aba decididos titula «Casos decididos hoje»."""
     login_user(user_factory("medico-oli-titulo-dec", (DOCTOR_ROLE,)), DOCTOR_ROLE)
 
     body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
 
-    assert "Casos decididos</h1>" in body
+    assert "Casos decididos hoje</h1>" in body
     assert "Casos aguardando decisão</h1>" not in body
 
 

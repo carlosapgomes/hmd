@@ -72,13 +72,13 @@ def test_doctor_queue_decided_page_title(
     nir_user: User,
     login_user: Callable[[User, str], None],
 ) -> None:
-    """OLI-001 R1/D1: aba decididos titula «Casos decididos»."""
+    """Slice 005 R4: aba decididos titula «Casos decididos hoje»."""
     doctor = user_factory("medico-titulo-fila-dec", ("doctor",))
     _awaiting_doctor_case(nir_user)
     login_user(doctor, "doctor")
     response = client.get(reverse("doctor:queue"), {"tab": "decididos"})
     assert response.status_code == 200
-    _assert_page_title(response.content.decode(), "Casos decididos")
+    _assert_page_title(response.content.decode(), "Casos decididos hoje")
 
 
 @pytest.mark.django_db

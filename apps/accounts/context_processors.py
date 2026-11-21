@@ -55,16 +55,17 @@ def notification_unread_count(request: HttpRequest) -> dict[str, int]:
 
 
 def queue_counters(request: HttpRequest) -> dict[str, int]:
-    """Totais das abas das filas para os ``_nav.html`` (slice 004, R2).
+    """Totais das abas das filas para os ``_nav.html`` (slice 004, R2; slice 005).
 
     Sob os MESMOS guards das views — papel ativo ``doctor``/``admin`` para a
     fila médica (mais a matriz de subtipo via ``DoctorAccess``, predicado
     único da fila) e ``scheduler``/``admin`` para a fila do agendador — e
-    apenas contagens leves por estado (``count()`` sobre ``status__in``),
-    sem queries globais sem guard: fora desses papéis ativos (e para
-    anônimo) o processor devolve ``{}`` sem tocar na tabela de casos.
-    Os estados por aba vêm dos ``TAB_STATUSES`` das próprias views (import
-    local, sem duplicar a regra e sem ciclo de import). As chaves são
+    apenas contagens leves, sem queries globais sem guard: fora desses
+    papéis ativos (e para anônimo) o processor devolve ``{}`` sem tocar na
+    tabela de casos. Pendentes seguem por estado (``TAB_STATUSES`` das
+    próprias views, import local sem ciclo); as abas «Hoje» contam as
+    decisões do dia corrente NO FUSO LOCAL pelo próprio usuário (mesma regra
+    das views, sem duplicar a janela — ``local_day_bounds``). As chaves são
     distintas por área (``doctor_*``/``scheduler_*``) porque o admin usa
     as duas filas; os plugs mapeiam para ``pending_count``/``decided_count``/
     ``processed_count`` dos partials.
@@ -75,6 +76,7 @@ def queue_counters(request: HttpRequest) -> dict[str, int]:
     active_role = request.session.get("active_role", "")
     counters: dict[str, int] = {}
     if active_role in ("doctor", "admin"):
+        from apps.cases.day_bounds import local_day_bounds
         from apps.doctor.access import DoctorAccess
         from apps.doctor.views import TAB_STATUSES as DOCTOR_TAB_STATUSES
 
@@ -91,15 +93,30 @@ def queue_counters(request: HttpRequest) -> dict[str, int]:
             return cases.values("case_id").distinct().count()
 
         counters["doctor_pending_count"] = _doctor_count(DOCTOR_TAB_STATUSES["aguardando"])
-        counters["doctor_decided_count"] = _doctor_count(DOCTOR_TAB_STATUSES["decididos"])
+        start, end = local_day_bounds()
+        decided_today = Case.objects.filter(
+            doctor_decided_by=user,
+            doctor_decided_at__gte=start,
+            doctor_decided_at__lt=end,
+        )
+        if access.allowed_types is not None:
+            decided_today = decided_today.filter(
+                procedures__declared_by_nir=True,
+                procedures__procedure_type__in=access.allowed_types,
+            )
+        counters["doctor_decided_count"] = decided_today.values("case_id").distinct().count()
     if active_role in ("scheduler", "admin"):
+        from apps.cases.day_bounds import local_day_bounds
         from apps.scheduler.views import TAB_STATUSES as SCHEDULER_TAB_STATUSES
 
         counters["scheduler_pending_count"] = Case.objects.filter(
             status__in=SCHEDULER_TAB_STATUSES["aguardando"]
         ).count()
+        start, end = local_day_bounds()
         counters["scheduler_processed_count"] = Case.objects.filter(
-            status__in=SCHEDULER_TAB_STATUSES["processados"]
+            scheduling_decided_by=user,
+            scheduling_decided_at__gte=start,
+            scheduling_decided_at__lt=end,
         ).count()
     return counters
 

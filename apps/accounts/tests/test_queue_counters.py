@@ -17,6 +17,7 @@ import pytest
 from django.contrib.auth.models import AnonymousUser
 from django.test import Client, RequestFactory
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts.context_processors import queue_counters
 from apps.accounts.models import DoctorSpecialty, Role, User
@@ -75,12 +76,16 @@ def _assign_specialties(user: User, names: Sequence[str]) -> None:
 
 @pytest.mark.django_db
 def test_doctor_counters_nonzero_generalist() -> None:
-    """Médico generalista: 2 aguardando + 1 decidido (totais, não por subtipo)."""
+    """Médico generalista: 2 aguardando + 1 decisão de hoje (totais, não por subtipo)."""
     creator = _create_user("cnt-nir-doc", ("nir",))
+    doctor = _create_user("cnt-doc", ("doctor",))
     _make_case(creator, CaseStatus.AWAITING_DOCTOR, (ANGIO_TYPE,))
     _make_case(creator, CaseStatus.AWAITING_DOCTOR, (CARDIO_TYPE,))
-    _make_case(creator, CaseStatus.DOCTOR_DENIED, (ANGIO_TYPE,))
-    doctor = _create_user("cnt-doc", ("doctor",))
+    decided = _make_case(creator, CaseStatus.DOCTOR_DENIED, (ANGIO_TYPE,))
+    # Slice 005: decididos conta a janela do dia por decisor (não o status).
+    Case.objects.filter(pk=decided.pk).update(
+        doctor_decided_at=timezone.now(), doctor_decided_by=doctor
+    )
 
     assert queue_counters(_request_for(doctor, "doctor")) == {  # type: ignore[arg-type]
         "doctor_pending_count": 2,
@@ -92,12 +97,16 @@ def test_doctor_counters_nonzero_generalist() -> None:
 def test_doctor_counters_scoped_by_specialty() -> None:
     """Especialista: os totais respeitam a matriz de subtipo (só angio)."""
     creator = _create_user("cnt-nir-esp", ("nir",))
+    doctor = _create_user("cnt-doc-esp", ("doctor",))
+    _assign_specialties(doctor, ("angio",))
     _make_case(creator, CaseStatus.AWAITING_DOCTOR, (ANGIO_TYPE,))
     _make_case(creator, CaseStatus.AWAITING_DOCTOR, (ANGIO_TYPE,))
     _make_case(creator, CaseStatus.AWAITING_DOCTOR, (CARDIO_TYPE,))
-    _make_case(creator, CaseStatus.DOCTOR_DENIED, (CARDIO_TYPE,))
-    doctor = _create_user("cnt-doc-esp", ("doctor",))
-    _assign_specialties(doctor, ("angio",))
+    denied = _make_case(creator, CaseStatus.DOCTOR_DENIED, (CARDIO_TYPE,))
+    # Decisão de hoje do próprio médico, mas fora da matriz (cardio) ⇒ fora.
+    Case.objects.filter(pk=denied.pk).update(
+        doctor_decided_at=timezone.now(), doctor_decided_by=doctor
+    )
 
     assert queue_counters(_request_for(doctor, "doctor")) == {  # type: ignore[arg-type]
         "doctor_pending_count": 2,
@@ -107,12 +116,16 @@ def test_doctor_counters_scoped_by_specialty() -> None:
 
 @pytest.mark.django_db
 def test_scheduler_counters_nonzero() -> None:
-    """Agendador: 1 SCHEDULER_REQUESTED + 1 AWAITING_SCHEDULING + 1 processado."""
+    """Agendador: 2 aguardando + 1 decisão de hoje (confirmação ou negação)."""
     creator = _create_user("cnt-nir-sch", ("nir",))
+    scheduler = _create_user("cnt-sch", ("scheduler",))
     _make_case(creator, CaseStatus.SCHEDULER_REQUESTED)
     _make_case(creator, CaseStatus.AWAITING_SCHEDULING)
-    _make_case(creator, CaseStatus.FINAL_REPLY_POSTED)
-    scheduler = _create_user("cnt-sch", ("scheduler",))
+    processed = _make_case(creator, CaseStatus.FINAL_REPLY_POSTED)
+    # Slice 005: processados conta a janela do dia por decisor (não o status).
+    Case.objects.filter(pk=processed.pk).update(
+        scheduling_decided_at=timezone.now(), scheduling_decided_by=scheduler
+    )
 
     assert queue_counters(_request_for(scheduler, "scheduler")) == {  # type: ignore[arg-type]
         "scheduler_pending_count": 2,
@@ -124,16 +137,25 @@ def test_scheduler_counters_nonzero() -> None:
 def test_admin_counters_cover_both_areas() -> None:
     """Admin: totais das duas filas (doctor + scheduler) sob os dois guards."""
     creator = _create_user("cnt-nir-adm", ("nir",))
-    _make_case(creator, CaseStatus.AWAITING_DOCTOR, (ANGIO_TYPE,))
-    _make_case(creator, CaseStatus.SCHEDULER_REQUESTED)
     admin = _create_user("cnt-adm", ("admin",))
+    _make_case(creator, CaseStatus.AWAITING_DOCTOR, (ANGIO_TYPE,))
+    decided = _make_case(creator, CaseStatus.SCHEDULER_REQUESTED)
+    _make_case(creator, CaseStatus.SCHEDULER_REQUESTED)
+    # Slice 005: a aba decididos do médico é a janela do dia por decisor —
+    # o caso decidido hoje pelo admin conta, mesmo fora de AWAITING_DOCTOR.
+    Case.objects.filter(pk=decided.pk).update(
+        doctor_decided_at=timezone.now(), doctor_decided_by=admin
+    )
+    scheduled = _make_case(creator, CaseStatus.FINAL_REPLY_POSTED)
+    Case.objects.filter(pk=scheduled.pk).update(
+        scheduling_decided_at=timezone.now(), scheduling_decided_by=admin
+    )
 
     assert queue_counters(_request_for(admin, "admin")) == {  # type: ignore[arg-type]
         "doctor_pending_count": 1,
-        # SCHEDULER_REQUESTED é estado da aba decididos do médico.
         "doctor_decided_count": 1,
-        "scheduler_pending_count": 1,
-        "scheduler_processed_count": 0,
+        "scheduler_pending_count": 2,
+        "scheduler_processed_count": 1,
     }
 
 
@@ -153,10 +175,13 @@ def test_nir_and_anonymous_have_no_queue_counters() -> None:
 def test_doctor_queue_page_shows_nonzero_badges(client: Client) -> None:
     """A fila médica exibe os totais não-zero nas abas (badge visível)."""
     creator = _create_user("cnt-nir-page", ("nir",))
+    doctor = _create_user("cnt-doc-page", ("doctor",))
     _make_case(creator, CaseStatus.AWAITING_DOCTOR, (ANGIO_TYPE,))
     _make_case(creator, CaseStatus.AWAITING_DOCTOR, (CARDIO_TYPE,))
-    _make_case(creator, CaseStatus.DOCTOR_DENIED, (ANGIO_TYPE,))
-    doctor = _create_user("cnt-doc-page", ("doctor",))
+    decided = _make_case(creator, CaseStatus.DOCTOR_DENIED, (ANGIO_TYPE,))
+    Case.objects.filter(pk=decided.pk).update(
+        doctor_decided_at=timezone.now(), doctor_decided_by=doctor
+    )
     _login(client, doctor, "doctor")
 
     body = client.get(reverse("doctor:queue")).content.decode()
@@ -169,10 +194,13 @@ def test_doctor_queue_page_shows_nonzero_badges(client: Client) -> None:
 def test_scheduler_queue_page_shows_nonzero_badges(client: Client) -> None:
     """A fila do agendador exibe os totais não-zero nas abas (badge visível)."""
     creator = _create_user("cnt-nir-spage", ("nir",))
-    _make_case(creator, CaseStatus.SCHEDULER_REQUESTED)
-    _make_case(creator, CaseStatus.SCHEDULER_REQUESTED)
-    _make_case(creator, CaseStatus.FINAL_REPLY_POSTED)
     scheduler = _create_user("cnt-sch-page", ("scheduler",))
+    _make_case(creator, CaseStatus.SCHEDULER_REQUESTED)
+    _make_case(creator, CaseStatus.SCHEDULER_REQUESTED)
+    processed = _make_case(creator, CaseStatus.FINAL_REPLY_POSTED)
+    Case.objects.filter(pk=processed.pk).update(
+        scheduling_decided_at=timezone.now(), scheduling_decided_by=scheduler
+    )
     _login(client, scheduler, "scheduler")
 
     body = client.get(reverse("scheduler:queue")).content.decode()

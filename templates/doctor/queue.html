@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}{{ app_display_name }} — {% if tab == 'decididos' %}Casos decididos{% else %}Casos aguardando decisão{% endif %}{% endblock %}
+{% block title %}{{ app_display_name }} — {% if tab == 'decididos' %}Casos decididos hoje{% else %}Casos aguardando decisão{% endif %}{% endblock %}
 
-{% block page_title %}<h1 class="page-title">{% if tab == 'decididos' %}Casos decididos{% else %}Casos aguardando decisão{% endif %}</h1>{% endblock %}
+{% block page_title %}<h1 class="page-title">{% if tab == 'decididos' %}Casos decididos hoje{% else %}Casos aguardando decisão{% endif %}</h1>{% endblock %}
 
 {% block nav %}{% include "doctor/_nav.html" with active_tab=tab pending_count=doctor_pending_count decided_count=doctor_decided_count %}{% endblock %}
 

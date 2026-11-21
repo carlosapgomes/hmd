@@ -20,11 +20,15 @@ import hashlib
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
+
+from django.utils import timezone
 
 from apps.cases.events import CaseEventType
 from apps.cases.models import ActorType, Case, CaseEvent
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.procedures import get_declared_procedure_types
+from apps.cases.units import unit_label
 
 # Versão do payload de autoridade e dos digests versionados (D3).
 PROCEDURE_REVIEW_VERSION = 1
@@ -514,7 +518,9 @@ def event_detail_lines(event: CaseEvent) -> list[str]:
 
     Projetadas só do payload (sem consultar o Case mutável); ``[]`` para
     qualquer outro tipo — leitores passam todos os eventos por aqui sem
-    ramificar por tipo na view.
+    ramificar por tipo na view. Os eventos da intercorrência pós-encerramento
+    (slice 002, D3/D4) também projetam linhas: motivo + snapshot
+    administrativo (unidade/data-hora/local — sem PHI).
     """
     payload = event.payload if isinstance(event.payload, dict) else {}
     event_type = event.event_type
@@ -549,6 +555,10 @@ def event_detail_lines(event: CaseEvent) -> list[str]:
         reason = payload.get("reason")
         label = _INVALIDATED_REASON_LABELS.get(str(reason), str(reason or "motivo técnico"))
         return [f"Confirmação desconsiderada: {label}. A análise segue as regras automáticas."]
+    if event_type == CaseEventType.CASE_POST_CLOSURE_ISSUE_OPENED:
+        return _post_closure_opened_detail_lines(payload)
+    if event_type == CaseEventType.CASE_POST_CLOSURE_ISSUE_CLOSED:
+        return ["Intercorrência pós-encerramento encerrada."]
     if event_type == CaseEventType.CASE_PROCEDURE_REVIEW_ENABLED:
         return ["Caso sob o contrato de revisão de procedimento do NIR."]
     if event_type == CaseEventType.CASE_PROCEDURE_REPROCESSING_REQUESTED:
@@ -559,6 +569,40 @@ def event_detail_lines(event: CaseEvent) -> list[str]:
             return ["Falha ao enfileirar o reprocessamento; recuperação programada."]
         return ["Falha ao enfileirar o reprocessamento; processamento pendente de suporte."]
     return []
+
+
+def _post_closure_opened_detail_lines(payload: Mapping[str, object]) -> list[str]:
+    """Linhas do evento de abertura pós-encerramento (slice 002, D3/D4).
+
+    Motivo de texto livre + snapshot administrativo do agendamento anterior
+    (unidade/data-hora/local — o precedente vigente do desmarcar). Sem PHI:
+    nada de nome, registro ou dado clínico; o fuso de exibição é o local da
+    aplicação, como as respostas ao NIR.
+    """
+    lines: list[str] = []
+    reason = payload.get("reason")
+    if isinstance(reason, str) and reason.strip():
+        lines.append(f"Motivo: {reason.strip()}.")
+    snapshot = payload.get("scheduling_snapshot")
+    if isinstance(snapshot, Mapping):
+        parts: list[str] = []
+        unit = snapshot.get("scheduled_unit")
+        if isinstance(unit, int):
+            parts.append(unit_label(unit) or f"Unidade {unit}")
+        scheduled_at = snapshot.get("scheduled_datetime")
+        if isinstance(scheduled_at, str) and scheduled_at:
+            try:
+                parsed = datetime.fromisoformat(scheduled_at)
+            except ValueError:
+                parsed = None
+            if parsed is not None and timezone.is_aware(parsed):
+                parts.append(timezone.localtime(parsed).strftime("%d/%m/%Y %H:%M"))
+        location = snapshot.get("scheduled_location")
+        if isinstance(location, str) and location.strip():
+            parts.append(location.strip())
+        if parts:
+            lines.append(f"Agendamento anterior: {' · '.join(parts)}.")
+    return lines
 
 
 # ── Detecção original e conjunto efetivo ───────────────────────────────────

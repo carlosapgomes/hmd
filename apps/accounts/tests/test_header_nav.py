@@ -172,12 +172,13 @@ class TestNavR2:
         assert "app-nav" in body
         assert _active_link_href(body, "Pendentes") == reverse("doctor:queue") + "?tab=aguardando"
         assert 'href="/doctor/?tab=decididos"' in body
-        # D4: fica "Decididos" (filtro por estado) — nunca "Decididos Hoje".
-        assert "Decididos Hoje" not in body
-        assert "Decididos" in body
+        # Slice 005: a aba passa a "Decididos Hoje" (janela do dia por decisor).
+        assert "Decididos Hoje" in body
 
         body = client.get(reverse("doctor:queue") + "?tab=decididos").content.decode()
-        assert _active_link_href(body, "Decididos") == reverse("doctor:queue") + "?tab=decididos"
+        assert (
+            _active_link_href(body, "Decididos Hoje") == reverse("doctor:queue") + "?tab=decididos"
+        )
 
     def test_scheduler_nav_pending_and_processed_active(self, client: Client) -> None:
         user = _create_user("nv-sch", ("scheduler",))
@@ -188,12 +189,11 @@ class TestNavR2:
             _active_link_href(body, "Pendentes") == reverse("scheduler:queue") + "?tab=aguardando"
         )
         assert 'href="/scheduler/?tab=processados"' in body
-        assert "Processados" in body
-        # D4 análogo: sem recorte de data, nunca "Processados Hoje".
-        assert "Processados Hoje" not in body
+        # Slice 005: a aba passa a "Processados Hoje" (janela do dia por decisor).
+        assert "Processados Hoje" in body
 
         body = client.get(reverse("scheduler:queue") + "?tab=processados").content.decode()
-        assert _active_link_href(body, "Processados") == (
+        assert _active_link_href(body, "Processados Hoje") == (
             reverse("scheduler:queue") + "?tab=processados"
         )
 
@@ -334,9 +334,9 @@ class TestFix2RoleNavDetailProfile:
 
         assert "app-nav" in body
         assert f'href="{reverse("doctor:queue")}?tab=aguardando">Pendentes</a>' in body
-        assert f'href="{reverse("doctor:queue")}?tab=decididos">Decididos</a>' in body
+        assert f'href="{reverse("doctor:queue")}?tab=decididos">Decididos Hoje</a>' in body
         assert _active_link_href(body, "Pendentes") is None
-        assert _active_link_href(body, "Decididos") is None
+        assert _active_link_href(body, "Decididos Hoje") is None
 
     def test_doctor_decide_shows_role_nav_without_active_tab(self, client: Client) -> None:
         from apps.cases.models import Case, CaseProcedure
@@ -358,9 +358,9 @@ class TestFix2RoleNavDetailProfile:
         # como selo dentro da mesma âncora — destino+rótulo seguem
         # ligados pelo prefixo href">Pendentes.
         assert f'href="{reverse("doctor:queue")}?tab=aguardando">Pendentes' in body
-        assert f'href="{reverse("doctor:queue")}?tab=decididos">Decididos</a>' in body
+        assert f'href="{reverse("doctor:queue")}?tab=decididos">Decididos Hoje</a>' in body
         assert _active_link_href(body, "Pendentes") is None
-        assert _active_link_href(body, "Decididos") is None
+        assert _active_link_href(body, "Decididos Hoje") is None
 
     def test_scheduler_case_detail_shows_role_nav_without_active_tab(self, client: Client) -> None:
         from apps.cases.models import Case
@@ -373,9 +373,9 @@ class TestFix2RoleNavDetailProfile:
 
         assert "app-nav" in body
         assert f'href="{reverse("scheduler:queue")}?tab=aguardando">Pendentes</a>' in body
-        assert f'href="{reverse("scheduler:queue")}?tab=processados">Processados</a>' in body
+        assert f'href="{reverse("scheduler:queue")}?tab=processados">Processados Hoje</a>' in body
         assert _active_link_href(body, "Pendentes") is None
-        assert _active_link_href(body, "Processados") is None
+        assert _active_link_href(body, "Processados Hoje") is None
 
     def test_profile_shows_doctor_role_nav_without_active_tab(self, client: Client) -> None:
         user = _create_user("fix2-doc-profile", ("doctor",))
@@ -385,9 +385,9 @@ class TestFix2RoleNavDetailProfile:
 
         assert "app-nav" in body
         assert f'href="{reverse("doctor:queue")}?tab=aguardando">Pendentes</a>' in body
-        assert f'href="{reverse("doctor:queue")}?tab=decididos">Decididos</a>' in body
+        assert f'href="{reverse("doctor:queue")}?tab=decididos">Decididos Hoje</a>' in body
         assert _active_link_href(body, "Pendentes") is None
-        assert _active_link_href(body, "Decididos") is None
+        assert _active_link_href(body, "Decididos Hoje") is None
 
     def test_profile_shows_scheduler_role_nav_without_active_tab(self, client: Client) -> None:
         user = _create_user("fix2-sch-profile", ("scheduler",))
@@ -397,9 +397,9 @@ class TestFix2RoleNavDetailProfile:
 
         assert "app-nav" in body
         assert f'href="{reverse("scheduler:queue")}?tab=aguardando">Pendentes</a>' in body
-        assert f'href="{reverse("scheduler:queue")}?tab=processados">Processados</a>' in body
+        assert f'href="{reverse("scheduler:queue")}?tab=processados">Processados Hoje</a>' in body
         assert _active_link_href(body, "Pendentes") is None
-        assert _active_link_href(body, "Processados") is None
+        assert _active_link_href(body, "Processados Hoje") is None
 
     def test_profile_shows_nir_role_nav_without_active_tab(self, client: Client) -> None:
         user = _create_user("fix2-nir-profile", ("nir",))

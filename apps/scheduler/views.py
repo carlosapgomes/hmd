@@ -11,7 +11,7 @@ desempate FIFO por ``created_at``), paginada (``Paginator``) e
 tipos declarados e unidade quando definida.
 
 R3/R4: ``scheduler:case_detail`` renderiza o contexto do presenter puro
-(identificação real + one-liner re-identificado + decisões médicas + dados de
+(identificação real + sumário completo re-identificado + decisões médicas + dados de
 agendamento + thread — sem artefatos clínicos) acrescido das ações por estado:
 em ``SCHEDULER_REQUESTED``/``AWAITING_SCHEDULING`` os forms de confirmar
 (unidade 1|2 + data/hora futura + local) e negar (motivo); em
@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections import Counter
 from datetime import datetime
 from typing import cast
 from urllib.parse import urlencode
@@ -53,7 +54,7 @@ from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -63,6 +64,7 @@ from django_fsm import TransitionNotAllowed
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
+from apps.cases.day_bounds import local_day_bounds
 from apps.cases.locks import (
     CaseLockConflictError,
     assert_case_lock,
@@ -100,9 +102,12 @@ PDF_CONTENT_TYPE = "application/pdf"
 QUEUE_PAGE_SIZE = 20
 
 # Estados por aba (R2/D4): ``aguardando`` (default) = SCHEDULER_REQUESTED ou
-# AWAITING_SCHEDULING; ``processados`` = SCHEDULING_CONFIRMED|
-# SCHEDULING_DENIED|FINAL_REPLY_POSTED (os dois primeiros transitórios do
-# encadeamento, incluídos inofensivos — mesmo critério da fila médica).
+# AWAITING_SCHEDULING (única aba por estado — slice 005). ``processados``
+# NÃO é mais um conjunto de estados: é a janela do dia corrente por
+# decisor (``scheduling_decided_by`` + ``scheduling_decided_at`` do slice
+# 004, confirmação OU negação — montada inline em ``_build_queue_context``),
+# qualquer status atual; o tuple abaixo segue como referência dos estados
+# pós-decisão e valida o ``?tab=`` (desconhecido cai em ``aguardando``).
 TAB_STATUSES: dict[str, tuple[CaseStatus, ...]] = {
     "aguardando": (CaseStatus.SCHEDULER_REQUESTED, CaseStatus.AWAITING_SCHEDULING),
     "processados": (
@@ -274,17 +279,35 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
     # lease vencida não pode continuar bloqueando o card.
     expire_stale_locks_for_statuses(TAB_STATUSES["aguardando"])
 
-    cases = Case.objects.filter(status__in=TAB_STATUSES[tab])
-    if procedure_type:
-        cases = cases.filter(
-            procedures__declared_by_nir=True,
-            procedures__procedure_type=procedure_type,
-        ).distinct()
-    cases = (
-        cases.order_by(F("days_on_screen").desc(nulls_last=True), "created_at", "case_id")
-        .select_related("locked_by")
-        .prefetch_related("procedures")
-    )
+    if tab == "processados":
+        # Slice 005 (R2/D5): «Processados Hoje» — decisões de agendamento
+        # (confirmação OU negação) do dia corrente NO FUSO LOCAL pelo próprio
+        # agendador, qualquer status atual; caso de dia anterior (ou decisor
+        # nulo do backfill fail-closed) fora das abas — consultável no
+        # Histórico do slice 004. Ordenação pela data/hora da decisão.
+        start, end = local_day_bounds()
+        cases = (
+            Case.objects.filter(
+                scheduling_decided_by=user,
+                scheduling_decided_at__gte=start,
+                scheduling_decided_at__lt=end,
+            )
+            .order_by("-scheduling_decided_at", "created_at", "case_id")
+            .select_related("locked_by")
+            .prefetch_related("procedures")
+        )
+    else:
+        cases = Case.objects.filter(status__in=TAB_STATUSES[tab])
+        if procedure_type:
+            cases = cases.filter(
+                procedures__declared_by_nir=True,
+                procedures__procedure_type=procedure_type,
+            ).distinct()
+        cases = (
+            cases.order_by(F("days_on_screen").desc(nulls_last=True), "created_at", "case_id")
+            .select_related("locked_by")
+            .prefetch_related("procedures")
+        )
     page = Paginator(cases, QUEUE_PAGE_SIZE).get_page(request.GET.get("page", "1"))
     items = [_queue_item(case, user=user) for case in page.object_list]
 
@@ -307,11 +330,14 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
 
 @role_required("scheduler", "admin")
 def queue(request: HttpRequest) -> HttpResponse:
-    """Fila do agendador por estado (abas), ordenada por tempo de tela (R2/D4).
+    """Fila do agendador por aba (R2/D4; slice 005).
 
-    ``days_on_screen`` desc nulls-last com desempate FIFO por ``created_at`` e
-    ``case_id`` — mesma expressão da fila médica. Sem filtro por unidade (fila
-    completa, plano §4). Aba desconhecida cai no default ``aguardando``.
+    Pendentes ordenadas por tempo de tela (``days_on_screen`` desc
+    nulls-last, desempate FIFO por ``created_at`` e ``case_id`` — mesma
+    expressão da fila médica); «Processados Hoje» pela data/hora da decisão
+    do próprio agendador no dia corrente (mais recente primeiro). Sem filtro
+    por unidade (fila completa, plano §4). Aba desconhecida cai no default
+    ``aguardando``.
     """
     return render(request, "scheduler/queue.html", _build_queue_context(request))
 
@@ -328,6 +354,117 @@ def queue_partial(request: HttpRequest) -> HttpResponse:
     return render(request, "scheduler/_queue_content.html", _build_queue_context(request))
 
 
+# ── Histórico do agendador (slice 004, D5/D6) ─────────────────────────────
+
+# Cap da busca histórica (D6): no máximo 50 resultados por consulta, os mais
+# novos primeiro (``order_by("-created_at")`` antes do slice) — mesmo padrão
+# da busca NIR de encerrados do slice 003.
+_HISTORICAL_SEARCH_CAP = 50
+
+
+def _stripped_record(case: Case) -> str:
+    """Nº de ocorrência sem bordas — chave da duplicidade (padrão NIR, D4)."""
+    return case.agency_record_number.strip()
+
+
+@role_required("scheduler", "admin")
+def historical_search(request: HttpRequest) -> HttpResponse:
+    """Busca histórica do agendador por nº de ocorrência OU nome (R2, D1/D6).
+
+    Universo = ``scheduling_decided_at`` preenchido (confirmações E negações,
+    reabertos, ``CLEANED`` e issue ativa, qualquer decisor; negativa médica
+    encerrada nunca teve decisão de agendamento — fora por construção). O termo
+    casa ``agency_record_number__icontains`` OU ``patient_name__icontains``;
+    cap 50 (``-created_at`` antes do slice); sem critério → estado vazio.
+    Leitura pura — nenhuma escrita. Cada resultado traz a referência humana
+    (nº + sufixo curto quando duplicado), o status legível e os dados do
+    agendamento anterior, com link ao detalhe em escopo histórico.
+    """
+    query = request.GET.get("q", "").strip()
+    results: list[dict[str, object]] = []
+    if query:
+        matches = list(
+            Case.objects.filter(scheduling_decided_at__isnull=False)
+            .filter(Q(agency_record_number__icontains=query) | Q(patient_name__icontains=query))
+            .select_related("scheduling_decided_by")
+            .order_by("-created_at")[:_HISTORICAL_SEARCH_CAP]
+        )
+        # Nºs repetidos NOS RESULTADOS (mesma regra de «meus casos», D4):
+        # contagem sobre a lista já carregada; nº em branco nunca é chave.
+        repeated = Counter(record for record in map(_stripped_record, matches) if record)
+        for case in matches:
+            decided_by = case.scheduling_decided_by
+            scheduled_unit = case.scheduled_unit
+            denial_reason = case.scheduling_denial_reason.strip()
+            reopen_reason = case.scheduling_reopen_reason.strip()
+            results.append(
+                {
+                    "case": case,
+                    "status_label": case.get_status_display(),
+                    "patient_name": case.patient_name,
+                    "agency_record_number": case.agency_record_number or "—",
+                    # Sufixo só para nº duplicado E preenchido; senão "".
+                    "reference_suffix": (
+                        f" · {case.short_id}" if repeated[_stripped_record(case)] > 1 else ""
+                    ),
+                    "decided_by": decided_by.display_name if decided_by is not None else "",
+                    "decided_at": case.scheduling_decided_at,
+                    "unit_label": unit_label(scheduled_unit) if scheduled_unit else "",
+                    # Dados do agendamento anterior (R3): data/hora e local
+                    # disponíveis; ausentes → "—" no template.
+                    "scheduled_datetime": case.scheduled_datetime,
+                    "scheduled_location": case.scheduled_location.strip(),
+                    "denial_reason": denial_reason,
+                    "reopen_reason": reopen_reason,
+                    # Reaberto por intercorrência = motivo persistido +
+                    # agendamento corrente limpo (após re-confirmação o motivo
+                    # persiste mas o agendamento volta a existir → confirmado).
+                    "is_reopened": bool(reopen_reason) and case.scheduled_datetime is None,
+                }
+            )
+    return render(
+        request,
+        "scheduler/historical_search.html",
+        {"query": query, "results": results},
+    )
+
+
+@role_required("scheduler", "admin")
+def historical_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    """Detalhe do caso em escopo histórico: leitura, sem ações (R3/R4).
+
+    Guarda de escopo histórico (fail-closed): só caso com
+    ``scheduling_decided_at`` preenchido — fora disso → 404 sem vazar conteúdo.
+    Reutiliza o presenter do detalhe vigente (mesmo conteúdo) com as flags de
+    ação forçadas a ``False`` (sem claim de reserva, sem forms de
+    confirmação/negação/desmarcação, sem banner de intercorrência) e o gate de
+    PDF/texto preservado (``scheduled_by == request.user`` E status em
+    ``PDF_ALLOWED_STATUSES`` — ``CLEANED`` segue fora, paridade ats-web).
+    """
+    user = _require_user(request)
+    case = get_object_or_404(
+        Case.objects.select_related("scheduling_decided_by"),
+        case_id=case_id,
+        scheduling_decided_at__isnull=False,
+    )
+    context = build_scheduler_case_detail_context(case)
+    # Escopo histórico é leitura: nenhuma ação de agendamento, nenhuma reserva.
+    context["lock_token"] = ""
+    context["can_decide_scheduling"] = False
+    context["can_reopen"] = False
+    context["incident_disabled"] = False
+    context["is_historical"] = True
+
+    can_view_pdf = case.scheduled_by_id == user.pk and case.status in PDF_ALLOWED_STATUSES
+    context["can_view_pdf"] = can_view_pdf
+    if can_view_pdf:
+        context["case"] = case
+        documents: list[CaseDocument] = list(case.documents.all())
+        context["pdf_items"] = _build_pdf_items(case, documents)
+        context["detail_url"] = reverse("scheduler:historical_case_detail", args=[case.case_id])
+    return render(request, "scheduler/case_detail.html", context)
+
+
 # ── R3/R4: detalhe ────────────────────────────────────────────────────────
 
 
@@ -336,7 +473,7 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     """Detalhe limitado do caso para o agendador (R3/D3).
 
     Guard de papel ativo (scheduler/admin); caso inexistente → 404. Contexto
-    do presenter puro (one-liner re-identificado exclusivamente na
+    do presenter puro (sumário completo re-identificado exclusivamente na
     renderização) acrescido dos forms de ação por estado (confirmar/negar em
     SCHEDULER_REQUESTED/AWAITING_SCHEDULING; desmarcar em FINAL_REPLY_POSTED
     com unidade 1) e dos documentos PDF apenas quando a condição R7 vale

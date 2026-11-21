@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from django.test import Client
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts.models import Role, User
 from apps.cases.models import Case, CaseProcedure, CaseStatus
@@ -133,49 +134,59 @@ class TestOperationalNavMarkup:
 
     def test_doctor_nav_single_counter_action_vs_neutral(self, client: Client) -> None:
         creator = _create_user("oli5-nir-doc", ("nir",))
+        viewer = _create_user("oli5-doc", ("doctor",))
         _make_case(creator, CaseStatus.AWAITING_DOCTOR)
         _make_case(creator, CaseStatus.AWAITING_DOCTOR)
-        _make_case(creator, CaseStatus.DOCTOR_DENIED)
-        _login(client, _create_user("oli5-doc", ("doctor",)), "doctor")
+        denied = _make_case(creator, CaseStatus.DOCTOR_DENIED)
+        # Slice 005: decididos conta a decisão de hoje do próprio médico.
+        Case.objects.filter(pk=denied.pk).update(
+            doctor_decided_at=timezone.now(), doctor_decided_by=viewer
+        )
+        _login(client, viewer, "doctor")
 
         body = client.get(reverse("doctor:queue") + "?tab=aguardando").content.decode()
         nav = _nav_segment(body)
         assert '<span class="badge' not in nav
         pending_tag, _ = _link(nav, "Pendentes")
-        decided_tag, _ = _link(nav, "Decididos")
+        decided_tag, _ = _link(nav, "Decididos Hoje")
         assert 'data-count="2"' in pending_tag
         assert "nav-count-badge--danger" in pending_tag
         assert 'data-count="1"' in decided_tag
         assert "nav-count-badge--neutral" in decided_tag
         # Sem contagem duplicada: o texto do link é só o rótulo.
         assert ">Pendentes</a>" in nav
-        assert ">Decididos</a>" in nav
+        assert ">Decididos Hoje</a>" in nav
         # Semântica preservada.
         assert 'aria-current="page"' in pending_tag
         assert 'href="/doctor/?tab=aguardando"' in pending_tag
         assert 'href="/doctor/?tab=decididos"' in decided_tag
-        assert "Decididos Hoje" not in nav
+        assert "Decididos Hoje" in nav
 
     def test_scheduler_nav_single_counter_action_vs_neutral(self, client: Client) -> None:
         creator = _create_user("oli5-nir-sch", ("nir",))
+        viewer = _create_user("oli5-sch", ("scheduler",))
         _make_case(creator, CaseStatus.SCHEDULER_REQUESTED)
         _make_case(creator, CaseStatus.SCHEDULER_REQUESTED)
-        _make_case(creator, CaseStatus.FINAL_REPLY_POSTED)
-        _login(client, _create_user("oli5-sch", ("scheduler",)), "scheduler")
+        replied = _make_case(creator, CaseStatus.FINAL_REPLY_POSTED)
+        # Slice 005: processados conta a decisão de hoje do próprio agendador.
+        Case.objects.filter(pk=replied.pk).update(
+            scheduling_decided_at=timezone.now(), scheduling_decided_by=viewer
+        )
+        _login(client, viewer, "scheduler")
 
         body = client.get(reverse("scheduler:queue") + "?tab=aguardando").content.decode()
         nav = _nav_segment(body)
         assert '<span class="badge' not in nav
         pending_tag, _ = _link(nav, "Pendentes")
-        processed_tag, _ = _link(nav, "Processados")
+        processed_tag, _ = _link(nav, "Processados Hoje")
         assert 'data-count="2"' in pending_tag
         assert "nav-count-badge--danger" in pending_tag
         assert 'data-count="1"' in processed_tag
         assert "nav-count-badge--neutral" in processed_tag
         assert ">Pendentes</a>" in nav
-        assert ">Processados</a>" in nav
+        assert ">Processados Hoje</a>" in nav
         assert 'href="/scheduler/?tab=processados"' in processed_tag
-        assert "Processados Hoje" not in nav
+        assert "Processados Hoje" in nav
 
     def test_nir_nav_neutral_counters_and_filter_qs(self, client: Client) -> None:
         nir = _create_user("oli5-nir", ("nir",))

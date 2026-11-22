@@ -78,7 +78,7 @@ def build_llm1_schema(types: Sequence[str]) -> type[StrictModel]:
     do catálogo, duplicatas ou lista vazia → ``ValueError``. Os blocos
     clínicos profundos vêm dos tipos declarados; o campo
     ``pedido.procedimentos_solicitados`` continua aceitando qualquer um dos
-    13 tipos (detecção livre no catálogo).
+    14 tipos (detecção livre no catálogo).
     """
     validated = _validate_declared_types(types)
     block_annotations: dict[str, Any] = {

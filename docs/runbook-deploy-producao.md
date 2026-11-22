@@ -56,7 +56,9 @@ llm 512m · attachments 512m.
 
 Condições de entrada: workflow `release` verde no GHCR com o **digest da
 imagem** impresso no passo final; suite verde; `CHANGELOG.md` lido (nota se há
-migrations — o changelog marca "sem migrations (deploy direto)" quando é o caso).
+migrations ou seeds novos — o changelog marca "sem migrations e sem seeds (deploy direto)"
+quando nada precisa rodar, ou "sem migrations, MAS com seeds (passo 5 obrigatório)"
+quando a release adiciona templates).
 
 ```bash
 cd /srv/apps/hmd
@@ -85,7 +87,9 @@ grep -c '^INTAKE_ENABLED' .env      # deve imprimir 1
 # 4. Puxar a imagem nova:
 docker compose --env-file .env -f docker-compose.prod.yml pull
 
-# 5. Migrações + seeds (one-shot; no-op em release "sem migrations"):
+# 5. Migrações + seeds (one-shot; obrigatório mesmo em release "sem migrations"
+#    quando a release adiciona seeds — pular deixa os templates novos ausentes e a
+#    primeira chamada de prompt do tipo novo falha):
 docker compose --env-file .env -f docker-compose.prod.yml --profile migrate run --rm migrate
 
 # 6. Subir TUDO (web + workers) com a imagem nova:

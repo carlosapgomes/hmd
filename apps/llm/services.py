@@ -64,7 +64,7 @@ def _order_canonically(types: Sequence[str]) -> list[str]:
     """Valida os tipos contra o catálogo e devolve na ordem canônica.
 
     Tipo fora do catálogo levanta ``KeyError`` nomeando o tipo (fail-fast do
-    catálogo); os 13 códigos são únicos no registro, então a ordenação por
+    catálogo); os 14 códigos são únicos no registro, então a ordenação por
     posição é total e determinística.
     """
     for procedure_type in types:

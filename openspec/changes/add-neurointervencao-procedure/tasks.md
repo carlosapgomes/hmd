@@ -13,5 +13,5 @@ texto do template de revisão, runbook e varredura ampliada).
 
 ## 2. Varredura residual ampliada + runbook + gate final
 
-- [ ] S2 — Literais obsoletos de contagem removidos de apps/config/templates/static/README/docs (grep antes/depois com padrões derivados), runbook sem indução a pular o passo de seeds em releases "sem migrations, MAS com seeds", quality gate completo e verificação operacional dos seeds idempotentes (14 perfis/8 seções; 31 templates)
+- [x] S2 — Literais obsoletos de contagem removidos de apps/config/templates/static/README/docs (grep antes/depois com padrões derivados), runbook sem indução a pular o passo de seeds em releases "sem migrations, MAS com seeds", quality gate completo e verificação operacional dos seeds idempotentes (14 perfis/8 seções; 31 templates)
   Contract: `slices/slice-002-varredura-runbook-gate.md`

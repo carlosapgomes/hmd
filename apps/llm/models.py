@@ -40,7 +40,7 @@ class PromptTemplate(models.Model):
     Nomes canônicos do HMD (plano §7): ``llm1.system``/``llm2.system``
     (systems neutros compartilhados — a composição união exige UMA chamada por
     estágio) e ``proc.<type>.llm1.user``/``proc.<type>.llm2.user`` (users por
-    tipo, ×13). Versão de prompt = dado versionado: edição exige nova versão +
+    tipo, ×14). Versão de prompt = dado versionado: edição exige nova versão +
     ativação, nunca alteração de conteúdo in place (regra de uso, não do banco).
     """
 

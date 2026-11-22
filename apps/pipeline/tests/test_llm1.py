@@ -109,7 +109,7 @@ def _artifact(procedure_types: list[str], *, english_context: bool = False) -> d
 
 @pytest.fixture(autouse=True)
 def _seeded_prompts() -> None:
-    """Seed idempotente dos 28 prompts (a montagem do caso exige os ativos)."""
+    """Seed idempotente dos 31 prompts (a montagem do caso exige os ativos)."""
     call_command("seed_prompts", stdout=StringIO())
 
 

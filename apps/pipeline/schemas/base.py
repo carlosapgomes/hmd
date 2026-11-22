@@ -11,7 +11,7 @@ todo campo clínico **informado** (status != ``nao_informado``) exige
 
 ``pedido.procedimentos_solicitados`` usa ``ProcedimentoSolicitado``: Literal
 **gerada a partir do catálogo** (``procedure_catalog.PROCEDURE_PROFILES``), não
-hardcoded — a detecção do LLM1 fica livre sobre os 13 tipos (correção do
+hardcoded — a detecção do LLM1 fica livre sobre os 14 tipos (correção do
 review D2). Nomes de medicamentos são texto (não-PII no change 05).
 """
 
@@ -65,7 +65,7 @@ class StrictModel(BaseModel):
 Llm1Status = Literal["confirmado", "nao_informado", "incerto"]
 
 
-# Literal dos 13 tipos gerada a partir do catálogo (R4). ``Any`` apenas para o
+# Literal dos 14 tipos gerada a partir do catálogo (R4). ``Any`` apenas para o
 # checker (o valor em runtime é a ``Literal`` completa — a restrição de enum
 # vale na validação e no JSON Schema do pedido).
 _CATALOG_PROCEDURE_TYPES: tuple[str, ...] = tuple(
@@ -187,7 +187,7 @@ class Llm1Exames(StrictModel):
 class Llm1Pedido(StrictModel):
     """Pedido: procedimentos como tokens/labels (R2/R4).
 
-    ``procedimentos_solicitados`` aceita **qualquer** tipo do catálogo (13) —
+    ``procedimentos_solicitados`` aceita **qualquer** tipo do catálogo (14) —
     a detecção não é restringida aos tipos declarados (correção do review D2).
     Lista preenchida exige evidência (detecção com proveniência).
     """

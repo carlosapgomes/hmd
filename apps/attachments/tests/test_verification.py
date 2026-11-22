@@ -13,7 +13,7 @@ de valor real dos mapas do anexo/caso; o token do paciente aparece).
 
 O cliente é sempre um fake via ``LLM_CLIENT_FACTORY`` (override_settings) — a
 suíte nunca toca rede. O seed dos prompts roda no fixture autouse
-(``seed_prompts`` — 29 conteúdos), como nas suítes do change 06.
+(``seed_prompts`` — 31 conteúdos), como nas suítes do change 06.
 """
 
 from __future__ import annotations
@@ -107,7 +107,7 @@ def _response(match: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _seeded_prompts() -> None:
-    """Seed idempotente dos 29 prompts (a verificação exige o ATTACHMENT_VERIFICATION)."""
+    """Seed idempotente dos 31 prompts (a verificação exige o ATTACHMENT_VERIFICATION)."""
     call_command("seed_prompts", stdout=StringIO())
 
 

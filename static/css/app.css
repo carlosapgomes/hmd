@@ -805,7 +805,7 @@ body.hospital-shell h6 {
 }
 
 /* OLI-002: o seletor server-side por procedimento tem rótulos longos
-   (catálogo de 13 tipos) — encolhe dentro da linha sem overflow em 390px. */
+   (catálogo de 14 tipos) — encolhe dentro da linha sem overflow em 390px. */
 .operational-list-page #procedure-type-filter {
   min-width: 0;
   max-width: 100%;

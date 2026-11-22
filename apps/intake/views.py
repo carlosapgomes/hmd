@@ -70,6 +70,7 @@ from apps.cases.events import CaseEventType
 from apps.cases.locks import CaseLockConflictError
 from apps.cases.models import (
     PROCEDURE_DIVERGENCE_REASON,
+    TRANSPORT_BADGE_CLASSES,
     Case,
     CaseDocument,
     CaseStatus,
@@ -436,6 +437,8 @@ def _build_my_cases_context(request: HttpRequest) -> dict[str, object]:
                 "patient_age": case.patient_age,
                 "patient_gender": case.patient_gender or "",
                 "origin_unit": case.origin_unit or "",
+                "transport_label": case.get_transport_type_display() if case.transport_type else "",
+                "transport_badge_class": TRANSPORT_BADGE_CLASSES.get(case.transport_type or "", ""),
                 "procedure_labels": _procedure_labels(_declared_types_from_rows(case)),
                 "agency_record_number": case.agency_record_number or "—",
                 # Sufixo só para nº duplicado E preenchido; senão "" (card

@@ -35,7 +35,7 @@ escopo server de ``?subtype=``.
         <div class="col-lg-8">
           <div class="fw-semibold patient-name">{{ item.patient_name }}</div>
           <div class="small text-muted case-meta">
-            Nº de ocorrência: {{ item.agency_record_number }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}{% if item.patient_gender %} · {{ item.patient_gender }}{% endif %}{% if item.origin_unit %} · 🏥 {{ item.origin_unit }}{% endif %}
+            Nº de ocorrência: {{ item.agency_record_number }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}{% if item.patient_gender %} · {{ item.patient_gender }}{% endif %}{% if item.origin_unit %} · 🏥 {{ item.origin_unit }}{% endif %}{% if item.transport_label %} <span class="badge rounded-pill {{ item.transport_badge_class }}">🚑 {{ item.transport_label }}</span>{% endif %}
           </div>
           <div class="summary-box mt-2">
             <div class="row">

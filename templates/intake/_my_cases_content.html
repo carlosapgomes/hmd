@@ -25,7 +25,7 @@ paginação nesta view (a lista segue materializada).
           <div class="col-md-4">
             <div class="patient-name">{{ item.patient_name|default:"—" }}</div>
             <div class="small text-muted case-meta">
-              Nº de ocorrência: <strong>{{ item.agency_record_number }}{{ item.reference_suffix }}</strong>{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}{% if item.patient_gender %} · {{ item.patient_gender }}{% endif %}{% if item.origin_unit %} · 🏥 {{ item.origin_unit }}{% endif %}
+              Nº de ocorrência: <strong>{{ item.agency_record_number }}{{ item.reference_suffix }}</strong>{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}{% if item.patient_gender %} · {{ item.patient_gender }}{% endif %}{% if item.origin_unit %} · 🏥 {{ item.origin_unit }}{% endif %}{% if item.transport_label %} <span class="badge rounded-pill {{ item.transport_badge_class }}">🚑 {{ item.transport_label }}</span>{% endif %}
             </div>
             <div class="small text-muted case-meta">
               {% if item.procedure_labels %}Procedimentos: {{ item.procedure_labels|join:" · " }}{% else %}Procedimentos: —{% endif %}

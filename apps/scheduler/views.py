@@ -74,7 +74,13 @@ from apps.cases.locks import (
     release_case_lock,
     renew_case_lock,
 )
-from apps.cases.models import Case, CaseDocument, CaseStatus, DoctorDisposition
+from apps.cases.models import (
+    TRANSPORT_BADGE_CLASSES,
+    Case,
+    CaseDocument,
+    CaseStatus,
+    DoctorDisposition,
+)
 from apps.cases.navigation import resolve_safe_next_url
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.units import unit_label
@@ -232,6 +238,8 @@ def _queue_item(case: Case, *, user: User) -> dict[str, object]:
         "patient_age": case.patient_age,
         "patient_gender": case.patient_gender or "",
         "origin_unit": case.origin_unit or "",
+        "transport_label": case.get_transport_type_display() if case.transport_type else "",
+        "transport_badge_class": TRANSPORT_BADGE_CLASSES.get(case.transport_type or "", ""),
         "days_on_screen": case.days_on_screen,
         "agency_record_number": case.agency_record_number or "—",
         "created_at": case.created_at,

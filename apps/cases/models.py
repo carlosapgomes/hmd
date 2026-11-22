@@ -96,6 +96,17 @@ class TransportType(models.TextChoices):
     MOBILE_ICU = "mobile_icu", "UTI Móvel"
 
 
+# Mapeamento ÚNICO de classe CSS do badge de transporte (slice 002, R1/D4):
+# ``UTI Móvel`` com ênfase (``text-bg-warning``), ``Ambulância Básica``
+# neutra (``text-bg-info``). Fonte única anti-drift consumida pelas três
+# filas (views passam ``transport_badge_class`` ao template; zero classe
+# literal espalhada em template). Chaves = valores de ``TransportType``.
+TRANSPORT_BADGE_CLASSES: dict[str, str] = {
+    TransportType.BASIC.value: "text-bg-info",
+    TransportType.MOBILE_ICU.value: "text-bg-warning",
+}
+
+
 class SchedulingUnit(models.IntegerChoices):
     """Unidade de destino do agendamento (change scheduler-multi-unit, D1).
 

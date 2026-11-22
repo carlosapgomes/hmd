@@ -10,7 +10,7 @@ aceitação, escalada); este arquivo apenas indexa a sequência.
   worker + ciclo de vida: reenvio zera, `CLEANED` preserva; verificação do
   corpus real 9/9 sem commitar)
 
-- [ ] S2 — Badge de transporte nas três filas
+- [x] S2 — Badge de transporte nas três filas
   Contract: slices/slice-002-badge-filas.md
   (mapeamento único de classe em `apps/cases/models.py`; badge nos cards de
   meus casos, fila médica e fila do agendador; paridade de rótulo/classe)

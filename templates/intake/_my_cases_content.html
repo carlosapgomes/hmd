@@ -1,8 +1,10 @@
 {% comment %}
-Fragmento compartilhado de "meus casos" (OLI-004 R3/R4): a página cheia
+Fragmento compartilhado de «Casos em Processamento» (OLI-004 R3/R4 +
+visibilidade-por-equipe slice 001, escopo de equipe): a página cheia
 (``my_cases.html``) inclui este arquivo no server-side dentro do container
 htmx e o endpoint ``intake:my_cases_partial`` renderiza SÓ este arquivo —
-server == partial. Cabeçalho neutro em card ``p-4`` («Meus Casos» + badge
+server == partial. Cabeçalho neutro em card ``p-4`` («Casos em
+Processamento» + badge
 do total filtrado + nota de atualização), sem ``alert-warning`` de contagem
 e sem segunda contagem visual. Cada card é uma única superfície
 ``.case-card > .row`` em quatro regiões desktop 4/3/3/2 (identidade/
@@ -12,7 +14,7 @@ paginação nesta view (a lista segue materializada).
 {% endcomment %}
 <div class="card p-4">
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-    <h2 class="mb-0">Meus Casos</h2>
+    <h2 class="mb-0">Casos em Processamento</h2>
     <span class="badge-hospital-primary status-badge">{{ items|length }} caso{% if items|length != 1 %}s{% endif %}</span>
   </div>
   <p class="text-muted small mb-3">Atualizado automaticamente.</p>
@@ -80,7 +82,7 @@ paginação nesta view (a lista segue materializada).
     <p class="text-muted mb-3 fs-5">Nenhum caso encontrado para os filtros aplicados.</p>
     <a href="{% url 'intake:my_cases' %}?tab={{ current_tab }}" class="btn btn-outline-primary">Limpar filtros</a>
     {% else %}
-    <p class="text-muted mb-3 fs-5">Nenhum caso ativo no momento.</p>
+    <p class="text-muted mb-3 fs-5">Nenhum caso em processamento no momento.</p>
     <a href="{% url 'intake:home' %}" class="btn btn-primary">Novo Encaminhamento</a>
     {% endif %}
   </div>

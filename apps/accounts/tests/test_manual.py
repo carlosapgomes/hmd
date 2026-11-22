@@ -34,7 +34,13 @@ MANUAL_PATH = "/manual/"
 CONFIGURED_UNIT_LABELS = {1: "Hemodinâmica HGRS", 2: "Unidade Satélite"}
 
 # Marcos por papel/seção (R2/R4): strings que o template DEVE conter.
-NIR_MARKERS = ("Enviar relatório", "anexos", "Meus casos", "ciência", "reenvio")
+NIR_MARKERS = (
+    "Enviar relatório",
+    "anexos",
+    "Casos em Processamento",
+    "ciência",
+    "reenvio",
+)
 DOCTOR_MARKERS = (
     "Fila médica",
     "verificação de paciente",

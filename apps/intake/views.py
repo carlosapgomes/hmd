@@ -366,14 +366,16 @@ def intake_home(request: HttpRequest) -> HttpResponse:
 
 
 def _build_my_cases_context(request: HttpRequest) -> dict[str, object]:
-    """Contexto de "meus casos" (assembly único página + partial, D1).
+    """Contexto de "Casos em Processamento" (assembly único página + partial).
 
-    Escopo por criador em qualquer combinação (R2): os filtros server-side
-    ``q``/``status``/``procedure_type`` (AND) aplicam-se DENTRO do queryset do
-    criador e ANTES do cálculo dos sufixos de desambiguação (D4 — como as
-    abas). Sem paginação nesta view (D2: a lista segue materializada).
+    Escopo de equipe em qualquer combinação (visibilidade-por-equipe,
+    slice 001): os filtros server-side ``q``/``status``/``procedure_type``
+    (AND) aplicam-se DENTRO do queryset de ativos de qualquer criador
+    (tudo exceto ``CLEANED``) e ANTES do cálculo dos sufixos de
+    desambiguação (D4 — como as abas). Sem paginação nesta view (D2: a
+    lista segue materializada).
     """
-    user = _require_user(request)
+    _require_user(request)
     requested_tab = request.GET.get("tab", _DEFAULT_MY_CASES_TAB)
     current_tab = requested_tab if requested_tab in _MY_CASES_TABS else _DEFAULT_MY_CASES_TAB
 
@@ -398,11 +400,11 @@ def _build_my_cases_context(request: HttpRequest) -> dict[str, object]:
     partial_params = [("tab", current_tab), *filter_params]
     partial_url = f"{reverse('intake:my_cases_partial')}?{urlencode(partial_params)}"
 
-    own_cases = Case.objects.filter(created_by=user)
-    # Contador do header (reenvio-corrigido-qualquer-nir, slice 002, D3):
-    # total de ativos do criador, sem os filtros de busca (o header conta a
-    # lista, não os filtros); o badge de encerrados desaparece com a aba.
-    active_cases = own_cases.exclude(status=CaseStatus.CLEANED)
+    # Escopo de equipe (visibilidade-por-equipe, slice 001): todos os casos
+    # ativos de qualquer criador.
+    # Contador do header: total de ativos da equipe, sem os filtros de busca
+    # (o header conta a lista, não os filtros).
+    active_cases = Case.objects.exclude(status=CaseStatus.CLEANED)
     selected_cases = active_cases
 
     filtered_cases = selected_cases
@@ -467,13 +469,14 @@ def _build_my_cases_context(request: HttpRequest) -> dict[str, object]:
 
 @role_required("nir")
 def my_cases(request: HttpRequest) -> HttpResponse:
-    """Lista "meus casos" com apenas ativos (R3, escopo por criador).
+    """Lista «Casos em Processamento» com apenas ativos (R3, escopo de equipe).
 
-    Lista os casos do criador em tudo exceto ``CLEANED`` (reenvio-corrigido-
-    qualquer-nir, slice 002, D3 — sem navegação Ativos/Encerrados). O ``?tab=``
-    legado (incluindo ``closed``) e valores desconhecidos/ausentes caem na
-    default segura de ativos, preservando os filtros — nunca vaza nem quebra.
-    Os encerrados são alcançados pela página «Casos Encerrados» (busca global).
+    Lista os casos ativos de qualquer criador em tudo exceto ``CLEANED``
+    (visibilidade-por-equipe, slice 001 — sem navegação Ativos/Encerrados).
+    O ``?tab=`` legado (incluindo ``closed``) e valores desconhecidos/
+    ausentes caem na default segura de ativos, preservando os filtros —
+    nunca vaza nem quebra. Os encerrados são alcançados pela página
+    «Casos Encerrados» (busca global).
 
     Slice 003 do painel-lista-encerramento (R3/D4): o queryset pré-carrega
     ``events`` (além de ``procedures``) e o caso ``CLEANED`` com evento
@@ -495,12 +498,12 @@ def my_cases(request: HttpRequest) -> HttpResponse:
 
 @role_required("nir")
 def my_cases_partial(request: HttpRequest) -> HttpResponse:
-    """Fragmento de "meus casos" para o auto-refresh htmx de 20 s (R3/D1).
+    """Fragmento de «Casos em Processamento» para o auto-refresh htmx de 20 s.
 
     Reutiliza o assembly da página cheia (``_build_my_cases_context``) e
     renderiza SÓ ``intake/_my_cases_content.html`` — o mesmo fragmento que a
     página inclui no server-side. Mesmos guards (``role_required``) e o mesmo
-    escopo por criador (só ativos) com os mesmos filtros da URL.
+    escopo de equipe (só ativos) com os mesmos filtros da URL.
     """
     return render(request, "intake/_my_cases_content.html", _build_my_cases_context(request))
 

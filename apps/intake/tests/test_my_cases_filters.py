@@ -3,7 +3,7 @@
 
 R1: cards ``case-card`` compactos (OLI-004) com nome, nº de ocorrência,
 status, procedimentos e retenção (quando houver); a navegação das abas
-é só o header (``Meus Casos``/``Casos Encerrados`` com contadores) —
+é só o header (``Casos em Processamento``/``Casos Encerrados`` com contadores) —
 sem pills internas duplicadas.
 R2: filtros server-side ``q`` (nº de ocorrência, ≥3 chars; mais curtos
 ignorados, nunca zerando por erro), ``status`` e ``procedure_type``
@@ -129,7 +129,7 @@ def test_pills_with_counters_stay(
 ) -> None:
     """R1 (OLI-004/D9; reenvio-corrigido-qualquer-nir slice 002): navegação
     única no header, sem pills internas — só ativos, com o contador 2 no
-    header (Meus Casos); «Casos Encerrados» é a busca global, sem badge.
+    header (Casos em Processamento); «Casos Encerrados» é a busca global, sem badge.
     """
     _create_case(nir_user, pdf_factory, record_number="5040778")
     _create_case(nir_user, pdf_factory, record_number="5040779")
@@ -138,7 +138,7 @@ def test_pills_with_counters_stay(
     client.force_login(nir_user)
     body = client.get(reverse("intake:my_cases")).content.decode()
 
-    assert "Meus Casos" in body
+    assert "Casos em Processamento" in body
     assert "Casos Encerrados" in body
     assert ">Ativos<" not in body
     assert 'aria-label="Filtro pela situação do caso"' not in body
@@ -308,7 +308,7 @@ def test_cross_creator_with_filters_is_empty(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R2: caso ALHEIO casando todos os filtros nunca aparece (escopo intacto)."""
+    """R2 (equipe): caso de OUTRO criador casando todos os filtros aparece."""
     other_nir = user_factory("nir-alheio-filtro", NIR_ROLE)
     foreign = _create_case(
         other_nir,
@@ -336,7 +336,7 @@ def test_cross_creator_with_filters_is_empty(
     ).content.decode()
 
     assert str(own.case_id) in body
-    assert str(foreign.case_id) not in body
+    assert str(foreign.case_id) in body
 
 
 @pytest.mark.django_db
@@ -424,7 +424,7 @@ def test_partial_renders_same_fragment(
     assert "case-card" in body
     # Fragmento apenas (OLI-004): inclui o cabeçalho neutro da lista, mas
     # sem o título da página, o form de filtros ou o CTA do topo.
-    assert "Meus Casos" in body
+    assert "Casos em Processamento" in body
     assert "Todos os seus encaminhamentos" not in body
     assert 'name="q"' not in body
     assert "Enviar relatório" not in body
@@ -500,15 +500,15 @@ def test_partial_empty_for_cross_creator(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R3/R2: o partial também respeita o escopo por criador."""
+    """R3/R2 (equipe): o partial também lista casos de outro criador."""
     other_nir = user_factory("nir-alheio-parcial", NIR_ROLE)
     foreign = _create_case(other_nir, pdf_factory, record_number="5040778")
 
     client.force_login(nir_user)
     body = client.get(reverse("intake:my_cases_partial"), {"q": "5040778"}).content.decode()
 
-    assert str(foreign.case_id) not in body
-    assert "case-card" not in body
+    assert str(foreign.case_id) in body
+    assert "case-card" in body
 
 
 @pytest.mark.django_db
@@ -522,3 +522,34 @@ def test_partial_requires_nir_role(
     client.force_login(doctor)
 
     assert client.get(reverse("intake:my_cases_partial")).status_code == 403
+
+
+@pytest.mark.django_db
+def test_header_count_covers_mixed_creator_universe_excluding_cleaned(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R1 (equipe, fix-1 review P1): o contador do header soma os ativos de
+    AMBOS os criadores e exclui o CLEANED.
+
+    Trava uma regressão de escopo-por-criador SÓ no contador: com a contagem
+    recuada a ``created_by=viewer``, o NIR veria ``data-count="1"`` (só o
+    próprio caso) em vez dos 2 ativos da equipe.
+    """
+    other_nir = user_factory("nir-alheio-contador", NIR_ROLE)
+    own = _create_case(nir_user, pdf_factory, record_number="5040778")
+    foreign = _create_case(other_nir, pdf_factory, record_number="5040779")
+    cleaned = _create_case(
+        other_nir, pdf_factory, record_number="5040780", status=CaseStatus.CLEANED
+    )
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases")).content.decode()
+
+    assert str(own.case_id) in body
+    assert str(foreign.case_id) in body
+    assert str(cleaned.case_id) not in body
+    assert 'data-count="2"' in body
+    assert 'data-count="1"' not in body

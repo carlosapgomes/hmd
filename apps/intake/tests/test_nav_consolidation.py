@@ -112,7 +112,7 @@ def test_my_cases_lists_only_actives_without_tab_navigation(
     assert str(second.case_id) in body
     assert str(closed.case_id) not in body
     # Cabeçalho neutro da lista de ativos (contagem 2), sem navegação de abas.
-    assert re.search(r"Meus Casos.*?2 casos", body, re.S) is not None
+    assert re.search(r"Casos em Processamento.*?2 casos", body, re.S) is not None
     assert ">Ativos<" not in body
     assert 'aria-label="Filtro pela situação do caso"' not in body
 
@@ -161,7 +161,7 @@ def test_nir_nav_has_three_items_with_closed_cases_search(
     search_url = reverse("intake:closed_cases_search")
 
     assert "Novo Encaminhamento" in nav
-    assert "Meus Casos" in nav
+    assert "Casos em Processamento" in nav
     assert "Casos Encerrados" in nav
     assert "Buscar Encerrados" not in nav
     # «Casos Encerrados» aponta para a busca global (rota inalterada).

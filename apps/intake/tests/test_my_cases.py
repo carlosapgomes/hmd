@@ -1,6 +1,6 @@
 """Testes de "Meus casos e detalhe do NIR" (slice 004 do intake NIR).
 
-Cobre R1 (lista escopada ao criador, ordenada, com badges de retenção/FAILED),
+Cobre R1 (lista em escopo de equipe, ordenada, com badges de retenção/FAILED),
 R2 (detalhe do próprio caso com documentos/trilha/comunicações; caso alheio →
 404), R3 (serve_document seguro: 200 com content-type pdf e filename original
 no próprio caso; 404 para caso alheio ou documento de outro caso), R4 (links
@@ -98,7 +98,8 @@ def test_list_scoped_to_creator(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R1/cenário spec: a lista mostra apenas os casos criados pelo NIR logado."""
+    """R1/cenário spec (escopo de equipe): a lista mostra os casos ativos de
+    qualquer criador para qualquer NIR com papel ativo."""
     own_case_1 = _create_case(nir_user, pdf_factory)
     own_case_2 = _create_case(nir_user, pdf_factory)
     other_nir = user_factory("nir-alheio", NIR_ROLE)
@@ -111,8 +112,8 @@ def test_list_scoped_to_creator(
     body = response.content.decode()
     assert str(own_case_1.case_id) in body
     assert str(own_case_2.case_id) in body
-    # Caso alheio não aparece (sem vazamento).
-    assert str(foreign_case.case_id) not in body
+    # Caso de outro criador aparece (equipe).
+    assert str(foreign_case.case_id) in body
     # Cada caso da lista leva ao detalhe.
     assert reverse("intake:case_detail", args=[own_case_1.case_id]) in body
 
@@ -533,7 +534,7 @@ def test_foreign_case_identification_not_leaked(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R2 (pin reforçado): identificação de caso alheio não vaza na lista."""
+    """R2 (equipe): identificação de caso de outro criador aparece na lista."""
     own_case = _create_case(nir_user, pdf_factory)
     own_case.patient_name = "Paciente Do Criador"
     own_case.save(update_fields=["patient_name"])
@@ -547,8 +548,9 @@ def test_foreign_case_identification_not_leaked(
 
     assert str(own_case.case_id) in body
     assert "Paciente Do Criador" in body
-    assert str(foreign_case.case_id) not in body
-    assert "Paciente Alheio" not in body
+    # Equipe: caso e identificação de outro criador aparecem na lista.
+    assert str(foreign_case.case_id) in body
+    assert "Paciente Alheio" in body
 
 
 @pytest.mark.django_db
@@ -779,14 +781,14 @@ def test_oli004_page_title_container_and_no_top_cta_or_internal_pills(
     body = response.content.decode()
 
     assert response.status_code == 200
-    assert '<h1 class="page-title">Todos os seus encaminhamentos</h1>' in body
+    assert '<h1 class="page-title">Casos em processamento</h1>' in body
     assert "operational-list-page" in body
     assert "col-12 col-lg-10" not in body
     assert "Enviar relatório" not in body
     # Navegação única é o header: nenhuma pill interna Ativos/Encerrados.
     assert 'aria-label="Filtro pela situação do caso"' not in body
     assert ">Ativos<" not in body
-    assert "Meus Casos" in body
+    assert "Casos em Processamento" in body
     assert "Casos Encerrados" in body
 
 
@@ -797,7 +799,7 @@ def test_oli004_header_tabs_preserve_filters_and_other_pages_stay_clean(
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
     """R1/R2 (reenvio-corrigido-qualquer-nir slice 002): header sem abas — só
-    «Meus Casos» carrega ``filter_qs``; «Casos Encerrados» é a busca global."""
+    «Casos em Processamento» carrega ``filter_qs``; «Casos Encerrados» é a busca global."""
     _create_case(nir_user, pdf_factory, "relatorio-sesab.pdf")
 
     client.force_login(nir_user)
@@ -806,7 +808,7 @@ def test_oli004_header_tabs_preserve_filters_and_other_pages_stay_clean(
         {"q": "5040778", "status": "FAILED", "procedure_type": "cat_cardiaco"},
     ).content.decode()
 
-    active_href = _nav_href(body, "Meus Casos")
+    active_href = _nav_href(body, "Casos em Processamento")
     search_href = _nav_href(body, "Casos Encerrados")
     assert "tab=active" in active_href
     assert "q=5040778" in active_href
@@ -817,12 +819,12 @@ def test_oli004_header_tabs_preserve_filters_and_other_pages_stay_clean(
 
     # Sem filtros: href limpo, sem querystring vazia/legada.
     clean_body = client.get(reverse("intake:my_cases")).content.decode()
-    assert _nav_href(clean_body, "Meus Casos").endswith("?tab=active")
+    assert _nav_href(clean_body, "Casos em Processamento").endswith("?tab=active")
     assert _nav_href(clean_body, "Casos Encerrados") == reverse("intake:closed_cases_search")
 
     # Outra página do NIR (Novo Encaminhamento) não herda filtros.
     home_body = client.get(reverse("intake:home")).content.decode()
-    home_active = _nav_href(home_body, "Meus Casos")
+    home_active = _nav_href(home_body, "Casos em Processamento")
     assert home_active.endswith("?tab=active")
     assert "q=" not in home_active
     assert "status=" not in home_active
@@ -835,7 +837,7 @@ def test_oli004_list_header_is_neutral_single_count_without_warning(
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R3: card ``p-4`` com «Meus Casos» + badge do total, sem alerta amarelo."""
+    """R3: card ``p-4`` com «Casos em Processamento» + badge do total, sem alerta amarelo."""
     _create_case(nir_user, pdf_factory)
     _create_case(nir_user, pdf_factory)
 
@@ -843,8 +845,8 @@ def test_oli004_list_header_is_neutral_single_count_without_warning(
     body = client.get(reverse("intake:my_cases")).content.decode()
 
     assert "alert-warning" not in body
-    assert "Meus Casos" in body
-    assert re.search(r"Meus Casos.*?2 casos", body, re.S) is not None
+    assert "Casos em Processamento" in body
+    assert re.search(r"Casos em Processamento.*?2 casos", body, re.S) is not None
     assert "Atualizado automaticamente" in body
     # Live region do JS é visualmente oculto (sem segunda contagem visual).
     assert 'data-my-cases-status class="visually-hidden' in body
@@ -959,7 +961,7 @@ def test_oli004_empty_without_filters_active_offers_novo_encaminhamento(
     client.force_login(nir_user)
     body = client.get(reverse("intake:my_cases_partial")).content.decode()
 
-    assert "Nenhum caso ativo no momento." in body
+    assert "Nenhum caso em processamento no momento." in body
     assert "Novo Encaminhamento" in body
     assert reverse("intake:home") in body
     assert "Limpar filtros" not in body
@@ -975,7 +977,7 @@ def test_oli004_empty_without_filters_closed_offers_novo_encaminhamento(
     client.force_login(nir_user)
     body = client.get(reverse("intake:my_cases_partial"), {"tab": "closed"}).content.decode()
 
-    assert "Nenhum caso ativo no momento." in body
+    assert "Nenhum caso em processamento no momento." in body
     assert "Novo Encaminhamento" in body
     assert reverse("intake:home") in body
     assert "Limpar filtros" not in body
@@ -1003,3 +1005,32 @@ def test_administrative_closure_retention_serve_document_200_for_creator(
 
     assert case.status == CaseStatus.CLEANED
     assert client.get(url).status_code == 200
+
+
+@pytest.mark.django_db
+def test_duplicate_occurrence_number_suffix_across_creators(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R3 (equipe, fix-1 review P1): o mesmo nº em 2 casos ATIVOS de criadores
+    diferentes desambigua os DOIS cards (``N · <8 chars>``).
+
+    Trava uma regressão de escopo-por-criador SÓ no cálculo do sufixo: com a
+    lista recuada a ``created_by=viewer``, o card alheio sumiria e o nº
+    pareceria único — sem sufixo em nenhum card.
+    """
+    other_nir = user_factory("nir-alheio-duplicado", NIR_ROLE)
+    own = _set_occurrence_number(_create_case(nir_user, pdf_factory), "5040778")
+    foreign = _set_occurrence_number(_create_case(other_nir, pdf_factory), "5040778")
+
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:my_cases")).content.decode()
+
+    assert f"Nº de ocorrência: <strong>5040778 · {own.short_id}</strong>" in _card_slice(
+        body, own.case_id
+    )
+    assert f"Nº de ocorrência: <strong>5040778 · {foreign.short_id}</strong>" in _card_slice(
+        body, foreign.case_id
+    )

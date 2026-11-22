@@ -1143,7 +1143,8 @@ def _gate_action_error(message: str, case_id: uuid.UUID, *, status: int) -> Http
 def gate_release(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     """Libera caso retido: despacho pela (estado, razão) da retenção (R7).
 
-    POST escopado ao caso do próprio NIR (alheio/inexistente → 404). O efeito
+    POST em escopo de equipe (qualquer ``nir`` opera caso de qualquer criador;
+    inexistente → 404; papel revogado → 403). O efeito
     roda no serviço transacional ``release_retained_case``: retenção de
     FORMATO avança a ANONYMIZING (comportamento atual) e retenção por
     divergência (``LLM_EXTRACTING`` + ``procedure_divergence``) avança a
@@ -1156,10 +1157,11 @@ def gate_release(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     case = get_object_or_404(
         Case.objects.only("pk", "case_id", "created_by_id", "agency_record_number"),
         case_id=case_id,
-        created_by=user,
     )
     try:
         target = release_retained_case(case=case, user=user, role=active_role)
+    except PermissionError as exc:
+        raise PermissionDenied(str(exc)) from exc
     except CaseNotRetainedError as exc:
         logger.warning("gate_release_rejected user=%s case=%s motivo=%s", user.pk, case_id, exc)
         return _gate_action_error(str(exc), case_id, status=400)
@@ -1185,7 +1187,8 @@ def gate_release(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
 def gate_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     """Reenvia documentos de um caso retido e reprocessa do zero (R2).
 
-    POST escopado ao caso do próprio NIR (alheio/inexistente → 404). Recebe os
+    POST em escopo de equipe (qualquer ``nir`` opera caso de qualquer criador;
+    inexistente → 404; papel revogado → 403). Recebe os
     novos PDFs no campo ``documents`` e delega ao serviço transacional
     ``resubmit_case_documents`` (mesma validação do slice 001, substituição de
     documentos, zeragem de flag/texto/nº e reenfileiramento). Sucesso → redirect
@@ -1197,7 +1200,6 @@ def gate_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     case = get_object_or_404(
         Case.objects.only("pk", "case_id", "created_by_id", "agency_record_number"),
         case_id=case_id,
-        created_by=user,
     )
     # Intake desligado (D7): bloqueia o reenvio do gate antes do serviço — a
     # resposta volta ao detalhe (302), nunca 4xx/500 nem efeito colateral.
@@ -1212,6 +1214,8 @@ def gate_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
             role=active_role,
             files=documents,
         )
+    except PermissionError as exc:
+        raise PermissionDenied(str(exc)) from exc
     except IntakeValidationError as exc:
         logger.warning("gate_resubmit_invalid user=%s case=%s motivo=%s", user.pk, case_id, exc)
         return _gate_action_error(str(exc), case_id, status=400)
@@ -1253,8 +1257,8 @@ def _procedure_review_support_error(case_id: uuid.UUID, case_reference: str) -> 
 def procedure_review_confirm(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     """Confirma o procedimento do caso e solicita o reprocessamento (R3/D2).
 
-    POST escopado ao caso do próprio NIR (alheio/inexistente → 404, sem
-    vazar informação). A cardinalidade é validada via ``getlist`` (um único
+    POST em escopo de equipe (qualquer ``nir`` confirma caso de qualquer criador;
+    inexistente → 404, sem vazar informação). A cardinalidade é validada via ``getlist`` (um único
     valor — o ChoiceField sozinho tomaria o último de um campo repetido) e
     o restante pelo ``ProcedureReviewForm``; a defesa de mutação continua no
     serviço ``confirm_case_procedure_review``. Sucesso → redirect ao detalhe
@@ -1270,7 +1274,6 @@ def procedure_review_confirm(request: HttpRequest, case_id: uuid.UUID) -> HttpRe
     case = get_object_or_404(
         Case.objects.only("pk", "case_id", "created_by_id", "agency_record_number"),
         case_id=case_id,
-        created_by=user,
     )
     detail_url = reverse("intake:case_detail", args=[case.case_id])
     selected = request.POST.getlist("procedure_type")
@@ -1364,7 +1367,6 @@ def procedure_review_confirm(request: HttpRequest, case_id: uuid.UUID) -> HttpRe
     full_case = get_object_or_404(
         Case.objects.select_related("created_by").prefetch_related("procedures"),
         case_id=case_id,
-        created_by=user,
     )
     context = _assemble_case_detail_context(full_case, review_form=display_form, viewer=user)
     return render(request, "intake/case_detail.html", context, status=400)

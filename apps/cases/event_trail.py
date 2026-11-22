@@ -72,6 +72,7 @@ EVENT_LABELS: dict[str, str] = {
     CaseEventType.CASE_EXTRACTION_COMPLETED: "Extração de texto do relatório concluída",
     CaseEventType.CASE_GATE_MANUAL_REVIEW: "Documento retido para revisão do NIR",
     CaseEventType.CASE_GATE_BYPASSED: "Revisão do NIR liberou o documento",
+    CaseEventType.CASE_GATE_DOCUMENTS_RESUBMITTED: "Documentos reenviados na revisão do NIR",
     # Anonimização e pipeline de análise.
     CaseEventType.CASE_ANONYMIZATION_COMPLETED: "Anonimização concluída",
     CaseEventType.CASE_LLM1_COMPLETED: "Análise automática (estrutura) concluída",
@@ -135,6 +136,7 @@ EVENT_BADGE_CSS: dict[str, str] = {
     CaseEventType.CASE_EXTRACTION_COMPLETED: BADGE_SYSTEM,
     CaseEventType.CASE_GATE_MANUAL_REVIEW: BADGE_ATTENTION,
     CaseEventType.CASE_GATE_BYPASSED: BADGE_NIR,
+    CaseEventType.CASE_GATE_DOCUMENTS_RESUBMITTED: BADGE_NIR,
     CaseEventType.CASE_ANONYMIZATION_COMPLETED: BADGE_SYSTEM,
     CaseEventType.CASE_LLM1_COMPLETED: BADGE_SYSTEM,
     CaseEventType.CASE_LLM2_COMPLETED: BADGE_SYSTEM,

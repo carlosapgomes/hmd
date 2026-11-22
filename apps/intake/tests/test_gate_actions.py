@@ -4,19 +4,20 @@ Cobre R1 (``gate_release``: liberar retido → ANONYMIZING com
 ``CASE_GATE_BYPASSED`` na trilha e o NIR como ator; não-retido → 400 sem
 efeito), R2 (``gate_resubmit``: **exatamente 1 PDF** substitui o documento +
 flag/texto/nº zerados + reprocessamento sem novo start; 0/>1 arquivo → erro
-nomeado, nada muda), R3 (ações restritas a caso retido do próprio criador) e
-R4 (concorrência real release×resubmit — exatamente um vence; lock ativo de
-worker conflita; botões apenas quando retido; caso alheio → 404 nas duas
-ações). Cobre os 3 cenários da spec "Revisão NIR do gate".
+nomeado, nada muda), R3 (ações de qualquer NIR da equipe em caso retido de
+qualquer criador, com re-check de papel ``nir`` DENTRO da transação — papel
+revogado → ``PermissionError``/403) e R4 (concorrência real release×resubmit —
+exatamente um vence; lock ativo de worker conflita; botões apenas quando
+retido; NIR não-criador opera o gate (equipe) nas duas ações). Cobre os 3
+cenários da spec "Revisão NIR do gate".
 
 As ações rodam em serviço transacional (``select_for_update`` + re-check DENTRO
 da transação); o serviço de reenvio exige 1 PDF
 (``_validate_single_document``) e limpa best-effort os arquivos novos em
 exceção pós-gravação (D7).
 
-Cobre também os findings de review do slice: o escopo por criador é re-checado
-nos serviços sob o row lock (usuário não-criador → not-found ``Http404`` sem
-efeito, além do 404 da view); retenção/ownership precedem o lock ativo
+Cobre também o re-check de papel dos serviços sob o row lock (``PermissionError``
+para papel revogado, traduzido em 403 nas views); retenção precede o lock ativo
 (não-retido → 400 mesmo com lease ativa); lock ativo de worker também conflita
 no resubmit (409 exato); e a remoção física dos documentos antigos do storage
 no reenvio é verificada.
@@ -34,11 +35,10 @@ import pytest
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connections, transaction
-from django.http import Http404
 from django.test import Client, override_settings
 from django.urls import reverse
 
-from apps.accounts.models import User
+from apps.accounts.models import Role, User
 from apps.cases.events import CaseEventType
 from apps.cases.locks import CaseLockConflictError, claim_case_lock
 from apps.cases.models import ActorType, Case, CaseStatus
@@ -488,8 +488,14 @@ def test_resubmit_service_zeroes_state_before_reprocess(
     new_stored_name = new_document.file.name
     assert new_stored_name
     assert default_storage.exists(new_stored_name)
-    # O serviço não grava eventos próprios — a trilha segue intacta até o task.
-    assert case.events.count() == events_before
+    # O serviço registra o reenvio na trilha com o operador como ator
+    # (P1 visibilidade-por-equipe slice 003, padrão do CASE_GATE_BYPASSED).
+    assert case.events.count() == events_before + 1
+    resubmit_event = case.events.get(event_type=CaseEventType.CASE_GATE_DOCUMENTS_RESUBMITTED)
+    assert resubmit_event.actor == nir_user
+    assert resubmit_event.actor_type == ActorType.USER
+    assert resubmit_event.actor_role == NIR_ROLE
+    assert resubmit_event.payload == {"reason": RETENTION_REASON}
 
 
 # ── R3/R4: escopo, 404, botões, lock e concorrência ────────────────────────
@@ -502,23 +508,32 @@ def test_foreign_case_404_both_actions(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R3/D6: ações em caso alheio → 404 nas duas rotas, sem efeito no caso."""
+    """R1/R2 (visibilidade-por-equipe slice 003, corpo invertido — D6: título
+    antitético preservado): NIR não-criador opera o gate de caso da equipe —
+    liberar e reenviar respondem 302 com o OPERADOR como ator, sem 404."""
     other_nir = user_factory("nir-alheio-gate", NIR_ROLE)
-    foreign = _create_retained_case(other_nir, pdf_factory, "alheio.pdf")
-    events_before = foreign.events.count()
+    foreign_release = _create_retained_case(other_nir, pdf_factory, "alheio.pdf")
+    foreign_resubmit = _create_retained_case(other_nir, pdf_factory, "alheio-reenvio.pdf")
 
     client.force_login(nir_user)
-    release_url = reverse("intake:gate_release", args=[foreign.case_id])
-    resubmit_url = reverse("intake:gate_resubmit", args=[foreign.case_id])
+    release_url = reverse("intake:gate_release", args=[foreign_release.case_id])
+    resubmit_url = reverse("intake:gate_resubmit", args=[foreign_resubmit.case_id])
 
-    assert client.post(release_url).status_code == 404
-    assert client.post(resubmit_url, {"documents": [_valid_pdf("valido.pdf")]}).status_code == 404
+    assert client.post(release_url).status_code == 302
+    assert client.post(resubmit_url, {"documents": [_valid_pdf("valido.pdf")]}).status_code == 302
 
-    foreign.refresh_from_db()
-    assert foreign.status == CaseStatus.PDF_EXTRACTING
-    assert foreign.manual_review_required is True
-    assert foreign.events.count() == events_before
-    assert foreign.documents.count() == 1
+    foreign_release.refresh_from_db()
+    assert foreign_release.status == CaseStatus.ANONYMIZING
+    assert foreign_release.manual_review_required is False
+    bypass = foreign_release.events.get(event_type=CaseEventType.CASE_GATE_BYPASSED)
+    assert bypass.actor == nir_user
+    assert bypass.actor_role == NIR_ROLE
+
+    foreign_resubmit.refresh_from_db()
+    assert list(foreign_resubmit.documents.values_list("original_filename", flat=True)) == [
+        "valido.pdf"
+    ]
+    assert foreign_resubmit.manual_review_required is False
 
 
 @pytest.mark.django_db
@@ -527,30 +542,202 @@ def test_service_denies_non_creator_both_actions(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R3: além do 404 da view, os serviços re-checam o criador DENTRO da
-    transação — usuário não-criador chamando o serviço direto é negado com
-    not-found (sem vazar informação), sem efeito nas duas ações."""
+    """R1/R2 (visibilidade-por-equipe slice 003, corpo invertido — D6: título
+    antitético preservado): os serviços aceitam NIR não-criador — liberação e
+    reenvio executam com o OPERADOR como ator do evento."""
     owner = user_factory("dono-servico-gate", NIR_ROLE)
-    case = _create_retained_case(owner, pdf_factory, "alheio-servico.pdf")
-    events_before = case.events.count()
-    documents_before = list(case.documents.values_list("original_filename", flat=True))
+    release_case = _create_retained_case(owner, pdf_factory, "alheio-servico.pdf")
+    resubmit_case = _create_retained_case(owner, pdf_factory, "alheio-servico-reenvio.pdf")
 
-    with pytest.raises(Http404):
-        release_retained_case(case=case, user=nir_user, role=NIR_ROLE)
-    with pytest.raises(Http404):
+    target = release_retained_case(case=release_case, user=nir_user, role=NIR_ROLE)
+    resubmit_case_documents(
+        case=resubmit_case,
+        user=nir_user,
+        role=NIR_ROLE,
+        files=[_valid_pdf("valido.pdf")],
+    )
+
+    assert target == CaseStatus.ANONYMIZING
+    release_case.refresh_from_db()
+    assert release_case.status == CaseStatus.ANONYMIZING
+    assert release_case.manual_review_required is False
+    bypass = release_case.events.get(event_type=CaseEventType.CASE_GATE_BYPASSED)
+    assert bypass.actor == nir_user
+    assert bypass.actor_role == NIR_ROLE
+
+    resubmit_case.refresh_from_db()
+    assert list(resubmit_case.documents.values_list("original_filename", flat=True)) == [
+        "valido.pdf"
+    ]
+    assert resubmit_case.manual_review_required is False
+
+
+@pytest.mark.django_db
+def test_resubmit_records_operator_event_service(
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """P1 (visibilidade-por-equipe slice 003, fix-1): o reenvio do gate registra
+    ``CASE_GATE_DOCUMENTS_RESUBMITTED`` com o OPERADOR como ator — por
+    não-criador e por criador — payload mínimo PHI-free no padrão do bypass."""
+    owner = user_factory("dono-reenvio-evento", NIR_ROLE)
+    foreign_case = _create_retained_case(owner, pdf_factory, "alheio.pdf")
+    own_case = _create_retained_case(nir_user, pdf_factory, "proprio.pdf")
+
+    resubmit_case_documents(
+        case=foreign_case,
+        user=nir_user,
+        role=NIR_ROLE,
+        files=[_valid_pdf("valido.pdf")],
+    )
+    resubmit_case_documents(
+        case=own_case,
+        user=nir_user,
+        role=NIR_ROLE,
+        files=[_valid_pdf("proprio-novo.pdf")],
+    )
+
+    for case in (foreign_case, own_case):
+        case.refresh_from_db()
+        event = case.events.get(event_type=CaseEventType.CASE_GATE_DOCUMENTS_RESUBMITTED)
+        assert event.actor == nir_user
+        assert event.actor_type == ActorType.USER
+        assert event.actor_role == NIR_ROLE
+        assert event.payload == {"reason": RETENTION_REASON}
+
+
+@pytest.mark.django_db
+def test_gate_resubmit_view_records_operator_event_non_creator(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """P1 (visibilidade-por-equipe slice 003, fix-1): POST de não-criador no
+    ``gate_resubmit`` registra o evento de reenvio com o operador como ator."""
+    owner = user_factory("dono-reenvio-view", NIR_ROLE)
+    case = _create_retained_case(owner, pdf_factory, "alheio.pdf")
+    client.force_login(nir_user)
+
+    response = client.post(
+        reverse("intake:gate_resubmit", args=[case.case_id]),
+        {"documents": [_valid_pdf("valido.pdf")]},
+    )
+
+    assert response.status_code == 302
+    case.refresh_from_db()
+    event = case.events.get(event_type=CaseEventType.CASE_GATE_DOCUMENTS_RESUBMITTED)
+    assert event.actor == nir_user
+    assert event.actor_type == ActorType.USER
+    assert event.actor_role == NIR_ROLE
+    assert event.payload == {"reason": RETENTION_REASON}
+
+
+@pytest.mark.django_db
+def test_service_revoked_nir_role_denied_both_actions(
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R3 (defesa em profundidade): papel ``nir`` revogado no banco com sessão
+    stalada (``role="nir"`` alegado, sem vínculo) → ``PermissionError`` nas
+    duas ações, sem efeito — o re-check consulta o vínculo real, não a sessão."""
+    release_case = _create_retained_case(nir_user, pdf_factory, "retido.pdf")
+    resubmit_case = _create_retained_case(nir_user, pdf_factory, "retido-reenvio.pdf")
+    nir_user.roles.remove(Role.objects.get(name=NIR_ROLE))
+    assert not nir_user.roles.filter(name=NIR_ROLE).exists()
+    events_before = release_case.events.count() + resubmit_case.events.count()
+
+    with pytest.raises(PermissionError):
+        release_retained_case(case=release_case, user=nir_user, role=NIR_ROLE)
+    with pytest.raises(PermissionError):
         resubmit_case_documents(
-            case=case,
+            case=resubmit_case,
             user=nir_user,
             role=NIR_ROLE,
             files=[_valid_pdf("valido.pdf")],
         )
 
-    case.refresh_from_db()
-    assert case.status == CaseStatus.PDF_EXTRACTING
-    assert case.manual_review_required is True
-    assert case.manual_review_reason == RETENTION_REASON
-    assert case.events.count() == events_before
-    assert list(case.documents.values_list("original_filename", flat=True)) == documents_before
+    release_case.refresh_from_db()
+    resubmit_case.refresh_from_db()
+    assert release_case.status == CaseStatus.PDF_EXTRACTING
+    assert release_case.manual_review_required is True
+    assert resubmit_case.manual_review_required is True
+    assert release_case.events.count() + resubmit_case.events.count() == events_before
+    assert list(resubmit_case.documents.values_list("original_filename", flat=True)) != [
+        "valido.pdf"
+    ]
+
+
+@pytest.mark.django_db
+def test_service_wrong_role_string_denied_both_actions(
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R3: papel ativo alegado fora de ``nir`` → ``PermissionError`` nas duas
+    ações, sem efeito (mesmo com vínculo ``nir`` no banco)."""
+    release_case = _create_retained_case(nir_user, pdf_factory, "retido.pdf")
+    resubmit_case = _create_retained_case(nir_user, pdf_factory, "retido-reenvio.pdf")
+
+    with pytest.raises(PermissionError):
+        release_retained_case(case=release_case, user=nir_user, role="doctor")
+    with pytest.raises(PermissionError):
+        resubmit_case_documents(
+            case=resubmit_case,
+            user=nir_user,
+            role="doctor",
+            files=[_valid_pdf("valido.pdf")],
+        )
+
+    release_case.refresh_from_db()
+    resubmit_case.refresh_from_db()
+    assert release_case.manual_review_required is True
+    assert resubmit_case.manual_review_required is True
+
+
+@pytest.mark.django_db
+def test_gate_release_revoked_role_forbidden(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4: ``PermissionError`` do serviço vira 403 (nunca 500) no ``gate_release``."""
+
+    def _boom(*args: object, **kwargs: object) -> CaseStatus:
+        raise PermissionError("Ação de gate restrita ao papel nir.")
+
+    monkeypatch.setattr("apps.intake.views.release_retained_case", _boom)
+    case = _create_retained_case(nir_user, pdf_factory, "retido.pdf")
+    client.force_login(nir_user)
+
+    response = client.post(reverse("intake:gate_release", args=[case.case_id]))
+
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_gate_resubmit_revoked_role_forbidden(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4: ``PermissionError`` do serviço vira 403 (nunca 500) no ``gate_resubmit``."""
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise PermissionError("Ação de gate restrita ao papel nir.")
+
+    monkeypatch.setattr("apps.intake.views.resubmit_case_documents", _boom)
+    case = _create_retained_case(nir_user, pdf_factory, "retido.pdf")
+    client.force_login(nir_user)
+
+    response = client.post(
+        reverse("intake:gate_resubmit", args=[case.case_id]),
+        {"documents": [_valid_pdf("valido.pdf")]},
+    )
+
+    assert response.status_code == 403
 
 
 @pytest.mark.django_db

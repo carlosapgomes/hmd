@@ -67,6 +67,10 @@ class CaseEventType(models.TextChoices):
         "CASE_GATE_BYPASSED",
         "Gate de regulação dispensado na revisão do NIR",
     )
+    CASE_GATE_DOCUMENTS_RESUBMITTED = (
+        "CASE_GATE_DOCUMENTS_RESUBMITTED",
+        "Documentos reenviados na revisão do NIR",
+    )
 
     # Anonimização (change presidio-anonymization, slice 003, design D6):
     # evento não-transicional gravado pelo serviço

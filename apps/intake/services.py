@@ -381,20 +381,19 @@ def create_case_with_documents(
 
 # ── Ações de revisão do gate NIR (slice 005, design D6/D7) ─────────────────
 # ``release_retained_case``/``resubmit_case_documents`` implementam as duas
-# ações de revisão do gate (liberar/reenviar), restritas a caso retido do
-# próprio criador. A liberação (R7, change llm-pipeline-per-type slice 004)
+# ações de revisão do gate (liberar/reenviar), operáveis por qualquer ``nir``
+# (equipe — caso de qualquer criador, com o operador como ator do evento).
+# A liberação (R7, change llm-pipeline-per-type slice 004)
 # DESPACHA pela retenção: formato (``PDF_EXTRACTING``) → ``complete_pdf_``
 # ``extraction`` (comportamento atual) e divergência de procedimentos
 # (``LLM_EXTRACTING`` + ``procedure_divergence``) →
 # ``bypass_pipeline_divergence``. O reenvio continua exclusivo da retenção de
 # formato. Ambas rodam em transação com ``select_for_update`` no ``Case`` e
-# re-check DENTRO da transação das pré-condições, na ordem do escopo da view:
-# 1) ownership (criador — caso alheio vira ``Http404``/not-found sem vazar
-#    informação, mesmo status do filtro da view por criador); 2) retenção
-#    (``CaseNotRetainedError`` → 400); 3) lock ativo não-expirado
-#    (``CaseLockConflictError`` — D6). Retenção/ownership precedem o lock
-#    ativo: caso não-retido responde 400 mesmo sob lease ativa (R3), e
-#    nunca se revela estado/lock a quem não é o criador.
+# re-check DENTRO da transação das pré-condições: 1) papel ``nir``
+# (``PermissionError`` sem vínculo — defesa em profundidade, D1);
+# 2) retenção (``CaseNotRetainedError`` → 400); 3) lock ativo não-expirado
+# (``CaseLockConflictError`` — D6). Retenção precede o lock ativo:
+# caso não-retido responde 400 mesmo sob lease ativa (R3).
 # Divergências marcadas vs ats-web ``scope_gate_bypass``: aqui o bypass usa
 # transições existentes (nenhum estado novo) e o reenvio substitui os
 # ``CaseDocument`` zerando flag/texto/nº antes de reenfileirar (D6/D7).
@@ -419,17 +418,20 @@ _RESUBMIT_CLEARED_FIELDS = (
 )
 
 
-def _assert_owned_by(case: Case, user: User | None) -> None:
-    """Re-check DENTRO da transação: caso é do criador (escopo por criador).
+def _assert_nir_role(user: User | None, role: str | None) -> None:
+    """Re-check DENTRO da transação: papel ativo ``nir`` com vínculo real (equipe).
 
-    O escopo por criador não vive só na view: sob o row lock, usuário que
-    não é o criador (ou ``None``) → ``Http404`` (mesmo status/not-found do
-    filtro da view), sem mensagem nem vazamento de estado — quem não é o
-    criador não descobre sequer se o caso existe. Roda ANTES das checagens
-    de retenção e de lock ativo (mesma precedência do escopo da view).
+    Defesa em profundidade (visibilidade-por-equipe, D1): o guard de papel da
+    view pode estar stalado (``active_role == "nir"`` sem vínculo no banco
+    após revogação) — o serviço consulta o vínculo real
+    (``user.roles.filter(...)``), não a sessão. Papel alegado fora de ``nir``
+    ou ator sem o papel → ``PermissionError`` (a view traduz em 403). Roda
+    ANTES das checagens de retenção e de lock ativo.
     """
-    if user is None or case.created_by_id != user.pk:
-        raise Http404
+    if role != REVIEW_ROLE:
+        raise PermissionError("Ação de gate restrita ao papel nir.")
+    if user is None or not user.roles.filter(name=REVIEW_ROLE).exists():
+        raise PermissionError("Ação de gate restrita ao papel nir.")
 
 
 def _assert_no_active_lock(case: Case) -> None:
@@ -492,8 +494,8 @@ def release_retained_case(
     """Libera caso retido: despacho pela (estado, razão) da retenção (R7).
 
     ``select_for_update`` no ``Case`` + re-check DENTRO da transação das
-    pré-condições na ordem do escopo: criador (not-found sem vazar
-    informação), liberável e sem lock ativo. Efeito na mesma transação:
+    pré-condições: papel ``nir`` (equipe — qualquer criador; papel revogado →
+    ``PermissionError``), liberável e sem lock ativo. Efeito na mesma transação:
 
     - ``PDF_EXTRACTING`` (retenção de FORMATO) → ``complete_pdf_extraction``
       (→ ANONYMIZING), flags zeradas e ``CASE_GATE_BYPASSED`` com o motivo
@@ -506,13 +508,13 @@ def release_retained_case(
     Devolve o estado-alvo alcançado (a view diferencia a mensagem de sucesso).
 
     Raises:
-        Http404: caso não é do criador (escopo por criador, sem vazar informação).
+        PermissionError: papel ativo não-``nir`` ou ator sem o papel ``nir``.
         CaseNotRetainedError: caso fora das duas retenções (sem efeito).
         CaseLockConflictError: lock ativo não-expirado de outro ator (sem efeito).
     """
     with transaction.atomic():
         locked = Case.objects.select_for_update().get(pk=case.pk)
-        _assert_owned_by(locked, user)
+        _assert_nir_role(user, role)
         _assert_releasable(locked)
         # Contrato novo (slice 002, D1): divergência de caso marcado só se
         # resolve pela confirmação explícita — o bypass simples é recusado
@@ -597,7 +599,8 @@ def confirm_case_procedure_review(
     """Confirma um procedimento após revisão e reprocessa o mesmo caso (D2).
 
     Serviço vertical R1–R2: valida ator NIR (papel ativo + vínculo do ator ao
-    papel), dono (escopo por criador → 404 sem vazar informação), marcador
+    papel — equipe, qualquer criador, com o operador como ator do evento),
+    marcador
     D1, retenção por divergência em ``LLM_EXTRACTING``, ausência de decisão
     médica, seleção única do catálogo, consentimento, justificativa, revisão
     mais recente e fingerprint da fonte — tudo sob ``select_for_update`` + lease
@@ -611,7 +614,7 @@ def confirm_case_procedure_review(
     o worker via signal. Falha em qualquer etapa desfaz tudo (rollback total).
 
     Raises:
-        Http404: caso inexistente ou de outro criador (sem vazar informação).
+        Http404: caso inexistente (sem vazar informação).
         PermissionError: papel ativo não-NIR ou ator sem o papel ``nir``.
         CaseLockConflictError: lease ativa de outro ator (409 na view futura).
         ValueError: marcador/estado/flag, decisão médica, seleção,
@@ -645,7 +648,6 @@ def confirm_case_procedure_review(
             locked = Case.objects.select_for_update().get(pk=case.pk)
         except Case.DoesNotExist:
             raise Http404 from None
-        _assert_owned_by(locked, user)
         if role != REVIEW_ROLE:
             raise PermissionError("Confirmação de procedimento restrita ao papel nir.")
         assert user is not None
@@ -747,11 +749,12 @@ def resubmit_case_documents(
     Substitui os documentos do caso retido por **exatamente 1** PDF novo
     (design D2/P0-1): 0 ou >1 arquivo → erro nomeado sem efeito (validação
     ANTES da transação, fonte única ``_validate_single_document``). Na
-    transação, com ``select_for_update`` + re-check das pré-condições na
-    ordem do escopo (criador → retido → sem lock ativo): remove os
+    transação, com ``select_for_update`` + re-check das pré-condições
+    (papel ``nir`` da equipe → retido → sem lock ativo): remove os
     ``CaseDocument`` antigos, grava o novo (position 1) e zera
     ``extracted_text``/``agency_record_number``/``agency_record_extracted_at``/
-    ``manual_review_*``. Exceção após gravação de arquivos físicos dispara a
+    ``manual_review_*`` — e registra ``CASE_GATE_DOCUMENTS_RESUBMITTED`` com o
+    operador como ator (payload mínimo PHI-free, padrão do ``CASE_GATE_BYPASSED``). Exceção após gravação de arquivos físicos dispara a
     limpeza compensatória best-effort dos caminhos novos (D7); os arquivos
     antigos só são removidos após todas as escritas do banco terem sucesso (o
     rollback não reverte o filesystem). Fora da transação, reenfileira o
@@ -759,7 +762,7 @@ def resubmit_case_documents(
 
     Raises:
         IntakeValidationError: não é exatamente 1 PDF válido (nada muda).
-        Http404: caso não é do criador (escopo por criador, sem vazar informação).
+        PermissionError: papel ativo não-``nir`` ou ator sem o papel ``nir``.
         CaseNotRetainedError: caso fora da retenção (sem efeito).
         CaseLockConflictError: lock ativo não-expirado de outro ator (sem efeito).
     """
@@ -769,9 +772,10 @@ def resubmit_case_documents(
 
     with transaction.atomic():
         locked = Case.objects.select_for_update().get(pk=case.pk)
-        _assert_owned_by(locked, user)
+        _assert_nir_role(user, role)
         _assert_format_retained(locked)
         _assert_no_active_lock(locked)
+        retention_reason = locked.manual_review_reason
         old_documents = list(locked.documents.all())
         old_file_names = [document.file.name for document in old_documents if document.file.name]
         locked.documents.all().delete()
@@ -806,6 +810,14 @@ def resubmit_case_documents(
             locked.manual_review_required = False
             locked.manual_review_reason = ""
             locked.save(update_fields=_RESUBMIT_CLEARED_FIELDS)
+            CaseEvent.objects.create(
+                case=locked,
+                event_type=CaseEventType.CASE_GATE_DOCUMENTS_RESUBMITTED,
+                actor_type=ActorType.USER if user is not None else ActorType.SYSTEM,
+                actor=user,
+                actor_role=role or "",
+                payload={"reason": retention_reason},
+            )
         except BaseException:
             _delete_saved_files_best_effort(saved_file_names)
             raise

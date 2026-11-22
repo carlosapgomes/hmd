@@ -809,18 +809,22 @@ def test_wrong_role_forbidden(client: Client, nir_user: User, _seeded_prompts: N
 def test_foreign_case_is_not_found(
     client: Client, nir_user: User, _seeded_prompts: None, user_factory: Any
 ) -> None:
-    """R4: caso de outro criador → 404 sem vazar nem mutar."""
+    """R2 (visibilidade-por-equipe slice 003, corpo invertido — D6: título
+    antitético preservado): NIR não-criador confirma o procedimento da equipe —
+    POST aceito (302) com o OPERADOR como ator da confirmação."""
     fake = ScriptedLlmClient([json.dumps(_artifact([DETECTED_TYPE]))])
     case = _retained_case(nir_user, fake)
     other = user_factory("outro-criador", NIR_ROLE)
-    events_before = _event_types(case)
     client.force_login(other)
 
     response = _post_confirm(client, case)
 
-    assert response.status_code == 404
+    assert response.status_code == 302
     case.refresh_from_db()
-    assert _event_types(case) == events_before
+    assert case.manual_review_required is False
+    confirmation = case.events.get(event_type=CaseEventType.CASE_PROCEDURE_REVIEW_CONFIRMED)
+    assert confirmation.actor == other
+    assert confirmation.actor_role == NIR_ROLE
 
 
 def test_csrf_enforced_without_mutation(nir_user: User, _seeded_prompts: None) -> None:

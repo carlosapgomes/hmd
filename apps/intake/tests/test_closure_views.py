@@ -415,15 +415,16 @@ def test_ack_non_creator_404(
     nir_user: User,
     user_factory: Callable[[str, str], User],
 ) -> None:
-    """R2: caso alheio → 404 no GET do detalhe e no POST direto do ack — o
-    caso alheio permanece intacto (sem vazamento)."""
+    """R2: caso alheio → 200 no GET do detalhe (visibilidade-por-equipe slice
+    002: equipe NIR) e 404 no POST direto do ack — o caso alheio permanece
+    intacto (sem vazamento, sem ciência)."""
     doctor = user_factory("doctor-intake-foreign", DOCTOR_ROLE)
     other_nir = user_factory("nir-intake-foreign", NIR_ROLE)
     foreign_case = _denial_final_case(created_by=other_nir, decided_by=doctor)
     ack_url = reverse("intake:case_ack", args=[foreign_case.case_id])
     _login(client, nir_user)
 
-    assert client.get(reverse("intake:case_detail", args=[foreign_case.case_id])).status_code == 404
+    assert client.get(reverse("intake:case_detail", args=[foreign_case.case_id])).status_code == 200
     assert client.post(ack_url).status_code == 404
 
     foreign_case.refresh_from_db()

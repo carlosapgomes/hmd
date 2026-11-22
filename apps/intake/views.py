@@ -800,10 +800,11 @@ def _assemble_case_detail_context(
 
 @role_required("nir")
 def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
-    """Detalhe do caso do próprio NIR: docs, comunicações, resultado e trilha.
+    """Detalhe do caso em escopo de equipe: docs, comunicações, resultado e trilha.
 
-    O queryset filtra ``created_by=user`` — caso alheio (ou inexistente)
-    responde 404 sem vazar informação (D6/D9). Exibe status/timestamps, tipos
+    Guard de papel (qualquer ``nir`` ativo alcança casos de qualquer criador —
+    visibilidade-por-equipe, slice 002); caso inexistente responde 404 sem
+    vazar informação. Exibe status/timestamps, tipos
     declarados, flag de retenção com motivo, documentos com link de abertura
     (``serve_document``), a thread de comunicações do change 03 e a trilha de
     eventos (slice 002 do trilha-eventos-todos-perfis: a mesma trilha do
@@ -820,7 +821,6 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     case = get_object_or_404(
         Case.objects.select_related("created_by").prefetch_related("procedures"),
         case_id=case_id,
-        created_by=user,
     )
     context = _assemble_case_detail_context(case, viewer=user)
     return render(request, "intake/case_detail.html", context)
@@ -964,18 +964,18 @@ def pdf_viewer(
     case_id: uuid.UUID,
     document_id: int,
 ) -> HttpResponse:
-    """Viewer mobile do PDF original do caso do próprio NIR (slice PVP-002, R1).
+    """Viewer mobile do PDF original em escopo de equipe (slice PVP-002, R1).
 
-    Mesmo guard fail-closed de ``serve_document``: queryset por criador —
-    caso alheio, documento de outro caso ou inexistente → 404. O ``?next=``
+    Mesmo guard fail-closed de ``serve_document`` (guard de papel — qualquer
+    ``nir`` alcança casos de qualquer criador; visibilidade-por-equipe,
+    slice 002): documento de outro caso ou inexistente → 404. O ``?next=``
     passa por ``resolve_safe_next_url`` (fallback ao detalhe); o template
     ``pdf_viewer/mobile_pdf_viewer.html`` recebe título, URLs do PDF e volta.
     """
-    user = _require_user(request)
+    _require_user(request)
     case = get_object_or_404(
         Case.objects.only("case_id", "created_by"),
         case_id=case_id,
-        created_by=user,
     )
     document = get_object_or_404(
         CaseDocument.objects.only("pk", "case_id", "file"),
@@ -1005,21 +1005,21 @@ def attachment_pdf_viewer(
     case_id: uuid.UUID,
     attachment_id: int,
 ) -> HttpResponse:
-    """Viewer mobile do anexo PDF do caso do próprio NIR (slice PVP-006, R2).
+    """Viewer mobile do anexo PDF em escopo de equipe (slice PVP-006, R2).
 
-    Mesmo guard fail-closed de ``serve_attachment``: queryset por criador —
-    caso alheio, anexo de outro caso ou inexistente → 404. SOMENTE para
+    Mesmo guard fail-closed de ``serve_attachment`` (guard de papel — qualquer
+    ``nir`` alcança casos de qualquer criador; visibilidade-por-equipe,
+    slice 002): anexo de outro caso ou inexistente → 404. SOMENTE para
     ``application/pdf`` (D3): imagens e outros tipos usam link direto +
     ``<img loading=lazy>`` (sem viewer dedicado) → 404. Anexo sem arquivo →
     404 fail-closed (lição P1-4). O ``?next=`` passa por
     ``resolve_safe_next_url`` (fallback ao detalhe); o template
     ``pdf_viewer/mobile_pdf_viewer.html`` recebe título, URLs do PDF e volta.
     """
-    user = _require_user(request)
+    _require_user(request)
     case = get_object_or_404(
         Case.objects.only("case_id", "created_by"),
         case_id=case_id,
-        created_by=user,
     )
     attachment = get_object_or_404(
         CaseAttachment.objects.only("pk", "case_id", "file", "content_type"),
@@ -1050,19 +1050,19 @@ def serve_attachment(
     case_id: uuid.UUID,
     attachment_id: int,
 ) -> HttpResponse:
-    """Serve o arquivo do anexo do caso do próprio NIR (slice PVP-006, R1).
+    """Serve o arquivo do anexo em escopo de equipe (slice PVP-006, R1).
 
-    Mesmo guard fail-closed de ``serve_document`` (queryset por criador —
-    caso alheio, anexo de outro caso ou inexistente → 404). Content-type
+    Mesmo guard fail-closed de ``serve_document`` (guard de papel — qualquer
+    ``nir`` alcança casos de qualquer criador; visibilidade-por-equipe,
+    slice 002: anexo de outro caso ou inexistente → 404). Content-type
     ORIGINAL do upload e filename original; anexo sem arquivo → 404
     fail-closed (lição P1-4). O arquivo servido é o ORIGINAL (R4 — bytes
     intactos, mesma política dos serves de documento).
     """
-    user = _require_user(request)
+    _require_user(request)
     case = get_object_or_404(
         Case.objects.only("case_id", "created_by"),
         case_id=case_id,
-        created_by=user,
     )
     attachment = get_object_or_404(
         CaseAttachment.objects.only("pk", "case_id", "file", "original_filename", "content_type"),
@@ -1088,19 +1088,19 @@ def serve_document(
     case_id: uuid.UUID,
     document_id: int,
 ) -> HttpResponse:
-    """Serve o PDF do documento do caso do próprio NIR (R3).
+    """Serve o PDF do documento em escopo de equipe (R3).
 
     Resolve caso e documento por ids internos (``case_id`` UUID + pk do
     ``CaseDocument``) — o nome/path armazenado jamais vem do cliente (sem path
-    traversal). Caso alheio, documento de outro caso ou inexistente → 404.
-    Entrega via ``FileResponse`` com content-type ``application/pdf`` e
-    filename original do upload.
+    traversal). Guard de papel — qualquer ``nir`` alcança casos de qualquer
+    criador (visibilidade-por-equipe, slice 002); documento de outro caso ou
+    inexistente → 404. Entrega via ``FileResponse`` com content-type
+    ``application/pdf`` e filename original do upload.
     """
-    user = _require_user(request)
+    _require_user(request)
     case = get_object_or_404(
         Case.objects.only("case_id", "created_by"),
         case_id=case_id,
-        created_by=user,
     )
     document = get_object_or_404(
         CaseDocument.objects.only("pk", "case_id", "file", "original_filename"),

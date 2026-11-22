@@ -6,7 +6,7 @@ próximo.
 
 - [x] S1 — Lista NIR «Casos em Processamento» em escopo de equipe (rótulos, contagem, manual NIR)
   Contract: slices/slice-001-lista-nir-equipe.md
-- [ ] S2 — Detalhe e PDFs/anexos do NIR em escopo de equipe (guard de papel)
+- [x] S2 — Detalhe e PDFs/anexos do NIR em escopo de equipe (guard de papel)
   Contract: slices/slice-002-detalhe-pdfs-nir-equipe.md
 - [ ] S3 — Gate + confirmação de divergência por qualquer `nir` (serviços: re-check de papel, PermissionError→403)
   Contract: slices/slice-003-gate-confirmacao-equipe.md

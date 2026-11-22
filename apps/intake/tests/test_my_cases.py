@@ -193,15 +193,17 @@ def test_detail_foreign_case_404(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R2/cenário spec: detalhe de caso alheio é negado com 404 (sem vazamento)."""
+    """R2/cenário spec INVERTIDO (visibilidade-por-equipe slice 002, D6/D8: nome
+    preservado, corpo invertido): detalhe de caso alheio ATIVO é servido com
+    200 a qualquer NIR (guard de papel, sem filtro por criador)."""
     other_nir = user_factory("nir-alheio", NIR_ROLE)
     foreign_case = _create_case(other_nir, pdf_factory)
 
     client.force_login(nir_user)
     response = client.get(reverse("intake:case_detail", args=[foreign_case.case_id]))
 
-    assert response.status_code == 404
-    assert str(foreign_case.case_id) not in response.content.decode()
+    assert response.status_code == 200
+    assert str(foreign_case.case_id) in response.content.decode()
 
 
 @pytest.mark.django_db
@@ -245,7 +247,9 @@ def test_serve_document_foreign_case_404(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R3: documento de caso alheio → 404 (sem vazamento)."""
+    """R3 INVERTIDO (visibilidade-por-equipe slice 002, D6/D8: nome preservado,
+    corpo invertido): documento de caso alheio é servido com 200/FileResponse
+    a qualquer NIR (paridade serve×viewer, guard de papel)."""
     other_nir = user_factory("nir-alheio", NIR_ROLE)
     foreign_case = _create_case(other_nir, pdf_factory)
     document = list(foreign_case.documents.all())[0]
@@ -255,7 +259,11 @@ def test_serve_document_foreign_case_404(
         reverse("intake:serve_document", args=[foreign_case.case_id, document.pk])
     )
 
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/pdf"
+    assert response["Content-Disposition"] == f'inline; filename="{document.original_filename}"'
+    served_bytes = b"".join(response.streaming_content)  # type: ignore[attr-defined]
+    assert served_bytes == b"%PDF-1.4 relatorio fake (conteudo nao lido neste slice)"
 
 
 @pytest.mark.django_db

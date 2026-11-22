@@ -398,6 +398,42 @@ def _extract_days_on_screen(text: str) -> int | None:
     return max(values) if values else None
 
 
+# ── Tipo de transporte do relatório (change transport-badge, slice 001,
+# R1/D1–D3) ────────────────────────────────────────────────────────────────
+# Label estrutural do bloco «RELATÓRIO MÉDICO»: ``TRANSPORTE: <valor>`` com o
+# valor na MESMA linha do rótulo (whitespace HORIZONTAL — ``\\s`` consumiria
+# a quebra de linha e capturaria o valor da linha seguinte, violando o
+# contrato). Última ocorrência do texto vence (D2); normalização via
+# ``_fold_line`` com domínio fechado (D3): desconhecido/vazio/ausente → None.
+_TRANSPORT_TYPE_PATTERN = re.compile(
+    r"^[ \t]*TRANSPORTE[ \t]*:[ \t]*(.*?)[ \t]*$",
+    flags=re.IGNORECASE | re.MULTILINE,
+)
+
+
+def extract_transport_type(text: str) -> str | None:
+    """Extrai o tipo de transporte do label estruturado ``TRANSPORTE:`` (R1/D1–D3).
+
+    Domínio fechado sobre o valor dobrado (``_fold_line``): ``ambulancia
+    basica``/``basica`` → ``"basic"``; ``uti movel`` → ``"mobile_icu"``.
+    Com N ocorrências, a ÚLTIMA vence (ordem declarada dos documentos — D2).
+    Label ausente, valor vazio ou valor fora do domínio → ``None`` (nunca
+    inventado); menção narrativa sem o formato de rótulo com dois-pontos não
+    é capturada. Função pura, zero I/O.
+    """
+    last: str | None = None
+    for match in _TRANSPORT_TYPE_PATTERN.finditer(text):
+        last = match.group(1)
+    if last is None:
+        return None
+    folded = _fold_line(last)
+    if folded in ("ambulancia basica", "basica"):
+        return "basic"
+    if folded == "uti movel":
+        return "mobile_icu"
+    return None
+
+
 def _normalize_whitespace(text: str) -> str:
     """Normaliza espaços preservando as quebras de linha entre parágrafos."""
     normalized_lines: list[str] = []

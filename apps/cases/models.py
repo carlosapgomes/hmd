@@ -82,6 +82,20 @@ class DoctorDisposition(models.TextChoices):
     DENIED = "denied", "Negado"
 
 
+class TransportType(models.TextChoices):
+    """Tipo de transporte solicitado (change transport-badge, slice 001, D3/D4).
+
+    Domínio FECHADO do label estrutural ``TRANSPORTE:`` do relatório — os
+    rótulos canônicos vivem aqui (fonte única, via
+    ``get_transport_type_display()``); o mapeamento de classe CSS do badge é
+    o slice 002. Valor desconhecido nunca persiste (rejeição silenciosa →
+    campo vazio, sem badge).
+    """
+
+    BASIC = "basic", "Ambulância Básica"
+    MOBILE_ICU = "mobile_icu", "UTI Móvel"
+
+
 class SchedulingUnit(models.IntegerChoices):
     """Unidade de destino do agendamento (change scheduler-multi-unit, D1).
 
@@ -164,6 +178,16 @@ class Case(FSMModelMixin, models.Model):
     # único do ``extracted_text``; zerado no reenvio de documentos; preservado
     # pela minimização do CLEANED (paridade ``agency_record_number``).
     origin_unit = models.CharField(max_length=128, blank=True, default="")
+
+    # Tipo de transporte solicitado (change transport-badge, slice 001,
+    # R2/D1): label estrutural ``TRANSPORTE:`` extraído pelo worker pdf no
+    # write único do ``extracted_text``; zerado no reenvio de documentos;
+    # preservado pela minimização do CLEANED (metadado administrativo, não
+    # identificante — paridade com ``origin_unit``). Nulável: casos sem label
+    # (ou com valor fora do domínio) nascem com o campo vazio.
+    transport_type = models.CharField(
+        max_length=16, choices=TransportType.choices, null=True, blank=True
+    )
 
     # Artefatos do pipeline LLM (change llm-pipeline-per-type, D10): os 4
     # campos nascem na migration ÚNICA do slice 004 (dono definido; os slices

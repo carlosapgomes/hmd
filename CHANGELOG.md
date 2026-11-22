@@ -4,6 +4,32 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.25] — 2026-11-22
+
+**Catálogo com 14 tipos: Neurointervenção (embolização de aneurisma/malformação
+vascular intracraniana)** — 1 change (`add-neurointervencao-procedure`), 2 slices
+TDD com revisão independente por slice. Suíte 2331 → **2339** (+8 testes).
+**Sem migrations, MAS com seeds — passo 5 do runbook de deploy OBRIGATÓRIO**
+(cria `proc.neurointerv.llm1/llm2.user`; a 1ª chamada de prompt do tipo novo
+falha se o seed for pulado).
+
+- **Novo tipo `neurointerv`** (decisão do dono 2026-11-22): critérios da seção
+  S2 por referência (a mais restritiva — angioplastias carótidas/membros/
+  coronariana), subtipo doctor `neuro` (médico neuro passa a ver 2 tipos),
+  suporte anestésico. `EXPECTED_PROCEDURE_COUNT` 13→14; ordem canônica logo
+  após `art_cerebral`. Nenhuma migration, nenhum bloco de schema novo (base
+  comum), policy S2 automática por mapeamento de seção.
+- **Fechamento da lacuna declarativa**: pedidos de embolização agora podem ser
+  declarados pelo NIR (select do upload e da revisão de procedimento),
+  roteados ao subtipo `neuro` e detectáveis pelo LLM1 (detecção livre sobre o
+  catálogo). Texto do card de revisão: "um dos 14 tipos do catálogo".
+- **Higiene pós-catálogo-14**: varredura de literais obsoletos (grep 38→8;
+  remanescentes apenas históricos: ADRs arquivados + nota do change 01/P2),
+  help do `seed_prompts` (31 templates), contagens em docstrings/testes.
+- **Runbook**: passo 5 (migrações+seeds) agora documenta ser obrigatório em
+  releases "sem migrations, MAS com seeds"; convenção do changelog distingue
+  "sem migrations e sem seeds (deploy direto)".
+
 ## [0.1.24] — 2026-11-22
 
 **Reenvio corrigido por qualquer NIR + consolidação do nav (paridade

@@ -313,7 +313,7 @@ Meus casos terá página e lista na largura do header, **sem navegação Ativos/
 
 ### Requirement: Confirmação explícita do procedimento pelo NIR
 
-O NIR criador SHALL poder manter ou trocar o procedimento de um caso novo retido por divergência, escolhendo exatamente um dos 13 tipos, inclusive não detectado. A ação SHALL exigir leitura confirmada e justificativa não vazia de até 500 caracteres, além de revisão e fonte vigentes. A confirmação SHALL solicitar nova extração e análise do mesmo caso, sem exigir upload nem aprovar clinicamente o pedido.
+O NIR criador SHALL poder manter ou trocar o procedimento de um caso novo retido por divergência, escolhendo exatamente um dos 14 tipos do catálogo, inclusive não detectado. A ação SHALL exigir leitura confirmada e justificativa não vazia de até 500 caracteres, além de revisão e fonte vigentes. A confirmação SHALL solicitar nova extração e análise do mesmo caso, sem exigir upload nem aprovar clinicamente o pedido.
 
 #### Scenario: Manter procedimento original é permitido
 - **GIVEN** caso novo com A declarado e B detectado

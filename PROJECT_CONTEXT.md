@@ -12,7 +12,9 @@ implementadores com contexto zero.
 - `openspec/changes/` — changes ativos (proposals, designs, specs, slices).
 - `docs/adr/` — decisões arquiteturais (ADR-0001 a 0003 no bootstrap).
 - Roadmap e parâmetros de negócio: `temp/plano-implementacao-hmd.md` e
-  `temp/parametrosHMD.md` (fonte para os 13 tipos de procedimento e thresholds
+  `temp/parametrosHMD.md` (fonte para os tipos de procedimento — 13 originais;
+  neurointervenção com critérios S2 adicionada em 2026-11-22 por decisão do
+  dono — e thresholds
   clínicos — consumidos a partir do change 03).
 - Projeto-fonte de padrões (somente-leitura): `/projects/dev/ats-web`.
 - Em caso de conflito, artefatos mais recentes no Git prevalecem; decisões
@@ -29,7 +31,7 @@ data/hora/local (unidade 1 ou 2) e o resultado retorna ao NIR.
 
 Diferenças fundamentais vs. o projeto-fonte `ats-web` (EDA): autenticação via
 Active Directory (Kerberos) em estágio posterior; anonimização Presidio
-fail-closed; catálogo de 13 tipos de procedimento com schemas/prompts por tipo;
+fail-closed; catálogo de 14 tipos de procedimento com schemas/prompts por tipo;
 policy clínica consultiva determinística; agendamento multi-unidade;
 django-fsm substituído por django-fsm-2 (MIT; API django-fsm preservada — viewflow.fsm descartado por AGPLv3+) com estados renomeados.
 
@@ -67,7 +69,7 @@ templates/         templates raiz + accounts (login/perfil/home/switch-role)
 static/            CSS/JS (tema hospitalar HMD, Bootstrap 5.3 CDN)
 tests/             suíte raiz (smoke + resolução de banco)
 apps/accounts/     User/Role (ad_upn), backends (Kerberos AD + break-glass), kerberos.py (cliente/failover), ratelimit.py (anti-lockout), middleware (papel ativo + guard), admin, ad_check
-apps/cases/        procedure_catalog (13 tipos/S1–S8), Case+FSM (django-fsm-2, 17 estados, +bypass_pipeline_divergence), CaseEvent/CaseProcedure/CaseDocument, procedures.py (declaração+upsert detecção), locks.py, communications.py+signals, event_trail.py (builder+rótulos/badges da trilha compartilhada) + templates/cases/_event_trail.html
+apps/cases/        procedure_catalog (14 tipos/S1–S8, neurointerv→S2/neuro desde 2026-11-22), Case+FSM (django-fsm-2, 17 estados, +bypass_pipeline_divergence), CaseEvent/CaseProcedure/CaseDocument, procedures.py (declaração+upsert detecção), locks.py, communications.py+signals, event_trail.py (builder+rótulos/badges da trilha compartilhada) + templates/cases/_event_trail.html
 apps/intake/       upload/declaração, pdf_utils (PyMuPDF), regulation_gate (SESAB), tasks (cluster pdf), meus casos/detalhe/gate
 apps/anonymization/ deterministic, recognizers BR (checksum), engine Presidio singleton, services (núcleo+wrapper), tasks (cluster anonymization, fail-closed; release+transição no mesmo atomic), reidentify (+reidentify_structure recursivo), benchmark
 apps/pipeline/      llm.py (cliente OpenRouter+erros), schemas/ (base+ blocos+união), llm1_service, llm2_service, procedure_reconciliation, policy, prior_case, ptbr_language_guard, json_parser, orchestrator+tasks (cluster llm) + signals (trigger duplo)
@@ -233,6 +235,34 @@ Confirmação explícita + Prospeção apenas novos envios (7), llm-pipeline MOD
 Processamento e ADDED Integridade no reprocessamento + Recuperação observável de enqueue (9); `validate --specs`
 16/16. Pré-release: smoke operacional completo do qcluster com workers/modelos de produção (bloqueio explícito
 dos relatórios 003/004); P2s deferidos registrados nos receipts de execução.
+
+## Fecho do change add-neurointervencao-procedure (slices 001–002, ARQUIVADO em 2026-11-22)
+
+**14º tipo de procedimento: `neurointerv` (Neurointervenção — embolização de aneurisma ou malformação
+vascular intracraniana)**, fechando a lacuna do subtipo `neuro` (plano inicial dizia
+"neuroradiologia/neurointervenção", mas o catálogo só tinha `art_cerebral` diagnóstico; auditoria dos
+archives não achou decisão sobre o tipo — a menção de 2026-09-07 no slice-001 R5 tratou-a como categoria
+anestésica). **Decisão do dono (2026-11-22)**: critérios da seção **S2** (a mais restritiva existente) por
+referência — sem S9, sem threshold novo; suporte anestésico True (lista do parametrosHMD); subtipo `neuro`.
+Plano revisado por reviewer readonly independente (NEEDS-REWORK: 3 BLOCKERs + 2 MAJORs incorporados —
+fusão das pinagens no slice 001 com gate completo obrigatório, inventário estendido enum 14/CATALOG_SIZE/
+`state["prompts"]`, texto visível do card "14 tipos do catálogo", grep ampliado, runbook). Execução: 2 loops
+pi-subagents-openspec-loop/2 (worker muse-spark-1.3-contributor:high + reviewer gpt-6.1-terra:high;
+evidências `/tmp/hmd-nip-001.ZyxjBt` e `/tmp/hmd-nip-002.bF2D1J`; slice 001: 1 ciclo de fix — P1 label
+não atrelado à opção no select de revisão, corrigido com parser (value,label,selected) e asserção exata;
+slice 002: review limpa na 1ª rodada). **Slice 001 (1396eb0)**: perfil pós-`art_cerebral`, EXPECTED_PROCEDURE_COUNT=14,
+S2 por referência, seeds `proc.neurointerv.llm1/llm2.user` com frase literal, contagens 31 em todos os pontos
+(llm ×6 + accounts + help), fixações enum/CATALOG_SIZE, pinagens de selects/roteamento (neuro vê, cardio
+não vê, multiprocedimento)/detecção sem bloco específico, texto do card de revisão. **Slice 002 (7cdb132)**:
+varredura residual grep 38→8 (remanescentes = 1 aritmética correta + 1 nota histórica + 6 ADRs arquivados),
+runbook passo 5 obrigatório em releases "sem migrations, MAS com seeds" + convenção do changelog, gate
+completo. Suíte 2331→**2339**. Specs promovidas: case-management (RENAMED "Catálogo de 13 tipos"→"Catálogo
+de tipos de procedimento do HMD" + MODIFIED 14 tipos/cenário de roteamento; Purpose ajustada no archive) e
+intake-nir (MODIFIED "14 tipos do catálogo"); validate --specs 17/17. **Deploy**: sem migrations, MAS com
+seeds — passo 5 do runbook obrigatório (cria os 2 templates novos; pulado → 1ª chamada de prompt do tipo
+falha). Pendências/P2 de backlog: pinagem explícita `evaluate_preop_policy("neurointerv")`→S2; label de
+78 chars conferir em mobile 390px no próximo smoke verify-hmd; `seed_prompts` local depende de PG dev com
+credenciais default (auth falhou no ambiente do loop — idempotência coberta por testes).
 
 ## Backlog pós-piloto (fase 2 — dono, 2026-09-15, E2E dev validado)
 

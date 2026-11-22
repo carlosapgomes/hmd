@@ -356,10 +356,11 @@ def test_resubmit_post_disabled_redirects_without_creating(
     pdf_factory: Callable[..., SimpleUploadedFile],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """R3/R4: POST do reenvio corrigido bloqueado → redirect ao detalhe, sem
-    criar o novo caso e sem enfileirar tarefa."""
+    """R3/R4: POST do reenvio corrigido bloqueado → redirect ao detalhe
+    histórico (R4 do reenvio-corrigido-qualquer-nir), sem criar o novo caso
+    e sem enfileirar tarefa."""
     original = _cleaned_case(nir_user, pdf_factory)
-    detail_url = reverse("intake:case_detail", args=[original.case_id])
+    detail_url = reverse("intake:closed_case_detail", args=[original.case_id])
     enqueued = _enqueue_recorder(monkeypatch)
     client.force_login(nir_user)
 

@@ -28,7 +28,6 @@ from collections.abc import Callable, Iterator
 import pytest
 from django import forms
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.http import Http404
 from django.test import Client, override_settings
 from django.urls import reverse
 
@@ -379,31 +378,36 @@ def test_resubmission_original_not_cleaned(
 
 
 @pytest.mark.django_db
-def test_resubmission_non_creator_rejected(
+def test_resubmission_non_creator_allowed(
     nir_user: User,
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R2/R4: quem não é o criador não reenvia — Http404 sem vazar informação
-    (mesmo status not-found do escopo por criador dos serviços do intake)."""
+    """R1 (reenvio-corrigido-qualquer-nir, D1): sem guarda de posse, o
+    não-criador reenvia — o reenviador é o criador do novo caso e o autor dos
+    eventos; o original segue CLEANED com o evento de supersedição."""
     doctor = user_factory("doctor-resub-scope", DOCTOR_ROLE)
     other_nir = user_factory("nir-resub-scope", NIR_ROLE)
     foreign = _cleaned_case(created_by=other_nir, doctor=doctor)
     events_before = foreign.events.count()
 
-    with pytest.raises(Http404):
-        create_corrected_resubmission(
-            original_case=foreign,
-            user=nir_user,
-            role=NIR_ROLE,
-            file=_resubmit_file(pdf_factory),
-            procedure_type=ANGIO_TYPE,
-            correction_reason=REASON,
-        )
+    new_case = create_corrected_resubmission(
+        original_case=foreign,
+        user=nir_user,
+        role=NIR_ROLE,
+        file=_resubmit_file(pdf_factory),
+        procedure_type=ANGIO_TYPE,
+        correction_reason=REASON,
+    )
 
-    assert Case.objects.count() == 1
+    assert Case.objects.count() == 2
+    assert new_case.created_by == nir_user
+    assert new_case.correction_created_by == nir_user
+    assert new_case.events.get(event_type=CaseEventType.CASE_CORRECTION_CREATED).actor == nir_user
+    foreign.refresh_from_db()
     assert foreign.status == CaseStatus.CLEANED
-    assert foreign.events.count() == events_before
+    assert foreign.events.count() == events_before + 1
+    assert foreign.events.get(event_type=CaseEventType.CASE_MARKED_SUPERSEDED).actor == nir_user
 
 
 @pytest.mark.django_db
@@ -572,21 +576,23 @@ def test_resubmit_route_guards_non_cleaned(
 
 
 @pytest.mark.django_db
-def test_resubmit_non_creator_404(
+def test_resubmit_non_creator_allowed(
     client: Client,
     nir_user: User,
     user_factory: Callable[[str, str], User],
 ) -> None:
-    """R4: caso alheio → 404 no GET e no POST do reenvio corrigido — o caso
-    alheio permanece intacto (sem vazamento)."""
+    """R1 (reenvio-corrigido-qualquer-nir, D1): caso alheio CLEANED não é
+    mais 404 — o GET renderiza o form e o POST vazio re-renderiza com erro
+    (sem escrita, sem supersedição no original)."""
     doctor = user_factory("doctor-resub-foreign", DOCTOR_ROLE)
     other_nir = user_factory("nir-resub-foreign", NIR_ROLE)
     foreign = _cleaned_case(created_by=other_nir, doctor=doctor)
     resubmit_url = reverse("intake:case_resubmit", args=[foreign.case_id])
     _login(client, nir_user)
 
-    assert client.get(resubmit_url).status_code == 404
-    assert client.post(resubmit_url).status_code == 404
+    assert client.get(resubmit_url).status_code == 200
+    assert client.post(resubmit_url).status_code == 200
+    assert Case.objects.count() == 1
 
     foreign.refresh_from_db()
     assert foreign.status == CaseStatus.CLEANED

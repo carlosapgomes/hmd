@@ -44,13 +44,23 @@
       </div>
     </div>
 
-    {% if has_outcome %}
+    {% if has_outcome or admin_closure_result %}
     <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
         <h2 class="h5 mb-0">Resultado</h2>
         <span class="badge rounded-pill text-bg-secondary ms-auto">{{ status_label }}</span>
       </div>
       <div class="card-body report-block-body">
+        {% if admin_closure_result %}
+        <h3 class="h6 text-muted text-uppercase mb-2">Encerramento administrativo</h3>
+        <p class="mb-2">{{ admin_closure_result }}</p>
+        {% if admin_closure_reason %}
+        <p class="small text-muted mb-3">
+          <strong>Motivo registrado:</strong> {{ admin_closure_reason }}
+        </p>
+        {% endif %}
+        {% endif %}
+        {% if has_outcome %}
         <h3 class="h6 text-muted text-uppercase mb-2">Decisões médicas por procedimento</h3>
         <ul class="list-group list-group-flush mb-3">
           {% for decision in procedure_decisions %}
@@ -86,6 +96,7 @@
         <p class="small text-muted mb-0">
           <strong>Motivo da negação:</strong> {{ scheduling.denial_reason }}
         </p>
+        {% endif %}
         {% endif %}
         {% endif %}
       </div>
@@ -128,6 +139,24 @@
     </div>
 
     {% include "cases/_event_trail.html" %}
+
+    <!-- Reenvio corrigido (reenvio-corrigido-qualquer-nir, R2/D2): ação no
+         detalhe histórico para casos CLEANED de qualquer criador — leva à
+         página de reenvio existente (mesma rota do detalhe do criador). -->
+    {% if can_resubmit %}
+    <div class="card shadow-sm mb-4 report-card">
+      <div class="card-body">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          <p class="small text-muted mb-0">
+            Este caso está encerrado. Para reenviá-lo com correções, um
+            <strong>novo caso</strong> é criado e vinculado a este.
+          </p>
+          <a href="{% url 'intake:case_resubmit' case.case_id %}"
+             class="btn btn-sm btn-primary ms-auto">Reenviar corrigido</a>
+        </div>
+      </div>
+    </div>
+    {% endif %}
 
     <!-- Intercorrência pós-encerramento (R3): formulário SOMENTE para casos
          elegíveis; motivo legível quando inelegível. Nenhuma outra ação de

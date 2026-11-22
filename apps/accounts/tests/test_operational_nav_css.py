@@ -189,6 +189,8 @@ class TestOperationalNavMarkup:
         assert "Processados Hoje" in nav
 
     def test_nir_nav_neutral_counters_and_filter_qs(self, client: Client) -> None:
+        # Slice 002 (reenvio-corrigido-qualquer-nir): só ativos com badge;
+        # «Casos Encerrados» é a busca global, sem contador.
         nir = _create_user("oli5-nir", ("nir",))
         _make_case(nir, CaseStatus.AWAITING_DOCTOR)
         _login(client, nir, "nir")
@@ -202,13 +204,12 @@ class TestOperationalNavMarkup:
         closed_tag, _ = _link(nav, "Casos Encerrados")
         assert 'data-count="1"' in my_tag
         assert "nav-count-badge--neutral" in my_tag
-        assert 'data-count="0"' in closed_tag
-        assert "nav-count-badge--neutral" in closed_tag
+        assert "data-count" not in closed_tag
         assert ">Meus Casos</a>" in nav
         assert ">Casos Encerrados</a>" in nav
-        # filter_qs (OLI-004) preservado nos dois links da área.
+        # filter_qs (OLI-004) preservado só no link da área (Meus Casos).
         assert "q=999001" in my_tag and "status=FAILED" in my_tag
-        assert "q=999001" in closed_tag
+        assert "q=999001" not in closed_tag
         assert 'aria-current="page"' in my_tag
 
     def test_zero_count_present_but_hidden_by_css(self, client: Client) -> None:

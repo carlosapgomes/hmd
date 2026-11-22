@@ -139,9 +139,12 @@
         <code>FAILED</code>, sem nova tentativa automática.
       </li>
       <li>
-        <strong>Meus casos</strong> (<em>Meus casos</em>): a lista separa os casos
-        <em>ativos</em> (em andamento) dos <em>encerrados</em> (<code>CLEANED</code>).
-        O detalhe mostra documentos, trilha e comunicações apenas dos seus casos.
+        <strong>Meus casos</strong> (<em>Meus casos</em>): a lista mostra apenas os
+        casos <em>ativos</em> (em andamento) — tudo exceto <code>CLEANED</code> —
+        com a contagem no cabeçalho da lista. Os casos encerrados (seus ou de
+        qualquer NIR) ficam na página <em>Casos Encerrados</em> (busca por nº de
+        ocorrência ou nome do paciente). O detalhe mostra documentos, trilha e
+        comunicações apenas dos seus casos.
       </li>
       <li>
         <strong>Ciência do recebimento</strong>: quando a resposta final é
@@ -150,11 +153,14 @@
         política vigente — ADR-0010. Apenas o autor do caso pode confirmar.
       </li>
       <li>
-        <strong>Reenvio corrigido</strong>: para um caso seu já encerrado, é
-        possível reenviar de forma corrigida; o sistema cria um novo caso que
-        percorre o pipeline desde o início, vinculado ao original com motivo
-        obrigatório, exatamente 1 PDF do relatório corrigido e o tipo declarado
-        novamente (nunca herdado).
+        <strong>Reenvio corrigido</strong>: qualquer NIR pode fazer o reenvio
+        corrigido de qualquer caso já encerrado (<code>CLEANED</code>), inclusive
+        de outro criador — pelo detalhe histórico da página <em>Casos
+        Encerrados</em> (ou pelo detalhe do próprio caso encerrado). O reenvio
+        cria um novo caso que percorre o pipeline desde o início, vinculado ao
+        original com motivo obrigatório, exatamente 1 PDF do relatório corrigido
+        e o tipo declarado novamente (nunca herdado); quem reenvia passa a ser o
+        criador do novo caso.
       </li>
     </ul>
   </div>

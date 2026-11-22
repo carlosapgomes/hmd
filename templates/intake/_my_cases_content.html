@@ -79,9 +79,6 @@ paginação nesta view (a lista segue materializada).
     {% if search or status_filter or procedure_type_filter %}
     <p class="text-muted mb-3 fs-5">Nenhum caso encontrado para os filtros aplicados.</p>
     <a href="{% url 'intake:my_cases' %}?tab={{ current_tab }}" class="btn btn-outline-primary">Limpar filtros</a>
-    {% elif current_tab == 'closed' %}
-    <p class="text-muted mb-3 fs-5">Nenhum caso encerrado até agora.</p>
-    <a href="{% url 'intake:home' %}" class="btn btn-primary">Novo Encaminhamento</a>
     {% else %}
     <p class="text-muted mb-3 fs-5">Nenhum caso ativo no momento.</p>
     <a href="{% url 'intake:home' %}" class="btn btn-primary">Novo Encaminhamento</a>

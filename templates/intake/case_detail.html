@@ -112,26 +112,40 @@
       </div>
     </div>
 
-    {% if corrections %}
+    {% if correction_items %}
     <!-- Correções do original (nir-result-closure, slice 004, R4): os novos
-         casos que reenviam este caso, ordenados por criação. -->
+         casos que reenviam este caso, ordenados por criação. Links
+         condicionais (reenvio-corrigido-qualquer-nir, R5/D4): próprio →
+         detalhe do caso; alheio ativo → referência sem link (o guard ativo
+         não é afrouxado); alheio encerrado → detalhe histórico. -->
     <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Reenvios corrigidos deste caso</h2>
       </div>
       <ul class="list-group list-group-flush">
-        {% for correction in corrections %}
+        {% for item in correction_items %}
         <li class="list-group-item">
           <div class="d-flex justify-content-between align-items-start gap-2">
             <div>
-              <a href="{% url 'intake:case_detail' correction.case_id %}"
+              {% if item.is_own %}
+              <a href="{% url 'intake:case_detail' item.correction.case_id %}"
                  class="font-monospace small fw-semibold text-decoration-none">
-                Caso {{ correction.disambiguated_reference }}
+                Caso {{ item.correction.disambiguated_reference }}
               </a>
-              <p class="small text-muted mb-0 mt-1">{{ correction.correction_reason }}</p>
+              {% elif item.is_cleaned %}
+              <a href="{% url 'intake:closed_case_detail' item.correction.case_id %}"
+                 class="font-monospace small fw-semibold text-decoration-none">
+                Caso {{ item.correction.disambiguated_reference }}
+              </a>
+              {% else %}
+              <span class="font-monospace small fw-semibold text-muted">
+                Caso {{ item.correction.disambiguated_reference }}
+              </span>
+              {% endif %}
+              <p class="small text-muted mb-0 mt-1">{{ item.correction.correction_reason }}</p>
             </div>
             <span class="small text-muted text-nowrap">
-              {{ correction.created_at|date:"d/m/Y H:i" }}
+              {{ item.correction.created_at|date:"d/m/Y H:i" }}
             </span>
           </div>
         </li>

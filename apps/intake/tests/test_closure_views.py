@@ -439,8 +439,9 @@ def test_my_cases_tabs_partition(
     nir_user: User,
     user_factory: Callable[[str, str], User],
 ) -> None:
-    """R3/cenário spec: a aba ativa (default) lista tudo exceto CLEANED; a aba
-    encerrados lista apenas CLEANED — mesmo formato de items."""
+    """R3/cenário spec (reenvio-corrigido-qualquer-nir slice 002): meus casos
+    lista SÓ ativos — o ``?tab=`` legado (incluindo ``closed``) e valores
+    inválidos caem na default segura de ativos; o CLEANED nunca aparece."""
     doctor = user_factory("doctor-intake-tabs", DOCTOR_ROLE)
     active_case = _denial_final_case(created_by=nir_user, decided_by=doctor)
     decided_case = _denial_decided_case(created_by=nir_user, decided_by=doctor)
@@ -450,25 +451,16 @@ def test_my_cases_tabs_partition(
     assert closed_case.status == CaseStatus.CLEANED
     _login(client, nir_user)
 
-    # Aba ativa é a default (?tab= ausente ou inválido → ativos).
-    for query in ("", "?tab=invalid"):
+    # Só ativos em qualquer combinação (?tab= ausente, inválido ou legado).
+    for query in ("", "?tab=invalid", "?tab=closed"):
         response = client.get(reverse("intake:my_cases") + query)
         assert response.status_code == 200
         body = response.content.decode()
         assert str(active_case.case_id) in body
         assert str(decided_case.case_id) in body
         assert str(closed_case.case_id) not in body
-
-    # Aba encerrados: apenas o caso CLEANED.
-    response = client.get(reverse("intake:my_cases") + "?tab=closed")
-    assert response.status_code == 200
-    body = response.content.decode()
-    assert str(closed_case.case_id) in body
-    assert str(active_case.case_id) not in body
-    assert str(decided_case.case_id) not in body
-    # Links das abas presentes.
-    assert "?tab=active" in body
-    assert "?tab=closed" in body
+    # Sem navegação de abas na página.
+    assert "?tab=closed" not in body
 
 
 @pytest.mark.django_db
@@ -477,8 +469,9 @@ def test_tabs_creator_scope(
     nir_user: User,
     user_factory: Callable[[str, str], User],
 ) -> None:
-    """R4/R3: as abas não vazam casos de outro criador (CLEANED alheio não
-    aparece em encerrados)."""
+    """R4/R3 (reenvio-corrigido-qualquer-nir slice 002): sem aba de
+    encerrados, nenhum CLEANED aparece em meus casos — nem o próprio, nem o
+    alheio (o escopo por criador segue intacto para os ativos)."""
     doctor = user_factory("doctor-intake-scope", DOCTOR_ROLE)
     other_nir = user_factory("nir-intake-scope", NIR_ROLE)
     foreign_closed = _denial_final_case(created_by=other_nir, decided_by=doctor)
@@ -489,12 +482,13 @@ def test_tabs_creator_scope(
     acknowledge_case_receipt(own_closed, user=nir_user, role=NIR_ROLE)
     _login(client, nir_user)
 
-    response = client.get(reverse("intake:my_cases") + "?tab=closed")
+    for query in ("", "?tab=closed"):
+        response = client.get(reverse("intake:my_cases") + query)
 
-    assert response.status_code == 200
-    body = response.content.decode()
-    assert str(own_closed.case_id) in body
-    assert str(foreign_closed.case_id) not in body
+        assert response.status_code == 200
+        body = response.content.decode()
+        assert str(own_closed.case_id) not in body
+        assert str(foreign_closed.case_id) not in body
 
 
 # ── R4: guards de acesso ──────────────────────────────────────────────────

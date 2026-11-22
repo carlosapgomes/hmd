@@ -127,11 +127,9 @@ def test_pills_with_counters_stay(
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R1 (OLI-004/D9): navegação única no header, sem pills internas.
-
-    2 casos ativos + 1 encerrado (``CLEANED``) → contadores 2 e 1 no
-    header (Meus Casos/Casos Encerrados); nenhuma pill Ativos/Encerrados
-    no corpo da página.
+    """R1 (OLI-004/D9; reenvio-corrigido-qualquer-nir slice 002): navegação
+    única no header, sem pills internas — só ativos, com o contador 2 no
+    header (Meus Casos); «Casos Encerrados» é a busca global, sem badge.
     """
     _create_case(nir_user, pdf_factory, record_number="5040778")
     _create_case(nir_user, pdf_factory, record_number="5040779")
@@ -145,11 +143,11 @@ def test_pills_with_counters_stay(
     assert ">Ativos<" not in body
     assert 'aria-label="Filtro pela situação do caso"' not in body
     assert 'href="/intake/cases/?tab=active"' in body
-    assert 'href="/intake/cases/?tab=closed"' in body
+    assert 'href="/intake/cases/?tab=closed"' not in body
     # OLI-005 (D11): contador único por data-count + pseudo-elemento;
     # sem badge <span> inline no link (o número não é texto do DOM).
     assert 'data-count="2"' in body
-    assert 'data-count="1"' in body
+    assert 'data-count="1"' not in body
     assert "nav-count-badge--neutral" in body
     assert ">2</span>" not in body
     assert ">1</span>" not in body
@@ -371,7 +369,8 @@ def test_filters_preserved_in_partial_url(
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R2/D4: aba e filtros viajam na URL do partial (página == partial)."""
+    """R2/D4 (reenvio-corrigido-qualquer-nir slice 002): o ``?tab=`` legado cai
+    na default de ativos e os filtros viajam na URL do partial."""
     _create_case(nir_user, pdf_factory, record_number="5040778")
 
     client.force_login(nir_user)
@@ -380,19 +379,19 @@ def test_filters_preserved_in_partial_url(
         {
             "tab": "closed",
             "q": "5040778",
-            "status": CaseStatus.CLEANED,
+            "status": CaseStatus.NEW,
             "procedure_type": "art_perif",
         },
     ).content.decode()
 
     # Django escapa ``&`` como ``&amp;`` nos atributos — a URL é a mesma.
     assert (
-        f'hx-get="{reverse("intake:my_cases_partial")}?tab=closed&amp;q=5040778'
-        f'&amp;status=CLEANED&amp;procedure_type=art_perif"' in body
+        f'hx-get="{reverse("intake:my_cases_partial")}?tab=active&amp;q=5040778'
+        f'&amp;status=NEW&amp;procedure_type=art_perif"' in body
     )
     # O formulário preserva os valores digitados/escolhidos.
     assert 'value="5040778"' in body
-    assert re.search(r'value="CLEANED" selected', body) is not None
+    assert re.search(r'value="NEW" selected', body) is not None
     assert re.search(r'value="art_perif" selected', body) is not None
 
 

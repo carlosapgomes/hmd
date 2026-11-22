@@ -5,7 +5,7 @@
 
 {% block page_title %}<h1 class="page-title">Todos os seus encaminhamentos</h1>{% endblock %}
 
-{% block nav %}{% if current_tab == 'closed' %}{% include "intake/_nav.html" with active_tab="closed" active_count=active_count closed_count=closed_count filter_qs=filter_qs %}{% else %}{% include "intake/_nav.html" with active_tab="my_cases" active_count=active_count closed_count=closed_count filter_qs=filter_qs %}{% endif %}{% endblock %}
+{% block nav %}{% include "intake/_nav.html" with active_tab="my_cases" active_count=active_count filter_qs=filter_qs %}{% endblock %}
 
 {% block content %}
 <div class="operational-list-page">
@@ -13,9 +13,9 @@
          ocorrência (≥3 chars; mais curtos são ignorados pela view), `status`
          e `procedure_type` (catálogo de 13 tipos) compõem por AND e viajam na
          URL do partial. Fora do fragmento trocado pelo htmx: o refresh de
-         20 s nunca reseta o formulário. A navegação entre abas é só o
-         header (OLI-004 R1/D9): Meus Casos/Casos Encerrados com
-         ``filter_qs`` — sem pills internas duplicadas. -->
+         20 s nunca reseta o formulário. Sem navegação de abas no header
+         (reenvio-corrigido-qualquer-nir slice 002, D3): só ativos; os
+         encerrados ficam na página «Casos Encerrados» (busca global). -->
     <div class="card p-4 mb-4">
       <form method="get" class="row g-3 align-items-end">
         <input type="hidden" name="tab" value="{{ current_tab }}">

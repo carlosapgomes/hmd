@@ -27,7 +27,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
-from apps.cases.closure import ADMINISTRATIVE_CLOSURE_REASONS, administratively_close_case
+from apps.cases.closure import administratively_close_case
 from apps.cases.communications import post_user_communication
 from apps.cases.events import CaseEventType
 from apps.cases.models import ActorType, Case, CaseDocument, CaseEvent, CaseStatus
@@ -370,38 +370,15 @@ def _close_administratively(case: Case, manager: User) -> Case:
 
 
 @pytest.mark.django_db
-def test_closed_tab_shows_administrative_closure_result(
-    client: Client,
-    nir_user: User,
-    user_factory: Callable[[str, str], User],
-    pdf_factory: Callable[..., SimpleUploadedFile],
-) -> None:
-    """R3/D4: na aba de encerrados, o CRIADOR vê o resultado "Encerrado
-    administrativamente" com o rótulo do motivo e o texto registrado."""
-    case = _create_case(nir_user, pdf_factory)
-    manager = user_factory("gestor-mycases", MANAGER_ROLE)
-    _close_administratively(case, manager)
-
-    client.force_login(nir_user)
-    response = client.get(reverse("intake:my_cases"), {"tab": "closed"})
-    body = response.content.decode()
-
-    assert response.status_code == 200
-    assert str(case.case_id) in body
-    assert "Encerrado administrativamente" in body
-    assert ADMINISTRATIVE_CLOSURE_REASONS[ADMIN_CLOSURE_REASON_CODE] in body
-    assert ADMIN_CLOSURE_REASON_TEXT in body
-
-
-@pytest.mark.django_db
 def test_administrative_closure_result_is_scoped_to_creator(
     client: Client,
     nir_user: User,
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R3/D4: o resultado administrativo nunca vaza para outro NIR e o caso
-    encerrado sai da aba de ativos do próprio criador."""
+    """R3/D4 (reenvio-corrigido-qualquer-nir slice 002): o caso encerrado
+    (e seu motivo administrativo) nunca aparece em meus casos — nem para o
+    criador (só ativos), nem para outro NIR."""
     case = _create_case(nir_user, pdf_factory)
     manager = user_factory("gestor-mycases-alheio", MANAGER_ROLE)
     _close_administratively(case, manager)
@@ -819,7 +796,8 @@ def test_oli004_header_tabs_preserve_filters_and_other_pages_stay_clean(
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R1/R2: header carrega ``filter_qs`` só no contexto de meus casos."""
+    """R1/R2 (reenvio-corrigido-qualquer-nir slice 002): header sem abas — só
+    «Meus Casos» carrega ``filter_qs``; «Casos Encerrados» é a busca global."""
     _create_case(nir_user, pdf_factory, "relatorio-sesab.pdf")
 
     client.force_login(nir_user)
@@ -829,20 +807,18 @@ def test_oli004_header_tabs_preserve_filters_and_other_pages_stay_clean(
     ).content.decode()
 
     active_href = _nav_href(body, "Meus Casos")
-    closed_href = _nav_href(body, "Casos Encerrados")
+    search_href = _nav_href(body, "Casos Encerrados")
     assert "tab=active" in active_href
     assert "q=5040778" in active_href
     assert "status=FAILED" in active_href
     assert "procedure_type=cat_cardiaco" in active_href
-    assert "tab=closed" in closed_href
-    assert "q=5040778" in closed_href
-    assert "status=FAILED" in closed_href
-    assert "procedure_type=cat_cardiaco" in closed_href
+    # «Casos Encerrados» aponta para a busca global (sem filtros de my_cases).
+    assert search_href == reverse("intake:closed_cases_search")
 
-    # Sem filtros: hrefs limpos, sem querystring vazia/legada.
+    # Sem filtros: href limpo, sem querystring vazia/legada.
     clean_body = client.get(reverse("intake:my_cases")).content.decode()
     assert _nav_href(clean_body, "Meus Casos").endswith("?tab=active")
-    assert _nav_href(clean_body, "Casos Encerrados").endswith("?tab=closed")
+    assert _nav_href(clean_body, "Casos Encerrados") == reverse("intake:closed_cases_search")
 
     # Outra página do NIR (Novo Encaminhamento) não herda filtros.
     home_body = client.get(reverse("intake:home")).content.decode()
@@ -937,7 +913,9 @@ def test_oli004_exceptions_stay_compact_without_summary_box(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R5: falha, retenção e encerramento administrativo sem apagar dados."""
+    """R5 (reenvio-corrigido-qualquer-nir slice 002): falha e retenção seguem
+    compactas nos ativos; o encerrado administrativo não aparece mais em
+    meus casos (só ativos — alcançável pela busca «Casos Encerrados»)."""
     retained = _retain_for_review(_create_case(nir_user, pdf_factory))
     failed = _fail_case(_create_case(nir_user, pdf_factory))
     closed = _create_case(nir_user, pdf_factory)
@@ -952,12 +930,7 @@ def test_oli004_exceptions_stay_compact_without_summary_box(
     assert "Falha de processamento" in failed_card
     assert "summary-box" not in retained_card
     assert "summary-box" not in failed_card
-
-    closed_body = client.get(reverse("intake:my_cases"), {"tab": "closed"}).content.decode()
-    closed_card = _card_slice(closed_body, closed.case_id)
-    assert "Encerrado administrativamente" in closed_card
-    assert ADMIN_CLOSURE_REASON_TEXT in closed_card
-    assert "summary-box" not in closed_card
+    assert str(closed.case_id) not in active_body
 
 
 @pytest.mark.django_db
@@ -997,11 +970,12 @@ def test_oli004_empty_without_filters_closed_offers_novo_encaminhamento(
     client: Client,
     nir_user: User,
 ) -> None:
-    """R5: vazio sem filtros na aba encerrados orienta a aba + Novo."""
+    """R5 (reenvio-corrigido-qualquer-nir slice 002): o ``?tab=closed`` legado
+    cai no vazio de ativos (sem filtros) orientando a Novo Encaminhamento."""
     client.force_login(nir_user)
     body = client.get(reverse("intake:my_cases_partial"), {"tab": "closed"}).content.decode()
 
-    assert "Nenhum caso encerrado até agora." in body
+    assert "Nenhum caso ativo no momento." in body
     assert "Novo Encaminhamento" in body
     assert reverse("intake:home") in body
     assert "Limpar filtros" not in body

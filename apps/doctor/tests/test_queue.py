@@ -931,6 +931,57 @@ def test_multi_procedure_case_included_when_any_type_in_subtype(
     assert "Arteriografia periférica" in body
 
 
+@pytest.mark.django_db
+def test_neurointerv_routed_to_neuro_only(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+    assign_specialties: Callable[[User, Sequence[str]], None],
+) -> None:
+    """S1/R11 (matriz D2): caso com ``neurointerv`` é visível ao médico
+    restrito a ``neuro``; médico restrito a ``cardio`` não o vê."""
+    case = _make_awaiting_case(nir_user, ("neurointerv",), patient_name="Caso Neuro")
+    neuro = user_factory("doc-neurointerv-neuro", (DOCTOR_ROLE,))
+    assign_specialties(neuro, ("neuro",))
+    cardio = user_factory("doc-neurointerv-cardio", (DOCTOR_ROLE,))
+    assign_specialties(cardio, ("cardio",))
+
+    login_user(neuro, DOCTOR_ROLE)
+    neuro_body = client.get(reverse("doctor:queue")).content.decode()
+    assert str(case.case_id) in neuro_body
+
+    login_user(cardio, DOCTOR_ROLE)
+    cardio_body = client.get(reverse("doctor:queue")).content.decode()
+    assert str(case.case_id) not in cardio_body
+
+
+@pytest.mark.django_db
+def test_neurointerv_multi_procedure_visible_to_neuro(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+    assign_specialties: Callable[[User, Sequence[str]], None],
+) -> None:
+    """S1/R11 (matriz D2): caso multiprocedimento (``neurointerv`` + tipo de
+    outro subtipo) é visível ao ``neuro`` pela interseção."""
+    mixed = _make_awaiting_case(
+        nir_user, ("neurointerv", CARDIO_TYPE), patient_name="Caso Misto Neuro"
+    )
+    neuro = user_factory("doc-neurointerv-misto", (DOCTOR_ROLE,))
+    assign_specialties(neuro, ("neuro",))
+    login_user(neuro, DOCTOR_ROLE)
+
+    response = client.get(reverse("doctor:queue"))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert str(mixed.case_id) in body
+    assert "Neurointervenção" in body
+    assert "Cateterismo cardíaco" in body
+
+
 # ── R5: cards com tipos declarados + contagem de pendentes no cabeçalho ───
 
 

@@ -1,7 +1,7 @@
 """Comando ``seed_procedure_catalog`` — verificação idempotente (change 03, slice 001, R6).
 
 O catálogo vive em código (``apps.cases.procedure_catalog``); este comando não
-grava nada — valida a coerência do registro (13 tipos, sem duplicatas, seções
+grava nada — valida a coerência do registro (14 tipos, sem duplicatas, seções
 S1–S8 existentes, subtipos válidos, seção↔tipos coerente) e imprime um resumo.
 Executável quantas vezes for preciso: é idempotente por natureza.
 
@@ -15,7 +15,7 @@ from apps.cases.procedure_catalog import CRITERIA_SECTIONS, PROCEDURE_PROFILES, 
 
 
 class Command(BaseCommand):
-    help = "Valida a coerência do catálogo de procedimentos (13 tipos, S1–S8) e imprime resumo"
+    help = "Valida a coerência do catálogo de procedimentos (14 tipos, S1–S8) e imprime resumo"
 
     def handle(self, *args: object, **options: object) -> None:
         problems = catalog_problems()

@@ -11,7 +11,7 @@ match e texto digitado sem confirmar NÃO submetem valor (com e sem JS —
 sem JS, o select canônico vazio/inválido cai na mesma validação do
 ChoiceField); erro com associação (``aria-invalid``/``aria-describedby``)
 e foco visível acessível.
-R3: busca restrita a labels + códigos canônicos dos 13 perfis; nenhum tipo
+R3: busca restrita a labels + códigos canônicos dos 14 perfis; nenhum tipo
 novo ou removido; sem sinônimos (deferidos com nota de produto — o hint
 não promete sinônimos e nenhum ``data-search-aliases`` é emitido).
 """
@@ -125,7 +125,7 @@ def _procedure_label_tag(html: str) -> str:
 
 def test_form_procedure_type_is_canonical_select() -> None:
     """R1/R3: o tipo é ``ChoiceField`` com widget ``Select`` (não radio),
-    choices = vazio + os 13 perfis do catálogo na ordem canônica."""
+    choices = vazio + os 14 perfis do catálogo na ordem canônica."""
     form = IntakeUploadForm()
 
     field = form.fields["procedure_type"]
@@ -140,6 +140,21 @@ def test_form_procedure_type_is_canonical_select() -> None:
         ("", EMPTY_CHOICE_LABEL),
         *((profile.procedure_type, profile.label) for profile in PROCEDURE_PROFILES),
     ]
+
+
+def test_form_includes_neurointerv_after_art_cerebral() -> None:
+    """S1/R10: a neurointervenção entra no select com o label canônico,
+    imediatamente após a arteriografia cerebral."""
+    form = IntakeUploadForm()
+
+    choices = list(cast(Any, form.fields["procedure_type"]).choices)
+    values = [value for value, _ in choices]
+    assert "neurointerv" in values
+    assert values.index("neurointerv") == values.index("art_cerebral") + 1
+    by_value = dict(choices)
+    assert by_value["neurointerv"] == (
+        "Neurointervenção (embolização de aneurisma ou malformação vascular intracraniana)"
+    )
 
 
 def test_form_procedure_type_rendered_as_select_without_js() -> None:

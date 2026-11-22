@@ -145,7 +145,7 @@ _DEFAULT_MY_CASES_TAB = "active"
 # painel — ``MIN_SEARCH_LENGTH`` de ``apps.dashboard.views``); mais curtos
 # são ignorados (nunca zeram a lista por erro). ``status`` aceita apenas
 # valores do enum ``CaseStatus`` (desconhecido é ignorado, como ``?tab=``);
-# ``procedure_type`` aceita apenas tipos do catálogo de 13 perfis (os mesmos
+# ``procedure_type`` aceita apenas tipos do catálogo de 14 perfis (os mesmos
 # valores do ``IntakeUploadForm.procedure_type``). Composição por AND, dentro
 # do escopo por criador, antes dos sufixos de desambiguação (D4).
 _MY_CASES_MIN_SEARCH_LENGTH = 3
@@ -686,7 +686,7 @@ def _assemble_case_detail_context(
     """Monta o contexto do detalhe (página cheia e re-render 400 da revisão).
 
     Confirmação NIR (slice 002, R3/D2): caso marcado retido por divergência
-    exibe o card com o select único dos 13 tipos (atual pré-selecionado e
+    exibe o card com o select único dos 14 tipos (atual pré-selecionado e
     confirmável, inclusive não detectado), justificativa, leitura explícita
     e snapshots de revisão/fonte — sem upload; caso sem marca mantém o
     bypass legado. O form do re-render de erro chega pronto (tentativa

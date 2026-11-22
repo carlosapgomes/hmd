@@ -4,7 +4,7 @@
  * adaptado do molde `procedure_combobox.js` do ats-web (somente-leitura).
  *
  * Adaptações HMD (nunca cópia byte a byte):
- * - a busca é restrita a label + código canônico dos 13 perfis do catálogo
+ * - a busca é restrita a label + código canônico dos 14 perfis do catálogo
  *   (`option.value`); o molde lia sinônimos aprovados em atributo próprio —
  *   o catálogo HMD não tem aliases e este slice não os cria (sinônimos
  *   ficam para change futuro com decisão de produto, R3);

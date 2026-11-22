@@ -2,7 +2,7 @@
 
 Guarda a nota de arquivamento do change 01/P2 e a tabela da fonte clínica
 (``temp/parametrosHMD.md`` / ``temp/plano-implementacao-hmd.md`` §2):
-presença dos 13 tipos (ordem canônica da tabela), campos de cada perfil,
+presença dos 14 tipos (ordem canônica da tabela), campos de cada perfil,
 lookup fail-fast **sem fallback**, seções S1–S8 com thresholds coerentes com a
 fonte, flags de suporte anestésico e comando ``seed_procedure_catalog``
 idempotente (2 execuções sem efeito colateral).
@@ -24,9 +24,11 @@ from apps.cases.procedure_catalog import (
     get_procedure_profile,
 )
 
-# Ordem canônica da tabela da fonte clínica (§2 do plano): o registro é
-# ordenado exatamente como na tabela (R2) e a nota de arquivamento do
-# change 01/P2 exige provar a presença dos 13.
+# Ordem canônica da tabela da fonte clínica (§2 do plano) + neurointervenção
+# (change add-neurointervencao-procedure, S1): o registro é ordenado
+# exatamente como na tabela, com o tipo novo adjacente ao outro tipo neuro;
+# a nota de arquivamento do change 01/P2 exigia provar a presença dos 13
+# (hoje 14 com a neurointervenção).
 EXPECTED_ORDER = (
     "art_perif",
     "flebografia",
@@ -37,15 +39,17 @@ EXPECTED_ORDER = (
     "filtro_cava",
     "angio_carotidas",
     "art_cerebral",
+    "neurointerv",
     "cat_cardiaco",
     "angio_coronariana",
     "dren_biliar",
     "nefrostomia",
 )
 
-# Suporte anestésico (R5, leitura ampla validada pelo dono em 2026-09-07): os
-# 11 tipos intervencionais (5 angioplastias + permicath + filtro_cava +
-# dren_biliar + nefrostomia + cat_cardiaco + art_cerebral); False apenas para
+# Suporte anestésico (R5, leitura ampla validada pelo dono em 2026-09-07 +
+# neurointervenção por decisão do dono em 2026-11-22): os 12 tipos
+# intervencionais (5 angioplastias + permicath + filtro_cava + dren_biliar +
+# nefrostomia + cat_cardiaco + art_cerebral + neurointerv); False apenas para
 # os diagnósticos art_perif (arteriografia) e flebografia.
 EXPECTED_ANESTHETIC_SUPPORT = frozenset(
     {
@@ -60,6 +64,7 @@ EXPECTED_ANESTHETIC_SUPPORT = frozenset(
         "nefrostomia",
         "cat_cardiaco",
         "art_cerebral",
+        "neurointerv",
     }
 )
 
@@ -81,7 +86,12 @@ EXPECTED_SECTIONS: dict[str, CriteriaSection] = {
     ),
     "S2": CriteriaSection(
         section_id="S2",
-        procedure_types=("angio_art_perif", "angio_carotidas", "angio_coronariana"),
+        procedure_types=(
+            "angio_art_perif",
+            "angio_carotidas",
+            "angio_coronariana",
+            "neurointerv",
+        ),
         platelets_min=100_000,
         inr_max=1.5,
         hemoglobin_min=9.0,
@@ -157,6 +167,13 @@ PROFILE_ROWS: tuple[tuple[str, str, str, str, bool], ...] = (
     ("filtro_cava", "Implante de filtro de veia cava", "S6", "angio", True),
     ("angio_carotidas", "Angioplastia de carótidas", "S2", "angio", True),
     ("art_cerebral", "Arteriografia cerebral", "S1", "neuro", True),
+    (
+        "neurointerv",
+        "Neurointervenção (embolização de aneurisma ou malformação vascular intracraniana)",
+        "S2",
+        "neuro",
+        True,
+    ),
     ("cat_cardiaco", "Cateterismo cardíaco", "S1", "cardio", True),
     ("angio_coronariana", "Angioplastia coronariana", "S2", "cardio", True),
     ("dren_biliar", "Drenagem biliar percutânea", "S7", "radio", True),
@@ -164,12 +181,12 @@ PROFILE_ROWS: tuple[tuple[str, str, str, str, bool], ...] = (
 )
 
 
-def test_all_13_present() -> None:
-    """R2/R7: os 13 tipos existem, sem duplicatas, na ordem da fonte."""
+def test_all_14_present() -> None:
+    """R2/R7: os 14 tipos existem, sem duplicatas, na ordem da fonte."""
     registered = tuple(p.procedure_type for p in PROCEDURE_PROFILES)
     assert registered == EXPECTED_ORDER
-    assert len(registered) == 13
-    assert len(set(registered)) == 13
+    assert len(registered) == 14
+    assert len(set(registered)) == 14
 
 
 @pytest.mark.parametrize(
@@ -209,7 +226,7 @@ def test_unknown_empty_type_fails_fast() -> None:
 
 
 def test_anesthetic_support_flags() -> None:
-    """R5: 11 intervencionais com suporte anestésico; só os diagnósticos False."""
+    """R5: 12 intervencionais com suporte anestésico; só os diagnósticos False."""
     by_type = {p.procedure_type: p.anesthetic_support for p in PROCEDURE_PROFILES}
     supported = {t for t, flag in by_type.items() if flag}
     assert supported == EXPECTED_ANESTHETIC_SUPPORT
@@ -224,7 +241,7 @@ def test_section_thresholds_match_source(section_id: str) -> None:
 
 
 def test_criteria_sections_cover_all_types() -> None:
-    """R4: S1–S8 existentes, sem sobreposição e cobrindo exatamente os 13;
+    """R4: S1–S8 existentes, sem sobreposição e cobrindo exatamente os 14;
     cada perfil referencia a seção que o lista."""
     assert set(CRITERIA_SECTIONS) == set(EXPECTED_SECTIONS) == {f"S{i}" for i in range(1, 9)}
 
@@ -232,8 +249,8 @@ def test_criteria_sections_cover_all_types() -> None:
     for section in CRITERIA_SECTIONS.values():
         assert section.section_id in EXPECTED_SECTIONS
         all_types.extend(section.procedure_types)
-    # Cada tipo aparece em exatamente uma seção; a união é exatamente os 13.
-    assert len(all_types) == len(set(all_types)) == 13
+    # Cada tipo aparece em exatamente uma seção; a união é exatamente os 14.
+    assert len(all_types) == len(set(all_types)) == 14
     assert set(all_types) == set(EXPECTED_ORDER)
 
     for profile in PROCEDURE_PROFILES:
@@ -242,7 +259,7 @@ def test_criteria_sections_cover_all_types() -> None:
 
 
 def test_registry_is_coherent() -> None:
-    """R6: registro íntegro (13 tipos, sem duplicatas, seções S1–S8,
+    """R6: registro íntegro (14 tipos, sem duplicatas, seções S1–S8,
     subtipos válidos, seção↔tipos coerente)."""
     assert catalog_problems() == ()
 
@@ -255,5 +272,5 @@ def test_verify_command_idempotent() -> None:
     call_command("seed_procedure_catalog", stdout=first)
     call_command("seed_procedure_catalog", stdout=second)
     assert first.getvalue() == second.getvalue()
-    assert "13" in first.getvalue()
+    assert "14" in first.getvalue()
     assert "S1" in first.getvalue()

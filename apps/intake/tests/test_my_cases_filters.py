@@ -7,7 +7,7 @@ status, procedimentos e retenção (quando houver); a navegação das abas
 sem pills internas duplicadas.
 R2: filtros server-side ``q`` (nº de ocorrência, ≥3 chars; mais curtos
 ignorados, nunca zerando por erro), ``status`` e ``procedure_type``
-(valores do catálogo de 13 tipos do ``IntakeUploadForm``) compostos por
+(valores do catálogo de 14 tipos do ``IntakeUploadForm``) compostos por
 AND e preservados entre página cheia e partial; escopo por criador em
 qualquer combinação (caso alheio nunca aparece); filtros aplicam ANTES
 dos sufixos de desambiguação (D4, como as abas); sem paginação.
@@ -159,7 +159,7 @@ def test_filter_form_with_catalog_options(
     nir_user: User,
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R1/R2: formulário com ``q``/``status``/``procedure_type`` (13 tipos).
+    """R1/R2: formulário com ``q``/``status``/``procedure_type`` (14 tipos).
 
     Os valores do filtro de tipo são os do catálogo (mesmos do
     ``IntakeUploadForm.procedure_type``) — nenhum valor inventado.

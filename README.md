@@ -2,7 +2,7 @@
 
 Sistema de apoio à regulação de pacientes do serviço de hemodinâmica do HGRS.
 Clone de padrões do `ats-web` (monolito Django SSR), com autenticação AD/Kerberos
-em estágio posterior, anonimização Presidio fail-closed e catálogo de 13 tipos
+em estágio posterior, anonimização Presidio fail-closed e catálogo de 14 tipos
 de procedimento.
 
 ## Documentação
@@ -179,7 +179,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm web \
 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm web \
   python manage.py seed_admin --settings=config.settings.dev   # papéis + admin local
 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm web \
-  python manage.py seed_prompts --settings=config.settings.dev  # 29 prompts versionados
+  python manage.py seed_prompts --settings=config.settings.dev  # 31 prompts versionados
 
 # 4. Sobe tudo (web + worker-pdf/anonymization/llm/attachments):
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
@@ -188,7 +188,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 Checklist pós-install: `manage.py ad_check` (se AD/Kerberos estiver no ar),
 criar usuários de teste com os papéis (admin local → perfil), atribuir
 especialidades aos médicos, e conferir o sino de notificações/painel/manual
-na navbar. Os 13 tipos de procedimento vêm do catálogo; especialidades médicas
+na navbar. Os 14 tipos de procedimento vêm do catálogo; especialidades médicas
 vêm da migration `0003` (idempotente).
 
 Limitações conhecidas deste release: o OCR externo exige `VISION_MODEL` e o

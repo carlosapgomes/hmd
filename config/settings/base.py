@@ -53,7 +53,7 @@ INSTALLED_APPS = [
     "apps.pipeline",
     # Prompts LLM versionados (change llm-pipeline-per-type, slice 003):
     # PromptTemplate (1 ativo por nome via constraint parcial) + seeds
-    # idempotentes (28 templates) + montagem dos prompts do caso.
+    # idempotentes (31 templates) + montagem dos prompts do caso.
     "apps.llm",
     # Fila do agendador (change scheduler-multi-unit, slice 001): serviços
     # transacionais de confirmar/negar o agendamento sobre os campos de D1;

@@ -244,7 +244,7 @@ class PostClosureIssueForm(forms.Form):
         return value.strip()
 
 
-# Opções do select de confirmação: exatamente os 13 tipos do catálogo
+# Opções do select de confirmação: exatamente os 14 tipos do catálogo
 # (confirm-nir-procedure-review, slice 002, R3/D2) — seleção única, sem
 # pacote/multiselect; a cardinalidade de campo repetido é validada na view
 # via ``request.POST.getlist`` (o ChoiceField sozinho toma o último valor).
@@ -256,7 +256,7 @@ _PROCEDURE_REVIEW_CHOICES = tuple(
 class ProcedureReviewForm(forms.Form):
     """Confirmação explícita do procedimento pelo NIR (slice 002, R3/D2).
 
-    Select único dos 13 tipos (atual pré-selecionado pela view, inclusive
+    Select único dos 14 tipos (atual pré-selecionado pela view, inclusive
     não detectado), justificativa livre de 1–500 caracteres úteis após trim
     (sem NUL, sem truncamento silencioso) e confirmação explícita de leitura
     — sem nenhum campo de upload. Os limites espelham os do serviço

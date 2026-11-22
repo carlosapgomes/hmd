@@ -1,11 +1,11 @@
-"""Conteúdo versionado dos 29 prompts do seed (change llm-pipeline-per-type,
+"""Conteúdo versionado dos 31 prompts do seed (change llm-pipeline-per-type,
 slice 003, R2 + change attachment-processing-ocr, slice 003, R3).
 
 Sistema de nomes do design D3 (emenda aprovada no plano §7): systems NEUTROS
 compartilhados por estágio (``llm1.system``/``llm2.system``) e users por tipo
-(``proc.<type>.llm1.user``/``proc.<type>.llm2.user`` × 13 = 28 templates) —
+(``proc.<type>.llm1.user``/``proc.<type>.llm2.user`` × 14 = 28 templates) —
 a composição união exige UMA chamada por estágio, então o system não carrega
-tipo. O 29º (``ATTACHMENT_VERIFICATION``, aditivo do change de anexos) fica
+tipo. O 31º (``ATTACHMENT_VERIFICATION``, aditivo do change de anexos) fica
 FORA do mecanismo por-perfil: um prompt único da verificação de patient-match
 dos anexos clínicos, com os placeholders do texto anonimizado e do token do
 paciente do caso.
@@ -124,6 +124,10 @@ _TYPE_CONTEXT: dict[str, str] = {
     ),
     "angio_carotidas": "Tratamento de estenoses ou oclusões arteriais (carótidas).",
     "art_cerebral": "Diagnóstico de doenças arteriais (território cerebral).",
+    "neurointerv": (
+        "Tratamento endovascular de aneurisma ou malformação vascular "
+        "intracraniana por embolização."
+    ),
     "cat_cardiaco": "Diagnóstico de doenças arteriais.",
     "angio_coronariana": "Tratamento de estenoses ou oclusões arteriais (coronárias).",
     "dren_biliar": "Alívio de obstrução biliar extra-hepática.",
@@ -191,7 +195,7 @@ def _build_user_prompt(procedure_type: str, stage: str) -> str:
 
 # ── Verificação de anexos (change attachment-processing-ocr, D4/R3) ────────
 #
-# 29º conteúdo do seed, FORA do mecanismo por-perfil: a verificação de
+# 31º conteúdo do seed, FORA do mecanismo por-perfil: a verificação de
 # patient-match de um anexo clínico é UMA chamada com prompt próprio — o
 # consumidor (apps/attachments/verification.py) monta a mensagem diretamente a
 # partir deste conteúdo, substituindo os placeholders ``{{attachment_text}}``
@@ -237,7 +241,7 @@ _ATTACHMENT_VERIFICATION_PROMPT = (
 )
 
 
-# Registro canônico (nome → conteúdo) dos 29 prompts seedados.
+# Registro canônico (nome → conteúdo) dos 31 prompts seedados.
 PROMPT_SEED_CONTENTS: dict[str, str] = {}
 for stage in STAGES:
     PROMPT_SEED_CONTENTS[system_prompt_name(stage)] = _SYSTEM_PROMPT_CONTENTS[stage]

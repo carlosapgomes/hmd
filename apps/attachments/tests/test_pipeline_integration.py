@@ -143,7 +143,7 @@ def _verification_response(match: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _seeded_prompts() -> None:
-    """Seed idempotente dos 29 prompts (a verificação exige o ATTACHMENT_VERIFICATION)."""
+    """Seed idempotente dos 31 prompts (a verificação exige o ATTACHMENT_VERIFICATION)."""
     call_command("seed_prompts", stdout=StringIO())
 
 

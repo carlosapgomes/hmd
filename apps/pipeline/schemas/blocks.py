@@ -9,7 +9,7 @@ da base comum — nada de campos inventados fora do ``parametrosHMD.md``):
 - ``filtro_cava`` → TEp / contraindicação a anticoagulação;
 - ``permicath`` → infecção ativa.
 
-Os demais 10 tipos do catálogo usam somente a base comum
+Os demais 11 tipos do catálogo usam somente a base comum
 (``Llm1CaseBase``). ``PROCEDURE_SPECIFIC_BLOCKS`` mapeia tipo → bloco para a
 composição união de ``build_llm1_schema`` (change 006 a consumirá por tipo).
 """
@@ -50,7 +50,7 @@ class PermicathBlock(StrictModel):
     active_infection: Llm1AspectClaim
 
 
-# Tipo → bloco específico (apenas os 3 nomeados no plano). Os 10 tipos
+# Tipo → bloco específico (apenas os 3 nomeados no plano). Os 11 tipos
 # restantes não aparecem aqui: entram na união apenas pela base comum.
 PROCEDURE_SPECIFIC_BLOCKS: dict[str, type[StrictModel]] = {
     "angio_fav": AngioFavBlock,

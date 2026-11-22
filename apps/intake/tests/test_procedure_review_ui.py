@@ -70,7 +70,7 @@ DETECTED_TYPE = "cat_cardiaco"
 SWITCH_TARGET = "flebografia"
 FAKE_MODEL_LLM1 = "modelo-llm1-teste"
 FAKE_MODEL_LLM2 = "modelo-llm2-teste"
-CATALOG_SIZE = 13
+CATALOG_SIZE = 14
 
 _ANONYMIZED_TEXT = (
     "Relatorio de <PESSOA_1>, 58 anos, com claudicacao intermitente. "
@@ -190,10 +190,11 @@ class _ReviewCardParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.select_ids: list[str] = []
-        self.options: list[tuple[str, bool]] = []
+        self.options: list[tuple[str, str, bool]] = []
         self._in_select = False
         self._current_selected = False
         self._current_value: str | None = None
+        self._current_label = ""
         self.inputs: list[dict[str, str]] = []
         self.textareas: list[str] = []
         self.buttons: list[str] = []
@@ -209,6 +210,7 @@ class _ReviewCardParser(HTMLParser):
         if tag == "option" and self._in_select:
             self._current_selected = "selected" in attrs_dict
             self._current_value = attrs_dict.get("value", "")
+            self._current_label = ""
         if tag == "input":
             self.inputs.append(attrs_dict)
         if tag == "textarea":
@@ -218,11 +220,16 @@ class _ReviewCardParser(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         if self._in_select and self._current_value is not None:
-            self.options.append((self._current_value, self._current_selected))
-            self._current_value = None
-            self._current_selected = False
+            self._current_label += data
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "option" and self._in_select and self._current_value is not None:
+            self.options.append(
+                (self._current_value, self._current_label.strip(), self._current_selected)
+            )
+            self._current_value = None
+            self._current_selected = False
+            self._current_label = ""
         if tag == "select":
             self._in_select = False
 
@@ -414,10 +421,10 @@ def test_journey_maintain_procedure_end_to_end(client: Client, nir_user: User) -
     assert "Liberar caso" not in body
     parser = _parse(body)
     assert len(parser.options) == CATALOG_SIZE
-    assert [value for value, _ in parser.options] == [
+    assert [value for value, _, _ in parser.options] == [
         profile.procedure_type for profile in PROCEDURE_PROFILES
     ]
-    selected = [value for value, is_selected in parser.options if is_selected]
+    selected = [value for value, _, is_selected in parser.options if is_selected]
     assert selected == [DECLARED_TYPE]
     assert "review_justification" in parser.textareas
     assert any(
@@ -838,10 +845,11 @@ def test_csrf_enforced_without_mutation(nir_user: User, _seeded_prompts: None) -
     assert _event_types(case) == events_before
 
 
-def test_select_renders_thirteen_options_and_posts_without_js(
+def test_select_renders_all_catalog_options_and_posts_without_js(
     client: Client, nir_user: User, _seeded_prompts: None
 ) -> None:
-    """R3: select canônico com 13 opções; submit puro (sem JS) confirma."""
+    """R3: select canônico com todas as opções do catálogo; submit puro (sem JS)
+    confirma, com o card de revisão citando o tamanho do catálogo."""
     fake = ScriptedLlmClient(
         [
             json.dumps(_artifact([DETECTED_TYPE])),
@@ -859,8 +867,20 @@ def test_select_renders_thirteen_options_and_posts_without_js(
 
     response = client.get(reverse("intake:case_detail", args=[case.case_id]))
     assert response.status_code == 200
-    parser = _parse(response.content.decode())
+    body = response.content.decode()
+    parser = _parse(body)
     assert len(parser.options) == CATALOG_SIZE
+    # S1/R9: o card de revisão cita o catálogo completo.
+    assert "14 tipos do catálogo" in body
+    # S1/R10: neurointervenção presente com o label canônico, logo após
+    # a arteriografia cerebral.
+    values = [value for value, _, _ in parser.options]
+    assert "neurointerv" in values
+    assert values.index("neurointerv") == values.index("art_cerebral") + 1
+    by_value = {value: label for value, label, _ in parser.options}
+    assert by_value["neurointerv"] == (
+        "Neurointervenção (embolização de aneurisma ou malformação vascular intracraniana)"
+    )
 
     with _chain(fake):
         response = _post_confirm(client, case)

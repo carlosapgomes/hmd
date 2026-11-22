@@ -6,9 +6,9 @@ Cobre o contrato **puro** (sem LLM/DB) de ``apps/pipeline/schemas``:
   (``confirmado|nao_informado|incerto``); todo campo clínico informado exige
   ``evidence_spans`` (validator); ``Llm1EvidenceSpan`` (field_path + excerpt);
 - R3: blocos específicos apenas dos 3 tipos nomeados no plano (angio_fav,
-  filtro_cava, permicath) — os demais 10 tipos usam somente a base comum;
+  filtro_cava, permicath) — os demais 11 tipos usam somente a base comum;
 - R4: ``build_llm1_schema(types)`` compõe base + blocos dos tipos declarados;
-  ``pedido.procedimentos_solicitados`` aceita QUALQUER tipo do catálogo (13),
+  ``pedido.procedimentos_solicitados`` aceita QUALQUER tipo do catálogo (14),
   tipo fora do catálogo/duplicata → erro;
 - R5: ``Llm2Response`` (summary_text + sugestão por procedimento) valida a
   saída da sumarização;
@@ -191,19 +191,29 @@ class TestEvidenceRequirement:
 
 
 class TestPedidoCatalogLiteral:
-    """R4: detecção livre no catálogo — o schema do pedido aceita os 13 tipos."""
+    """R4: detecção livre no catálogo — o schema do pedido aceita os 14 tipos."""
 
     def test_schema_enum_covers_full_catalog(self) -> None:
         schema = Llm1Pedido.model_json_schema()
         enum = schema["properties"]["procedimentos_solicitados"]["items"]["enum"]
         assert sorted(enum) == sorted(CATALOG_TYPES)
-        assert len(enum) == 13
+        assert len(enum) == 14
 
     def test_accepts_any_catalog_type(self) -> None:
         pedido = Llm1Pedido.model_validate(
             {"procedimentos_solicitados": ["art_cerebral"], "evidence_spans": [_span()]}
         )
         assert pedido.procedimentos_solicitados == ["art_cerebral"]
+
+    def test_accepts_neurointerv_without_specific_block(self) -> None:
+        """S1/R12: ``neurointerv`` é aceito na detecção e o schema composto
+        do tipo contém apenas a base comum (nenhum bloco específico)."""
+        pedido = Llm1Pedido.model_validate(
+            {"procedimentos_solicitados": ["neurointerv"], "evidence_spans": [_span()]}
+        )
+        assert pedido.procedimentos_solicitados == ["neurointerv"]
+        model = build_llm1_schema(["neurointerv"])
+        assert set(model.model_fields) - set(Llm1CaseBase.model_fields) == set()
 
     def test_unknown_type_rejected_in_pedido(self) -> None:
         with pytest.raises(ValidationError):
@@ -234,7 +244,7 @@ class TestSpecificBlocksPerType:
             for aspect in expected_aspects:
                 assert aspect in block_annotation.model_fields
         else:
-            # Os demais 10 tipos usam somente a base comum — nada inventado.
+            # Os demais 11 tipos usam somente a base comum — nada inventado.
             assert extra_fields == set()
 
     def test_block_aspects_are_clinical_claims(self) -> None:

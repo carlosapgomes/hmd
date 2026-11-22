@@ -201,10 +201,10 @@ def test_refusal_non_cleaned_no_write(
     nir_user: User,
     user_factory: Callable[[str, str], User],
 ) -> None:
-    """R1/R4: caso fora de CLEANED é recusado com erro nomeado, sem escrita —
-    caso próprio → detalhe do criador (vigente); caso alheio fora do escopo
-    histórico → busca de encerrados (fallback sem 404); ambos com a mensagem
-    nomeada no destino (200, sem 404)."""
+    """R1/R4/D6 (visibilidade-por-equipe, slice 004): caso fora de CLEANED é
+    recusado com erro nomeado, sem escrita — próprio E alheio → detalhe do
+    caso ativo (redirect unificado); ambos com a mensagem nomeada no destino
+    (200, sem 404)."""
     other_nir = user_factory("nir-r1-active-owner", NIR_ROLE)
     own_active = Case.objects.create(created_by=nir_user)
     foreign_active = Case.objects.create(created_by=other_nir)
@@ -220,7 +220,9 @@ def test_refusal_non_cleaned_no_write(
 
     foreign_response = client.get(reverse("intake:case_resubmit", args=[foreign_active.case_id]))
     assert foreign_response.status_code == 302
-    assert foreign_response["Location"] == reverse("intake:closed_cases_search")
+    assert foreign_response["Location"] == reverse(
+        "intake:case_detail", args=[foreign_active.case_id]
+    )
     assert Case.objects.count() == 2
     foreign_followed = client.get(foreign_response["Location"])
     assert foreign_followed.status_code == 200
@@ -371,8 +373,9 @@ def test_correction_links_respect_visitor_authorization(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R5: próprio (ativo) → detalhe; alheio ativo → referência SEM link;
-    alheio CLEANED → detalhe histórico."""
+    """R3/D6 (visibilidade-por-equipe, slice 004): próprio (ativo) → detalhe;
+    alheio ativo → DETALHE (fim da partição sem link); alheio CLEANED →
+    detalhe histórico — para qualquer ``nir``."""
     doctor = user_factory("doctor-r5-links", DOCTOR_ROLE)
     reenviar = user_factory("nir-r5-reenviador", NIR_ROLE)
     original = _cleaned_case(created_by=nir_user, doctor=doctor)
@@ -411,14 +414,14 @@ def test_correction_links_respect_visitor_authorization(
 
     # Próprio ativo → link ao detalhe do caso.
     assert f'href="{reverse("intake:case_detail", args=[own_active.case_id])}"' in listing
-    # Alheio CLEANED → link ao detalhe histórico.
-    assert (
-        f'href="{reverse("intake:closed_case_detail", args=[foreign_cleaned.case_id])}"' in listing
-    )
-    # Alheio ativo → referência desambiguada SEM link (guard ativo preservado).
+    # Alheio ativo → link ao DETALHE do caso (fim da partição sem link).
     assert foreign_active.disambiguated_reference in listing
-    assert f'href="{reverse("intake:case_detail", args=[foreign_active.case_id])}"' not in listing
+    assert f'href="{reverse("intake:case_detail", args=[foreign_active.case_id])}"' in listing
     assert (
         f'href="{reverse("intake:closed_case_detail", args=[foreign_active.case_id])}"'
         not in listing
+    )
+    # Alheio CLEANED → link ao detalhe histórico.
+    assert (
+        f'href="{reverse("intake:closed_case_detail", args=[foreign_cleaned.case_id])}"' in listing
     )

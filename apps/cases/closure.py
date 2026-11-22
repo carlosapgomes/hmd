@@ -176,9 +176,13 @@ def _clean_acknowledged_clinical_data(case: Case) -> None:
 def acknowledge_case_receipt(case: Case, *, user: User, role: str) -> None:
     """Confirma o recebimento da resposta final e limpa o caso (R1–R3, D1/D2).
 
-    Exige ``FINAL_REPLY_POSTED`` e que ``user`` seja o CRIADOR do caso (escopo
-    por criador do design D1) — erros ``ValueError`` nomeados e distintos,
-    antes de qualquer escrita. No MESMO ``atomic`` com ``select_for_update``:
+    Escopo de equipe (visibilidade-por-equipe, slice 004): qualquer ``nir``
+    com vínculo real — criador ou não — confirma; o OPERADOR é o ator das
+    transições/eventos. Exige ``FINAL_REPLY_POSTED`` (``ValueError`` nomeado,
+    antes de qualquer escrita) e re-check de papel ``nir`` DENTRO da
+    transação (``PermissionError`` sem efeito — defesa em profundidade, mesmo
+    padrão do ``_assert_nir_role`` dos serviços do gate). No MESMO ``atomic``
+    com ``select_for_update``:
     coleta os nomes dos arquivos das rows ``CaseDocument`` e ``CaseAttachment``
     ANTES do delete → encadeia as transições públicas ``nir_acknowledge`` →
     ``start_cleaning`` → a limpeza (D2: rows de documento + anexos + campos
@@ -196,10 +200,10 @@ def acknowledge_case_receipt(case: Case, *, user: User, role: str) -> None:
                 f"ciência do NIR indisponível no estado {locked.status!r} — "
                 "esperado FINAL_REPLY_POSTED"
             )
-        if locked.created_by_id != user.pk:
-            raise ValueError(
-                "confirmação de recebimento restrita ao criador do caso — caso de outro usuário"
-            )
+        if role != "nir":
+            raise PermissionError("Confirmação de recebimento restrita ao papel nir.")
+        if user is None or not user.roles.filter(name="nir").exists():
+            raise PermissionError("Confirmação de recebimento restrita ao papel nir.")
         # D2/ADR-0010: retenção ativa pula a limpeza E a coleta/deleção de
         # arquivos; minimização ativa segue o caminho original byte-a-byte.
         # O estado transitório CLEANING percorre o fluxo sem efeito sobre

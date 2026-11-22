@@ -113,11 +113,11 @@
     </div>
 
     {% if correction_items %}
-    <!-- Correções do original (nir-result-closure, slice 004, R4): os novos
-         casos que reenviam este caso, ordenados por criação. Links
-         condicionais (reenvio-corrigido-qualquer-nir, R5/D4): próprio →
-         detalhe do caso; alheio ativo → referência sem link (o guard ativo
-         não é afrouxado); alheio encerrado → detalhe histórico. -->
+    <!-- Correções do original (nir-result-closure, slice 004, R4; escopo de
+         equipe visibilidade-por-equipe, slice 004, R3): os novos casos que
+         reenviam este caso, ordenados por criação. Links sem partição
+         próprio/alheio: ativo → detalhe do caso; encerrado → detalhe
+         histórico — para qualquer nir. -->
     <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Reenvios corrigidos deste caso</h2>
@@ -127,20 +127,16 @@
         <li class="list-group-item">
           <div class="d-flex justify-content-between align-items-start gap-2">
             <div>
-              {% if item.is_own %}
-              <a href="{% url 'intake:case_detail' item.correction.case_id %}"
-                 class="font-monospace small fw-semibold text-decoration-none">
-                Caso {{ item.correction.disambiguated_reference }}
-              </a>
-              {% elif item.is_cleaned %}
+              {% if item.is_cleaned %}
               <a href="{% url 'intake:closed_case_detail' item.correction.case_id %}"
                  class="font-monospace small fw-semibold text-decoration-none">
                 Caso {{ item.correction.disambiguated_reference }}
               </a>
               {% else %}
-              <span class="font-monospace small fw-semibold text-muted">
+              <a href="{% url 'intake:case_detail' item.correction.case_id %}"
+                 class="font-monospace small fw-semibold text-decoration-none">
                 Caso {{ item.correction.disambiguated_reference }}
-              </span>
+              </a>
               {% endif %}
               <p class="small text-muted mb-0 mt-1">{{ item.correction.correction_reason }}</p>
             </div>

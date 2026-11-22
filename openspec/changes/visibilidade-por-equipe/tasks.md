@@ -10,7 +10,7 @@ próximo.
   Contract: slices/slice-002-detalhe-pdfs-nir-equipe.md
 - [x] S3 — Gate + confirmação de divergência por qualquer `nir` (serviços: re-check de papel, PermissionError→403)
   Contract: slices/slice-003-gate-confirmacao-equipe.md
-- [ ] S4 — Ciência por qualquer `nir` (closure + case_ack) e reenvios corrigidos sem partição próprio/alheio
+- [x] S4 — Ciência por qualquer `nir` (closure + case_ack) e reenvios corrigidos sem partição próprio/alheio
   Contract: slices/slice-004-ciencia-reenvios-equipe.md
 - [ ] S5 — «Decididos Hoje» da especialidade (isnull=False, subtipo, decisor no card, badge, manual médico)
   Contract: slices/slice-005-decididos-hoje-especialidade.md

@@ -410,14 +410,14 @@ def test_ack_wrong_state_no_500(
 
 
 @pytest.mark.django_db
-def test_ack_non_creator_404(
+def test_ack_non_creator_closes_case(
     client: Client,
     nir_user: User,
     user_factory: Callable[[str, str], User],
 ) -> None:
-    """R2: caso alheio → 200 no GET do detalhe (visibilidade-por-equipe slice
-    002: equipe NIR) e 404 no POST direto do ack — o caso alheio permanece
-    intacto (sem vazamento, sem ciência)."""
+    """R1/D6 (visibilidade-por-equipe, slice 004): caso alheio → 200 no GET do
+    detalhe e 302 no POST do ack — a ciência da equipe encerra o caso
+    (inversão do antigo 404 de escopo)."""
     doctor = user_factory("doctor-intake-foreign", DOCTOR_ROLE)
     other_nir = user_factory("nir-intake-foreign", NIR_ROLE)
     foreign_case = _denial_final_case(created_by=other_nir, decided_by=doctor)
@@ -425,10 +425,37 @@ def test_ack_non_creator_404(
     _login(client, nir_user)
 
     assert client.get(reverse("intake:case_detail", args=[foreign_case.case_id])).status_code == 200
-    assert client.post(ack_url).status_code == 404
+    response = client.post(ack_url)
+    assert response.status_code == 302
+    assert response["Location"] == reverse("intake:case_detail", args=[foreign_case.case_id])
 
     foreign_case.refresh_from_db()
-    assert foreign_case.status == CaseStatus.FINAL_REPLY_POSTED
+    assert foreign_case.status == CaseStatus.CLEANED
+    followed = client.get(response["Location"])
+    assert followed.status_code == 200
+    assert ACK_FLASH_PREFIX in followed.content.decode()
+
+
+@pytest.mark.django_db
+def test_ack_revoked_role_forbidden(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R2: ``PermissionError`` do serviço vira 403 (nunca 500) no ``case_ack``."""
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise PermissionError("Confirmação de recebimento restrita ao papel nir.")
+
+    monkeypatch.setattr("apps.intake.views.acknowledge_case_receipt", _boom)
+    doctor = user_factory("doctor-intake-revogado", DOCTOR_ROLE)
+    case = _denial_final_case(created_by=nir_user, decided_by=doctor)
+    _login(client, nir_user)
+
+    response = client.post(reverse("intake:case_ack", args=[case.case_id]))
+
+    assert response.status_code == 403
 
 
 # ── R3: abas de "meus casos" ──────────────────────────────────────────────

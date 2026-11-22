@@ -706,15 +706,14 @@ def _assemble_case_detail_context(
         final_reply = next((m for m in reversed(communications) if m.author is not None), None)
 
     corrections = list(case.corrected_by.order_by("created_at", "pk"))
-    # Links condicionais (reenvio-corrigido-qualquer-nir, R5/D4): o link do
-    # caso corrigido respeita a autorização do VISITANTE — próprio → detalhe
-    # do caso; alheio ativo → referência sem link (guard ativo preservado);
-    # alheio encerrado → detalhe histórico. Sem ``viewer`` nada é próprio.
-    viewer_id = viewer.pk if viewer is not None else None
+    # Links em escopo de equipe (visibilidade-por-equipe, slice 004, R3): o
+    # link do caso corrigido leva ao detalhe do caso quando ativo e ao
+    # detalhe histórico quando encerrado — para qualquer ``nir``, sem
+    # partição próprio/alheio (``viewer`` segue na assinatura por
+    # compatibilidade de chamada, sem efeito sobre os links).
     correction_items = [
         {
             "correction": correction,
-            "is_own": viewer_id is not None and correction.created_by_id == viewer_id,
             "is_cleaned": correction.status == CaseStatus.CLEANED,
         }
         for correction in corrections
@@ -831,22 +830,24 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
 def case_ack(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     """Confirma o recebimento da resposta final e encerra o caso (R2/D1).
 
-    POST escopado ao caso do próprio NIR — caso alheio/inexistente → 404
-    (``created_by`` no queryset; sem vazar informação). Delega ao serviço
-    transacional ``acknowledge_case_receipt`` com o papel ativo da sessão:
-    sucesso → flash + redirect ao detalhe (caso ``CLEANED``); estado fora de
-    ``FINAL_REPLY_POSTED`` → mensagem de erro + redirect ao detalhe, nunca 500.
+    POST em escopo de equipe (qualquer ``nir`` registra a ciência de caso de
+    qualquer criador; inexistente → 404; papel revogado → 403). Delega ao
+    serviço transacional ``acknowledge_case_receipt`` com o papel ativo da
+    sessão: sucesso → flash + redirect ao detalhe (caso ``CLEANED``); estado
+    fora de ``FINAL_REPLY_POSTED`` → mensagem de erro + redirect ao detalhe,
+    nunca 500.
     """
     user = _require_user(request)
     active_role = request.session.get("active_role", "")
     case = get_object_or_404(
         Case.objects.only("pk", "case_id", "created_by_id", "agency_record_number"),
         case_id=case_id,
-        created_by=user,
     )
     detail_url = reverse("intake:case_detail", args=[case.case_id])
     try:
         acknowledge_case_receipt(case=case, user=user, role=active_role)
+    except PermissionError as exc:
+        raise PermissionDenied(str(exc)) from exc
     except ValueError as exc:
         logger.warning("case_ack_rejected user=%s case=%s motivo=%s", user.pk, case.case_id, exc)
         messages.error(request, str(exc))
@@ -870,8 +871,8 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     inexistente → 404). Caso fora de ``CLEANED`` ou intake desligado →
     mensagem + redirect sem escrita, nunca 500. O destino da recusa é o
     detalhe histórico quando o caso está no escopo histórico (sempre, para
-    ``CLEANED`` — R4/D2); fora dele, o detalhe do criador (vigente para o
-    acesso direto do criador a caso ativo). O form reúne arquivos + tipos
+    ``CLEANED``); fora dele, o detalhe do caso ativo (unificado — qualquer
+    ``nir`` o alcança). O form reúne arquivos + tipos
     declarados do catálogo + motivo; o POST delega ao serviço transacional
     ``create_corrected_resubmission`` — sucesso → redirect ao detalhe do
     NOVO caso (do reenviador) com flash; erro de validação (motivo, arquivo
@@ -889,16 +890,14 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         ),
         case_id=case_id,
     )
-    # Destino da recusa (R4): o reenvio legítimo exige ``CLEANED`` — sempre
-    # no escopo histórico, acessível a qualquer ``nir``; fora do escopo, o
-    # próprio criador preserva o vigente (detalhe do criador) e o caso
-    # alheio cai no fallback da spec (busca de encerrados, sem 404).
+    # Destino da recusa (visibilidade-por-equipe, slice 004, R4): o reenvio
+    # legítimo exige ``CLEANED`` — sempre no escopo histórico, acessível a
+    # qualquer ``nir``; fora do escopo, o detalhe do caso ativo (unificado —
+    # qualquer ``nir`` o alcança).
     if _in_historical_scope(case):
         refuse_url = reverse("intake:closed_case_detail", args=[case.case_id])
-    elif case.created_by_id == user.pk:
-        refuse_url = reverse("intake:case_detail", args=[case.case_id])
     else:
-        refuse_url = reverse("intake:closed_cases_search")
+        refuse_url = reverse("intake:case_detail", args=[case.case_id])
     # Intake desligado (D7; P2 review: checado ANTES do estado, para a
     # mensagem de "desabilitado" prevalecer sobre a de estado em qualquer
     # caso) — bloqueado sem efeito.

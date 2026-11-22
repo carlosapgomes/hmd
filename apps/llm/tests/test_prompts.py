@@ -6,8 +6,8 @@ Cobre R1–R5:
   ativo por nome via constraint **parcial no banco** — melhoria HMD registrada,
   divergência deliberada do clean/save do ats-web); ``get_active_prompt`` com
   falha explícita;
-- R2: ``seed_prompts`` idempotente — 29 templates (2 system neutros + 26 user
-  por tipo + o 29º ``ATTACHMENT_VERIFICATION`` da verificação de anexos do
+- R2: ``seed_prompts`` idempotente — 31 templates (2 system neutros + 28 user
+  por tipo + o 31º ``ATTACHMENT_VERIFICATION`` da verificação de anexos do
   change attachment-processing-ocr), reexecutar não duplica nem sobrescreve
   conteúdo editado;
 - R3: ``build_case_prompts`` — system neutro único do estágio, users na ordem
@@ -35,11 +35,11 @@ from apps.llm.prompts_seed import (
 )
 from apps.llm.services import build_case_prompts, prompt_usage
 
-# 13 tipos do catálogo (ordem canônica já é a do registro).
+# 14 tipos do catálogo (ordem canônica já é a do registro).
 CATALOG_TYPES: tuple[str, ...] = tuple(p.procedure_type for p in PROCEDURE_PROFILES)
 
-# 29 nomes canônicos do seed: 2 systems neutros + 26 users (13 tipos × 2
-# estágios) + o ``ATTACHMENT_VERIFICATION`` (29º — verificação de anexos, fora
+# 31 nomes canônicos do seed: 2 systems neutros + 28 users (14 tipos × 2
+# estágios) + o ``ATTACHMENT_VERIFICATION`` (31º — verificação de anexos, fora
 # do mecanismo por-perfil; change attachment-processing-ocr, R3).
 EXPECTED_SEED_NAMES: set[str] = (
     {system_prompt_name(stage) for stage in ("llm1", "llm2")}
@@ -120,15 +120,15 @@ def test_get_active_prompt_no_active_error() -> None:
 
 @pytest.mark.django_db
 def test_seed_count_29() -> None:
-    """R2: o seed cria os 29 templates (2 system + 26 user + 1 verificação),
+    """R2: o seed cria os 31 templates (2 system + 28 user + 1 verificação),
     todos ativos."""
     _run_seed()
-    assert PromptTemplate.objects.count() == len(EXPECTED_SEED_NAMES) == 29
+    assert PromptTemplate.objects.count() == len(EXPECTED_SEED_NAMES) == 31
     registered = set(PromptTemplate.objects.values_list("name", flat=True))
     assert registered == EXPECTED_SEED_NAMES
-    assert PromptTemplate.objects.filter(is_active=True).count() == 29
-    # Conteúdo versionado presente para todos os 29 nomes (nunca vazio).
-    assert len(PROMPT_SEED_CONTENTS) == 29
+    assert PromptTemplate.objects.filter(is_active=True).count() == 31
+    # Conteúdo versionado presente para todos os 31 nomes (nunca vazio).
+    assert len(PROMPT_SEED_CONTENTS) == 31
     for name in EXPECTED_SEED_NAMES:
         assert PROMPT_SEED_CONTENTS[name].strip()
 
@@ -138,7 +138,7 @@ def test_seed_idempotent() -> None:
     """R2: reexecutar não duplica nem cria versões extras."""
     _run_seed()
     _run_seed()
-    assert PromptTemplate.objects.count() == 29
+    assert PromptTemplate.objects.count() == 31
     for name in EXPECTED_SEED_NAMES:
         rows = list(PromptTemplate.objects.filter(name=name).order_by("version"))
         assert len(rows) == 1, name
@@ -154,7 +154,7 @@ def test_seed_preserves_edits() -> None:
     edited.content = "conteúdo personalizado (edição manual)"
     edited.save()
     _run_seed()
-    assert PromptTemplate.objects.count() == 29
+    assert PromptTemplate.objects.count() == 31
     after = PromptTemplate.get_active_prompt("llm1.system")
     assert after.pk == edited.pk
     assert after.version == 1
@@ -164,9 +164,9 @@ def test_seed_preserves_edits() -> None:
 
 @pytest.mark.django_db
 def test_seed_prompts_idempotent_with_verification() -> None:
-    """R2/R3 (slice attachment-processing-ocr): o 29º prompt
+    """R2/R3 (slice attachment-processing-ocr): o 31º prompt
     ``ATTACHMENT_VERIFICATION`` entra no seed — conteúdo não-vazio com os
-    placeholders do texto anonimizado e do token, idempotente como os 28
+    placeholders do texto anonimizado e do token, idempotente como os 30
     existentes (reexecutar não duplica nem sobrescreve edições)."""
     _run_seed()
     verification = PromptTemplate.get_active_prompt(ATTACHMENT_VERIFICATION)
@@ -177,12 +177,29 @@ def test_seed_prompts_idempotent_with_verification() -> None:
     for state in ("match", "mismatch", "unknown"):
         assert state in content
     _run_seed()
-    assert PromptTemplate.objects.count() == 29
+    assert PromptTemplate.objects.count() == 31
     assert PromptTemplate.objects.filter(name=ATTACHMENT_VERIFICATION).count() == 1
     after = PromptTemplate.get_active_prompt(ATTACHMENT_VERIFICATION)
     assert after.pk == verification.pk
     assert after.content == content
     assert after.is_active is True
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("stage", ["llm1", "llm2"])
+def test_seed_includes_neurointerv_users(stage: str) -> None:
+    """S1/R5: o seed gera ``proc.neurointerv.<stage>.user`` com a frase de
+    contexto clínica da neurointervenção no conteúdo."""
+    _run_seed()
+    name = user_prompt_name("neurointerv", stage)
+    assert name in EXPECTED_SEED_NAMES
+    active = PromptTemplate.get_active_prompt(name)
+    assert active.version == 1
+    assert (
+        "Tratamento endovascular de aneurisma ou malformação vascular "
+        "intracraniana por embolização." in active.content
+    )
+    assert "Neurointervenção" in active.content
 
 
 # ── R3: build_case_prompts ─────────────────────────────────────────────────

@@ -189,7 +189,7 @@ class TestSeedProcedureReview:
         )
         assert result.returncode == 0, _output(result)
         state = _inspect(db_name)
-        assert state["prompts"] == 29, state
+        assert state["prompts"] == 31, state
         cases = state["cases"]
         details = state["details"]
         enabled = state["enabled"]

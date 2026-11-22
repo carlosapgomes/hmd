@@ -1,7 +1,7 @@
-"""Catálogo dos 13 tipos de procedimento do HMD — code-first (change 03, slice 001).
+"""Catálogo dos 14 tipos de procedimento do HMD — code-first (change 03, slice 001).
 
 Fonte clínica autoritativa: ``temp/parametrosHMD.md`` e
-``temp/plano-implementacao-hmd.md`` §2 (tabela dos 13 tipos, seções S1–S8 e
+``temp/plano-implementacao-hmd.md`` §2 (tabela dos 14 tipos, seções S1–S8 e
 lista de suporte anestésico). O catálogo é o registro consultável consumido
 pelo núcleo de casos; os thresholds vivem aqui como **dados** — a
 interpretação como policy é do change 06. O lookup é fail-fast: tipo fora do
@@ -34,7 +34,7 @@ SECTION_IDS: tuple[str, ...] = (
 VALID_DOCTOR_SUBTYPES: tuple[str, ...] = ("angio", "neuro", "cardio", "radio")
 
 # Número fechado de procedimentos do HMD (contrato do change 01/P2).
-EXPECTED_PROCEDURE_COUNT = 13
+EXPECTED_PROCEDURE_COUNT = 14
 
 
 @dataclass(frozen=True)
@@ -102,6 +102,13 @@ PROCEDURE_PROFILES: tuple[ProcedureProfile, ...] = (
     ProcedureProfile("filtro_cava", "Implante de filtro de veia cava", "S6", "angio", True),
     ProcedureProfile("angio_carotidas", "Angioplastia de carótidas", "S2", "angio", True),
     ProcedureProfile("art_cerebral", "Arteriografia cerebral", "S1", "neuro", True),
+    ProcedureProfile(
+        "neurointerv",
+        "Neurointervenção (embolização de aneurisma ou malformação vascular intracraniana)",
+        "S2",
+        "neuro",
+        True,
+    ),
     ProcedureProfile("cat_cardiaco", "Cateterismo cardíaco", "S1", "cardio", True),
     ProcedureProfile("angio_coronariana", "Angioplastia coronariana", "S2", "cardio", True),
     ProcedureProfile("dren_biliar", "Drenagem biliar percutânea", "S7", "radio", True),
@@ -129,7 +136,12 @@ CRITERIA_SECTIONS: dict[str, CriteriaSection] = {
     ),
     "S2": CriteriaSection(
         section_id="S2",
-        procedure_types=("angio_art_perif", "angio_carotidas", "angio_coronariana"),
+        procedure_types=(
+            "angio_art_perif",
+            "angio_carotidas",
+            "angio_coronariana",
+            "neurointerv",
+        ),
         platelets_min=100_000,
         inr_max=1.5,
         hemoglobin_min=9.0,
@@ -217,7 +229,7 @@ def get_criteria_section(procedure_type: str) -> CriteriaSection:
 def catalog_problems() -> tuple[str, ...]:
     """Problemas de coerência do registro (vazio = catálogo íntegro).
 
-    Valida: 13 tipos, sem duplicatas, subtipos válidos, seções S1–S8
+    Valida: 14 tipos, sem duplicatas, subtipos válidos, seções S1–S8
     existentes e seção↔tipos coerente com ``CRITERIA_SECTIONS``. Usado pelo
     comando ``seed_procedure_catalog`` e pelos testes (R6).
     """

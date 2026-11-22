@@ -221,7 +221,7 @@
       {% if case.status == 'LLM_EXTRACTING' and case.manual_review_reason == 'procedure_divergence' %}
       {% if show_procedure_review %}
       <!-- Confirmação explícita do procedimento (confirm-nir-procedure-review,
-           slice 002, R3/D2): select único dos 13 tipos (atual pré-selecionado,
+           slice 002, R3/D2): select único dos 14 tipos (atual pré-selecionado,
            inclusive não detectado), justificativa 1–500 e leitura explícita —
            sem upload. Funciona sem JavaScript (select canônico); com JS o
            combobox pesquisável aprimora a seleção. -->
@@ -233,7 +233,7 @@
           <p class="mb-3">
             Os procedimentos detectados pela extração divergem dos declarados.
             <strong>Confirme o procedimento</strong> — manter ou trocar por um dos
-            13 tipos do catálogo — para solicitar nova extração e análise do
+            14 tipos do catálogo — para solicitar nova extração e análise do
             mesmo caso, sem exigir novo upload.
           </p>
           {% if procedure_rows %}

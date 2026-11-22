@@ -309,10 +309,14 @@ def test_historical_detail_is_readonly_with_trail(
     # Form de intercorrência apenas para elegíveis.
     assert "Abrir intercorrência" in body
     assert "Motivo da intercorrência" in body
-    # Sem ações de edição: ciência, reenvio, revisão do gate e bypass ausentes.
+    # Sem ações de edição do caso: ciência, revisão do gate e bypass
+    # ausentes. O reenvio corrigido NÃO edita o caso (cria um novo vinculado)
+    # e vive no detalhe histórico de CLEANED (reenvio-corrigido-qualquer-nir,
+    # R2) — ciência/revisão seguem exclusivas do detalhe do criador.
     assert "Confirmar recebimento" not in body
-    assert "Reenviar corrigido" not in body
     assert "Liberar caso" not in body
+    assert "Reenviar corrigido" in body
+    assert reverse("intake:case_resubmit", args=[case.case_id]) in body
     assert "procedure_review_confirm" not in body
     assert "case_ack" not in body
     assert "case_resubmit" not in body

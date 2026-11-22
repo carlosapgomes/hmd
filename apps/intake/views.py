@@ -661,6 +661,7 @@ def _assemble_case_detail_context(
     case: Case,
     *,
     review_form: ProcedureReviewForm | None = None,
+    viewer: User | None = None,
 ) -> dict[str, object]:
     """Monta o contexto do detalhe (página cheia e re-render 400 da revisão).
 
@@ -682,6 +683,19 @@ def _assemble_case_detail_context(
         final_reply = next((m for m in reversed(communications) if m.author is not None), None)
 
     corrections = list(case.corrected_by.order_by("created_at", "pk"))
+    # Links condicionais (reenvio-corrigido-qualquer-nir, R5/D4): o link do
+    # caso corrigido respeita a autorização do VISITANTE — próprio → detalhe
+    # do caso; alheio ativo → referência sem link (guard ativo preservado);
+    # alheio encerrado → detalhe histórico. Sem ``viewer`` nada é próprio.
+    viewer_id = viewer.pk if viewer is not None else None
+    correction_items = [
+        {
+            "correction": correction,
+            "is_own": viewer_id is not None and correction.created_by_id == viewer_id,
+            "is_cleaned": correction.status == CaseStatus.CLEANED,
+        }
+        for correction in corrections
+    ]
 
     detail_path = reverse("intake:case_detail", args=[case.case_id])
     pdf_items = [
@@ -754,6 +768,7 @@ def _assemble_case_detail_context(
         "can_ack": case.status == CaseStatus.FINAL_REPLY_POSTED,
         "can_resubmit": case.status == CaseStatus.CLEANED,
         "corrections": corrections,
+        "correction_items": correction_items,
         "show_procedure_review": show_procedure_review,
         "show_legacy_divergence": show_legacy_divergence,
         "procedure_review_form": form,
@@ -784,7 +799,7 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         case_id=case_id,
         created_by=user,
     )
-    context = _assemble_case_detail_context(case)
+    context = _assemble_case_detail_context(case, viewer=user)
     return render(request, "intake/case_detail.html", context)
 
 
@@ -824,15 +839,20 @@ def case_ack(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
 
 @role_required("nir")
 def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
-    """Form de reenvio corrigido de um caso encerrado do próprio NIR (R4/D4).
+    """Form de reenvio corrigido de um caso encerrado, de qualquer NIR (R1/D1).
 
-    GET/POST escopados ao caso ``CLEANED`` do próprio criador: caso alheio ou
-    inexistente → 404 (``created_by`` no queryset, sem vazar informação); caso
-    do criador fora de ``CLEANED`` → mensagem + redirect ao detalhe, nunca
-    500. O form reúne arquivos + tipos declarados do catálogo + motivo; o POST
-    delega ao serviço transacional ``create_corrected_resubmission`` — sucesso
-    → redirect ao detalhe do NOVO caso com flash; erro de validação (motivo,
-    arquivo ou tipo) re-renderiza o form com o resumo nomeando o problema.
+    GET/POST acessíveis ao papel ativo ``nir`` para caso ``CLEANED`` de
+    qualquer criador (guarda por papel + estado, sem filtro por criador —
+    paridade ats-web; papel errado → 403 pela ``role_required``; caso
+    inexistente → 404). Caso fora de ``CLEANED`` ou intake desligado →
+    mensagem + redirect sem escrita, nunca 500. O destino da recusa é o
+    detalhe histórico quando o caso está no escopo histórico (sempre, para
+    ``CLEANED`` — R4/D2); fora dele, o detalhe do criador (vigente para o
+    acesso direto do criador a caso ativo). O form reúne arquivos + tipos
+    declarados do catálogo + motivo; o POST delega ao serviço transacional
+    ``create_corrected_resubmission`` — sucesso → redirect ao detalhe do
+    NOVO caso (do reenviador) com flash; erro de validação (motivo, arquivo
+    ou tipo) re-renderiza o form com o resumo nomeando o problema.
     """
     user = _require_user(request)
     active_role = request.session.get("active_role", "")
@@ -845,21 +865,29 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
             "agency_record_number",
         ),
         case_id=case_id,
-        created_by=user,
     )
-    detail_url = reverse("intake:case_detail", args=[case.case_id])
+    # Destino da recusa (R4): o reenvio legítimo exige ``CLEANED`` — sempre
+    # no escopo histórico, acessível a qualquer ``nir``; fora do escopo, o
+    # próprio criador preserva o vigente (detalhe do criador) e o caso
+    # alheio cai no fallback da spec (busca de encerrados, sem 404).
+    if _in_historical_scope(case):
+        refuse_url = reverse("intake:closed_case_detail", args=[case.case_id])
+    elif case.created_by_id == user.pk:
+        refuse_url = reverse("intake:case_detail", args=[case.case_id])
+    else:
+        refuse_url = reverse("intake:closed_cases_search")
     # Intake desligado (D7; P2 review: checado ANTES do estado, para a
     # mensagem de "desabilitado" prevalecer sobre a de estado em qualquer
     # caso) — bloqueado sem efeito.
     if not settings.INTAKE_ENABLED:
         messages.error(request, INTAKE_DISABLED_MESSAGE)
-        return redirect(detail_url)
+        return redirect(refuse_url)
     if case.status != CaseStatus.CLEANED:
         messages.error(
             request,
             "Reenvio corrigido disponível apenas para casos encerrados (CLEANED).",
         )
-        return redirect(detail_url)
+        return redirect(refuse_url)
 
     form = CorrectedResubmissionForm()
     if request.method == "POST":
@@ -1315,5 +1343,5 @@ def procedure_review_confirm(request: HttpRequest, case_id: uuid.UUID) -> HttpRe
         case_id=case_id,
         created_by=user,
     )
-    context = _assemble_case_detail_context(full_case, review_form=display_form)
+    context = _assemble_case_detail_context(full_case, review_form=display_form, viewer=user)
     return render(request, "intake/case_detail.html", context, status=400)

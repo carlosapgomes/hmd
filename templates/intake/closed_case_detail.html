@@ -129,6 +129,24 @@
 
     {% include "cases/_event_trail.html" %}
 
+    <!-- Reenvio corrigido (reenvio-corrigido-qualquer-nir, R2/D2): ação no
+         detalhe histórico para casos CLEANED de qualquer criador — leva à
+         página de reenvio existente (mesma rota do detalhe do criador). -->
+    {% if can_resubmit %}
+    <div class="card shadow-sm mb-4 report-card">
+      <div class="card-body">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          <p class="small text-muted mb-0">
+            Este caso está encerrado. Para reenviá-lo com correções, um
+            <strong>novo caso</strong> é criado e vinculado a este.
+          </p>
+          <a href="{% url 'intake:case_resubmit' case.case_id %}"
+             class="btn btn-sm btn-primary ms-auto">Reenviar corrigido</a>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
     <!-- Intercorrência pós-encerramento (R3): formulário SOMENTE para casos
          elegíveis; motivo legível quando inelegível. Nenhuma outra ação de
          escrita existe nesta página. -->

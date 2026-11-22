@@ -828,10 +828,11 @@ def create_corrected_resubmission(
     correction_reason: str,
     attachments: Sequence[UploadedFile[Any]] = (),
 ) -> Case:
-    """Cria um NOVO caso vinculado a um caso encerrado do criador (R2/D4).
+    """Cria um NOVO caso vinculado a um caso encerrado de qualquer criador (R2/D4).
 
-    Reenvio corrigido (semântica ats-web, design D4/D5): de um caso ``CLEANED``
-    do próprio criador, o NIR declara **exatamente 1 PDF**, um tipo único
+    Reenvio corrigido (semântica ats-web, design D4/D5; reenvio-corrigido-
+    qualquer-nir, D1): de um caso ``CLEANED`` de qualquer criador, o NIR com
+    papel ativo declara **exatamente 1 PDF**, um tipo único
     EXPLÍCITO (nunca herdado — R3) e um motivo obrigatório; no MESMO ``atomic``
     nasce um novo caso em ``NEW`` (pipeline completo) vinculado por
     ``corrects_case`` com ``correction_reason``/``correction_created_by``,
@@ -839,10 +840,10 @@ def create_corrected_resubmission(
     novo ganha ``CASE_CORRECTION_CREATED`` (payload com id do original +
     motivo). O original NÃO muda de status nem de dados.
 
-    Validações ANTES de qualquer criação, na ordem do escopo por criador:
-    motivo não-vazio (strip), criador (``_assert_owned_by`` → ``Http404`` sem
-    vazar informação), estado ``CLEANED``, o PDF único e o tipo único (fontes
-    únicas do caso único — ``_validate_document_file``/``_validate_declared_type``).
+    Validações ANTES de qualquer criação: motivo não-vazio (strip), estado
+    ``CLEANED``, o PDF único e o tipo único (fontes únicas do caso único —
+    ``_validate_document_file``/``_validate_declared_type``). Sem guarda de
+    posse (D1): qualquer papel ativo ``nir`` reenvia qualquer caso encerrado.
     Anexos são um kwarg ADITIVO (design D2) repassado a
     ``create_case_with_documents``, que os valida (fonte única) antes de criar
     qualquer coisa — anexo inválido rejeita o reenvio inteiro sem efeito. O
@@ -855,13 +856,11 @@ def create_corrected_resubmission(
     Raises:
         IntakeValidationError: motivo/estado/PDF/tipo inválidos (nada muda).
         AttachmentValidationError: anexo inválido (nada muda).
-        Http404: caso não é do criador (escopo por criador, sem vazar informação).
     """
     _assert_intake_enabled()
     reason = (correction_reason or "").strip()
     if not reason:
         raise IntakeValidationError("Informe o motivo do reenvio corrigido.")
-    _assert_owned_by(original_case, user)
     if original_case.status != CaseStatus.CLEANED:
         raise IntakeValidationError(
             "reenvio corrigido disponível apenas para casos encerrados (CLEANED) — "

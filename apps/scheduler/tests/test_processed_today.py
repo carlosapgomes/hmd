@@ -193,6 +193,8 @@ def test_processed_today_includes_only_own_decisions(
     assert "Paciente Alheio Negado" in page
     assert other.display_name in page
     assert str(alien.case_id) in partial
+    assert str(alien_denied.case_id) in partial
+    assert "Paciente Alheio Negado" in partial
     assert other.display_name in partial
 
 

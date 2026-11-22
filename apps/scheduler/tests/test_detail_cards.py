@@ -34,6 +34,7 @@ from apps.scheduler.services import confirm_case_scheduling, deny_case_schedulin
 
 SCHEDULER_ROLE = "scheduler"
 DOCTOR_ROLE = "doctor"
+NIR_ROLE = "nir"
 SYSTEM_ROLE = "system"
 
 ANGIO_TYPE = "art_perif"
@@ -401,6 +402,68 @@ def test_detail_no_cards_for_medical_denial_without_scheduling_decision(
     case = _medical_denial_replied_case(created_by=nir_user, decided_by=doctor)
     _add_document(case, nir_user, position=1)
     scheduler = user_factory("agendador-negmed-cards", (SCHEDULER_ROLE,))
+    _login(client, scheduler, SCHEDULER_ROLE)
+
+    body = _detail_body(client, case)
+
+    assert "Texto Extraído do PDF" not in body
+    assert "Visualizar PDF Original" not in body
+    assert "TEXTO DA NEGATIVA MEDICA QUE NAO DEVE VAZAR" not in body
+    assert client.get(reverse("scheduler:case_pdf", args=[case.case_id, 1])).status_code == 404
+    assert client.get(reverse("scheduler:pdf_viewer", args=[case.case_id, 1])).status_code == 404
+
+
+@pytest.mark.django_db
+def test_detail_pdf_cards_in_awaiting_nir_ack_with_scheduling_decision(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """P2 quitado (visibilidade-por-equipe S7): ``AWAITING_NIR_ACK`` é membro
+    de ``PDF_ALLOWED_STATUSES`` sem teste dedicado — lado POSITIVO. Caso com
+    decisão de agendamento registrado levado ao estado pela transição FSM
+    real (``nir_acknowledge``), visto por OUTRO agendador: cards presentes e
+    serve/viewer 200 (equipe, decisão + estado — D7)."""
+    doctor = user_factory("medico-ack-cards", (DOCTOR_ROLE,))
+    case = _confirmed_case(
+        2,
+        created_by=nir_user,
+        decided_by=doctor,
+        scheduled_by=user_factory("agendador-ack-cards", (SCHEDULER_ROLE,)),
+    )
+    _add_document(case, nir_user, position=1)
+    case.nir_acknowledge(user=nir_user, role=NIR_ROLE)
+    case.refresh_from_db()
+    assert case.status == CaseStatus.AWAITING_NIR_ACK
+    other = user_factory("agendador-ack-outro", (SCHEDULER_ROLE,))
+    _login(client, other, SCHEDULER_ROLE)
+
+    body = _detail_body(client, case)
+
+    assert "Texto Extraído do PDF" in body
+    assert "Visualizar PDF Original" in body
+    assert "TEXTO EXTRAIDO DO RELATORIO DO AGENDADOR" in body
+    assert client.get(reverse("scheduler:case_pdf", args=[case.case_id, 1])).status_code == 200
+    assert client.get(reverse("scheduler:pdf_viewer", args=[case.case_id, 1])).status_code == 200
+
+
+@pytest.mark.django_db
+def test_detail_no_cards_in_awaiting_nir_ack_medical_denial(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """P2 quitado (S7): ``AWAITING_NIR_ACK`` — lado NEGATIVO. Negativa médica
+    direta (``scheduling_decided_at`` nulo) levada ao estado pela transição
+    FSM real: SEM cards e 404 nas rotas — a guarda de decisão cobre também
+    este membro do conjunto de estados permitidos."""
+    doctor = user_factory("medico-ack-negmed", (DOCTOR_ROLE,))
+    case = _medical_denial_replied_case(created_by=nir_user, decided_by=doctor)
+    _add_document(case, nir_user, position=1)
+    case.nir_acknowledge(user=nir_user, role=NIR_ROLE)
+    case.refresh_from_db()
+    assert case.status == CaseStatus.AWAITING_NIR_ACK
+    scheduler = user_factory("agendador-ack-negmed", (SCHEDULER_ROLE,))
     _login(client, scheduler, SCHEDULER_ROLE)
 
     body = _detail_body(client, case)

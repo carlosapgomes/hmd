@@ -55,6 +55,8 @@ SCHEDULER_MARKERS = (
     "intercorrência",
     "PDF do relatório",
     "Processados Hoje",
+    "à equipe de agendamento",
+    "estados pós-decisão",
 )
 CROSS_CUTTING_MARKERS = ("Notificações", "Painel", "PWA")
 

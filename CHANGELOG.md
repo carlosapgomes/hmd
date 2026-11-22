@@ -4,6 +4,31 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.27] — 2026-11-22
+
+**Visibilidade por equipe nos 3 papéis + endurecimento de testes** —
+2 changes (`visibilidade-por-equipe`, 7 slices + `p2-hardening`,
+2 slices test-only), com revisão independente por slice. Suíte 2377 →
+**2411** (+34 testes). Sem migrations e **sem seeds novos** (os seeds do
+`neurointerv` já estão em produção desde a v0.1.26; o passo 5 do
+runbook roda idempotente como segurança).
+
+- **NIR em escopo de equipe**: «Meus Casos» vira «Casos em
+  Processamento» — todos os casos ativos de qualquer criador; detalhe
+  ativo, PDFs/anexos, ciência, liberação/reenvio do gate e confirmação
+  de procedimento acessíveis a qualquer `nir` ativo (views + serviços,
+  com re-check transacional de papel; `PermissionError → 403`).
+  Motivação: incidente real em produção (conta break-glass via lista
+  vazia interpretada como casos "sumidos").
+- **Abas «Hoje» por equipe/especialidade**: «Decididos Hoje» (qualquer
+  decisor do subtipo, decisor visível no card) e «Processados Hoje"
+  (qualquer decisor); contadores do header no mesmo escopo.
+- **PDF do agendador por decisão**: gate passa a ser por decisão de
+  agendamento + estado (confirmação e negação), não por decisor;
+  negativa médica direta segue sem acesso.
+- **p2-hardening** (test-only): negações alheias no partial, gate em
+  `AWAITING_NIR_ACK`, re-check convergido a helper, manual preciso.
+
 ## [0.1.26] — 2026-11-22
 
 **Catálogo com 14 tipos: Neurointervenção (embolização de aneurisma/malformação

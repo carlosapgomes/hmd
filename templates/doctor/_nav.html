@@ -3,12 +3,14 @@ Partial de navegação do médico com as abas Pendentes / Decididos Hoje, no
 vocabulário do ats-web (ui-parity-foundation slice 004). Adaptado do
 molde `doctor/_nav.html` do ats-web (D3) para as rotas do HMD.
 
-Slice 005 (D5/D7): a aba chama-se `Decididos Hoje` — decisões do dia
-corrente no fuso local pelo próprio médico (`?tab=decididos` =
-`doctor_decided_by` + `doctor_decided_at` na janela local, qualquer status
-atual). O médico NÃO tem superfície de histórico própria (perda aprovada
-por paridade, registrada no manual); casos antigos seguem visíveis ao
-agendador (Histórico) e ao NIR.
+Slice 005 -> visibilidade-por-equipe slice 005 (R1): a aba chama-se
+`Decididos Hoje` — decisões do dia corrente no fuso local de qualquer
+decisor da especialidade (`?tab=decididos` = `doctor_decided_by__isnull=False`
++ `doctor_decided_at` na janela local, dentro do acesso por subtipo do
+visualizador, qualquer status atual, com o decisor visível no card). O
+médico NÃO tem superfície de histórico própria (perda aprovada por paridade,
+registrada no manual); casos antigos seguem visíveis ao agendador (Histórico)
+e ao NIR.
 
 OLI-005 (D11): contador único por `data-count` + pseudo-elemento CSS
 (`.nav-count-badge`); sem badge `<span>` inline. Pendentes usa estilo

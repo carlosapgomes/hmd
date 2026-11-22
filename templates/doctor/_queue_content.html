@@ -94,6 +94,9 @@ escopo server de ``?subtype=``.
           <a href="{{ card_url }}" class="btn btn-sm btn-primary stretched-link mt-2">Avaliar</a>
           {% endif %}
           {% else %}
+          {% if item.decided_by_display %}
+          <div class="small text-muted">Decidido por {{ item.decided_by_display }}</div>
+          {% endif %}
           <a href="{{ card_url }}" class="btn btn-sm btn-outline-primary stretched-link mt-2">Ver detalhes</a>
           {% endif %}
         </div>

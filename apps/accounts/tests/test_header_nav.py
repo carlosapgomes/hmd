@@ -145,7 +145,7 @@ class TestNavR2:
 
         assert "app-nav" in body
         assert "Novo Encaminhamento" in body
-        assert "Meus Casos" in body
+        assert "Casos em Processamento" in body
         assert "Casos Encerrados" in body
         assert _active_link_href(body, "Novo Encaminhamento") == reverse("intake:home")
         assert "?tab=active" in body
@@ -159,12 +159,18 @@ class TestNavR2:
         _login(client, user, "nir")
 
         body = client.get(reverse("intake:my_cases") + "?tab=active").content.decode()
-        assert _active_link_href(body, "Meus Casos") == reverse("intake:my_cases") + "?tab=active"
+        assert (
+            _active_link_href(body, "Casos em Processamento")
+            == reverse("intake:my_cases") + "?tab=active"
+        )
 
         # Slice 002 (reenvio-corrigido-qualquer-nir): o ``?tab=closed`` legado
         # cai nos ativos; «Casos Encerrados» ativa na busca global.
         body = client.get(reverse("intake:my_cases") + "?tab=closed").content.decode()
-        assert _active_link_href(body, "Meus Casos") == reverse("intake:my_cases") + "?tab=active"
+        assert (
+            _active_link_href(body, "Casos em Processamento")
+            == reverse("intake:my_cases") + "?tab=active"
+        )
 
         body = client.get(reverse("intake:closed_cases_search")).content.decode()
         assert _active_link_href(body, "Casos Encerrados") == reverse("intake:closed_cases_search")
@@ -291,7 +297,7 @@ class TestFixRestoration:
 
         assert "app-nav" in body
         assert "Novo Encaminhamento" in body
-        assert "Meus Casos" in body
+        assert "Casos em Processamento" in body
 
     def test_admin_panel_restores_cross_area_access(self, client: Client) -> None:
         user = _create_user("fix-admin-panel", ("admin",))
@@ -414,9 +420,9 @@ class TestFix2RoleNavDetailProfile:
 
         assert "app-nav" in body
         assert f'href="{reverse("intake:home")}">Novo Encaminhamento</a>' in body
-        assert f'href="{reverse("intake:my_cases")}?tab=active">Meus Casos</a>' in body
+        assert f'href="{reverse("intake:my_cases")}?tab=active">Casos em Processamento</a>' in body
         assert _active_link_href(body, "Novo Encaminhamento") is None
-        assert _active_link_href(body, "Meus Casos") is None
+        assert _active_link_href(body, "Casos em Processamento") is None
 
     def test_profile_admin_keeps_cross_area_access_without_app_nav(self, client: Client) -> None:
         user = _create_user("fix2-admin-profile", ("admin",))

@@ -12,6 +12,7 @@ RED: o processor ainda não existe e as filas não exibem os totais.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import timedelta
 
 import pytest
 from django.contrib.auth.models import AnonymousUser
@@ -115,6 +116,32 @@ def test_doctor_counters_scoped_by_specialty() -> None:
 
 
 @pytest.mark.django_db
+def test_doctor_counter_counts_team_decisions_in_viewer_subtype() -> None:
+    """R4: o badge conta decisões de outro decisor no subtipo do visualizador.
+
+    Coerente com a aba: decisão de hoje por outro médico em subtipo acessível
+    conta; fora do acesso (cardio) e decisor nulo (fail-closed) não contam.
+    """
+    creator = _create_user("cnt-nir-equipe", ("nir",))
+    viewer = _create_user("cnt-doc-equipe", ("doctor",))
+    _assign_specialties(viewer, ("angio",))
+    other = _create_user("cnt-doc-equipe-outro", ("doctor",))
+    team = _make_case(creator, CaseStatus.SCHEDULER_REQUESTED, (ANGIO_TYPE,))
+    Case.objects.filter(pk=team.pk).update(
+        doctor_decided_at=timezone.now(), doctor_decided_by=other
+    )
+    out = _make_case(creator, CaseStatus.SCHEDULER_REQUESTED, (CARDIO_TYPE,))
+    Case.objects.filter(pk=out.pk).update(doctor_decided_at=timezone.now(), doctor_decided_by=other)
+    null = _make_case(creator, CaseStatus.SCHEDULER_REQUESTED, (ANGIO_TYPE,))
+    Case.objects.filter(pk=null.pk).update(doctor_decided_at=timezone.now(), doctor_decided_by=None)
+
+    assert queue_counters(_request_for(viewer, "doctor")) == {  # type: ignore[arg-type]
+        "doctor_pending_count": 0,
+        "doctor_decided_count": 1,
+    }
+
+
+@pytest.mark.django_db
 def test_scheduler_counters_nonzero() -> None:
     """Agendador: 2 aguardando + 1 decisão de hoje (confirmação ou negação)."""
     creator = _create_user("cnt-nir-sch", ("nir",))
@@ -129,6 +156,36 @@ def test_scheduler_counters_nonzero() -> None:
 
     assert queue_counters(_request_for(scheduler, "scheduler")) == {  # type: ignore[arg-type]
         "scheduler_pending_count": 2,
+        "scheduler_processed_count": 1,
+    }
+
+
+@pytest.mark.django_db
+def test_scheduler_counter_counts_team_decisions() -> None:
+    """R4: o badge conta decisões de outro agendador, coerente com a aba.
+
+    Decisão de hoje por outro agendador conta; decisor nulo (fail-closed)
+    e decisão de ontem não contam.
+    """
+    creator = _create_user("cnt-nir-equipe-sch", ("nir",))
+    viewer = _create_user("cnt-sch-equipe", ("scheduler",))
+    other = _create_user("cnt-sch-equipe-outro", ("scheduler",))
+    team = _make_case(creator, CaseStatus.FINAL_REPLY_POSTED)
+    Case.objects.filter(pk=team.pk).update(
+        scheduling_decided_at=timezone.now(), scheduling_decided_by=other
+    )
+    null = _make_case(creator, CaseStatus.FINAL_REPLY_POSTED)
+    Case.objects.filter(pk=null.pk).update(
+        scheduling_decided_at=timezone.now(), scheduling_decided_by=None
+    )
+    old = _make_case(creator, CaseStatus.FINAL_REPLY_POSTED)
+    Case.objects.filter(pk=old.pk).update(
+        scheduling_decided_at=timezone.now() - timedelta(days=1, hours=2),
+        scheduling_decided_by=other,
+    )
+
+    assert queue_counters(_request_for(viewer, "scheduler")) == {  # type: ignore[arg-type]
+        "scheduler_pending_count": 0,
         "scheduler_processed_count": 1,
     }
 

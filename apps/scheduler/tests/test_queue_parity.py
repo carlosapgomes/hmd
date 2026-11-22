@@ -196,7 +196,7 @@ def test_queue_processed_card_received_label_and_unit_label(
         days_on_screen=4,
         unit=2,
     )
-    # Slice 005: processados é escopado ao decisor.
+    # Slice 006 (visibilidade-por-equipe): processados é da equipe — o visor vê qualquer decisor.
     login_user(scheduler, SCHEDULER_ROLE)
 
     body = client.get(reverse("scheduler:queue"), {"tab": "processados"}).content.decode()
@@ -207,6 +207,8 @@ def test_queue_processed_card_received_label_and_unit_label(
     assert "Aguardando há" not in card
     assert "4 d em tela" in card
     assert "Unidade 2" in card
+    # Slice 006 R3: o decisor aparece no card da aba processados.
+    assert scheduler.display_name in card
 
 
 @pytest.mark.django_db
@@ -224,7 +226,7 @@ def test_queue_has_no_legacy_nav_tabs_and_nav_pills_have_badges(
     _make_confirmed_case(
         nir_user, doctor, scheduler, (ANGIO_TYPE,), patient_name="Paciente Pill Processado"
     )
-    # Slice 005: processados é escopado ao decisor — o visor decide hoje.
+    # Slice 006 (visibilidade-por-equipe): processados é da equipe — qualquer decisor lista.
     login_user(scheduler, SCHEDULER_ROLE)
 
     body = client.get(reverse("scheduler:queue")).content.decode()
@@ -346,7 +348,7 @@ def test_queue_partial_respects_tab_and_page(
     processed = _make_confirmed_case(
         nir_user, doctor, scheduler, (ANGIO_TYPE,), patient_name="Caso Aba Processado"
     )
-    # Slice 005: processados é escopado ao decisor — o visor é o próprio agendador.
+    # Slice 006 (visibilidade-por-equipe): processados é da equipe — o visor vê qualquer decisor.
     login_user(scheduler, SCHEDULER_ROLE)
 
     awaiting_body = client.get(reverse("scheduler:queue_partial")).content.decode()
@@ -387,7 +389,7 @@ def test_queue_partial_lists_both_units_without_unit_filter(
     unit2 = _make_confirmed_case(
         nir_user, doctor, scheduler, (ANGIO_TYPE,), patient_name="Caso Unidade Dois", unit=2
     )
-    # Slice 005: processados é escopado ao decisor — o visor é o próprio agendador.
+    # Slice 006 (visibilidade-por-equipe): processados é da equipe — o visor vê qualquer decisor.
     login_user(scheduler, SCHEDULER_ROLE)
 
     body = client.get(reverse("scheduler:queue_partial"), {"tab": "processados"}).content.decode()
@@ -604,7 +606,7 @@ def test_queue_processed_card_keeps_status_badge(
         days_on_screen=1,
         unit=1,
     )
-    # Slice 005: processados é escopado ao decisor.
+    # Slice 006 (visibilidade-por-equipe): processados é da equipe — o visor vê qualquer decisor.
     login_user(scheduler, SCHEDULER_ROLE)
 
     body = client.get(reverse("scheduler:queue"), {"tab": "processados"}).content.decode()

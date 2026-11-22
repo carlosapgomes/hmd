@@ -27,10 +27,12 @@ Cobre:
   "intercorrência desabilitada" e POST direto é recusado com erro);
 - R7: ``scheduler:case_pdf`` serve os PDFs do ``CaseDocument`` por position
   (padrão do doctor do change 07 — decisão do dono/adaptação: o HMD é
-  multi-PDF e não tem ``Case.pdf_file``) SOMENTE quando ``scheduled_by ==
-  request.user`` E status ∈ {SCHEDULING_CONFIRMED, SCHEDULING_DENIED,
+  multi-PDF e não tem ``Case.pdf_file``) SOMENTE quando há decisão de
+  agendamento registrada (``scheduling_decided_at`` não nulo — qualquer
+  decisor da equipe) E status ∈ {SCHEDULING_CONFIRMED, SCHEDULING_DENIED,
   FINAL_REPLY_POSTED, AWAITING_NIR_ACK} (404 fail-closed — inclusive caso
-  reaberto por intercorrência); links de PDF no detalhe apenas nessa condição;
+  reaberto por intercorrência e negativa médica direta); links de PDF no
+  detalhe apenas nessa condição;
 - R5: erros de serviço/estado/concorrência → mensagem + redirect, nunca 500,
   sem escrita parcial.
 """
@@ -1765,13 +1767,14 @@ def test_pdf_own_processed_case_200(
 
 
 @pytest.mark.django_db
-def test_pdf_other_scheduler_404(
+def test_pdf_other_scheduler_team_200(
     client: Client,
     nir_user: User,
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R7: PDF de caso processado por OUTRO agendador → 404 fail-closed."""
+    """R1 (equipe, inversão D6 do slice 007): PDF de caso processado por
+    OUTRO agendador → 200 (gate por decisão + estado, não por decisor)."""
     doctor = user_factory("medico-pdf-outro", (DOCTOR_ROLE,))
     owner = user_factory("agendador-pdf-outro-owner", (SCHEDULER_ROLE,))
     case = _confirmed_case(1, created_by=nir_user, decided_by=doctor, scheduled_by=owner)
@@ -1781,8 +1784,8 @@ def test_pdf_other_scheduler_404(
 
     response = client.get(reverse("scheduler:case_pdf", args=[case.case_id, 1]))
 
-    assert response.status_code == 404
-    assert str(case.case_id) not in response.content.decode()
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/pdf"
 
 
 @pytest.mark.django_db
@@ -1856,8 +1859,8 @@ def test_detail_pdf_links_only_when_condition_holds(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R7: no detalhe, links de PDF aparecem só para o próprio agendador
-    pós-decisão; outro agendador (detalhe permitido) não vê nenhum link.
+    """R1 (equipe, inversão D6 do slice 007): no detalhe, links de PDF
+    aparecem para QUALQUER agendador pós-decisão (decisor ou não).
 
     Ajuste citando R2 (slice PVP-004): a tabela "Documentos" foi substituída
     pelos dois cards do relatório no mesmo ponto do gate — a asserção de
@@ -1881,8 +1884,9 @@ def test_detail_pdf_links_only_when_condition_holds(
     foreign = client.get(reverse("scheduler:case_detail", args=[case.case_id]))
     assert foreign.status_code == 200
     foreign_body = foreign.content.decode()
-    assert reverse("scheduler:case_pdf", args=[case.case_id, 1]) not in foreign_body
-    assert "Documentos" not in foreign_body
+    assert reverse("scheduler:case_pdf", args=[case.case_id, 1]) in foreign_body
+    assert reverse("scheduler:case_pdf", args=[case.case_id, 2]) in foreign_body
+    assert "Visualizar PDF Original" in foreign_body
 
 
 @pytest.mark.django_db

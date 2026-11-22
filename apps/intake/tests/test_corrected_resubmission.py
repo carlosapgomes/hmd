@@ -533,15 +533,18 @@ def test_create_case_with_documents_pure_no_correction(
 
 
 @pytest.mark.django_db
-def test_resubmit_button_only_cleaned_own(
+def test_resubmit_button_only_cleaned_team_scope(
     client: Client,
     nir_user: User,
     user_factory: Callable[[str, str], User],
 ) -> None:
-    """R4: o detalhe mostra "Reenviar corrigido" apenas em CLEANED do próprio
-    criador — ausente em estado ativo do mesmo criador."""
+    """R4 (visibilidade-por-equipe, slice 004): o detalhe mostra "Reenviar
+    corrigido" em CLEANED de qualquer criador (equipe) — ausente em estado
+    ativo."""
     doctor = user_factory("doctor-resub-button", DOCTOR_ROLE)
+    other_nir = user_factory("nir-resub-button-owner", NIR_ROLE)
     cleaned = _cleaned_case(created_by=nir_user, doctor=doctor)
+    foreign_cleaned = _cleaned_case(created_by=other_nir, doctor=doctor)
     active = Case.objects.create(created_by=nir_user)
     _login(client, nir_user)
 
@@ -550,6 +553,12 @@ def test_resubmit_button_only_cleaned_own(
     ).content.decode()
     assert RESUBMIT_BUTTON_LABEL in body_cleaned
     assert reverse("intake:case_resubmit", args=[cleaned.case_id]) in body_cleaned
+
+    body_foreign = client.get(
+        reverse("intake:case_detail", args=[foreign_cleaned.case_id])
+    ).content.decode()
+    assert RESUBMIT_BUTTON_LABEL in body_foreign
+    assert reverse("intake:case_resubmit", args=[foreign_cleaned.case_id]) in body_foreign
 
     body_active = client.get(reverse("intake:case_detail", args=[active.case_id])).content.decode()
     assert RESUBMIT_BUTTON_LABEL not in body_active

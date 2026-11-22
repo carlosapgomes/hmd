@@ -82,16 +82,24 @@ def test_pdf_viewer_foreign_case_404(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R1: viewer de caso alheio → 404 sem vazar informação."""
+    """R1 INVERTIDO (visibilidade-por-equipe slice 002, D6/D8: nome preservado,
+    corpo invertido): viewer de caso alheio responde 200 com o contrato do
+    viewer mobile a qualquer NIR (paridade serve×viewer, guard de papel)."""
     other_nir = user_factory("nir-alheio", NIR_ROLE)
     foreign_case = _create_case(other_nir, pdf_factory)
     foreign_document = list(foreign_case.documents.all())[0]
+    detail_url = reverse("intake:case_detail", args=[foreign_case.case_id])
+    serve_url = reverse("intake:serve_document", args=[foreign_case.case_id, foreign_document.pk])
 
     client.force_login(nir_user)
     response = client.get(_viewer_url(foreign_case, foreign_document.pk))
 
-    assert response.status_code == 404
-    assert str(foreign_case.case_id) not in response.content.decode()
+    assert response.status_code == 200
+    assert response.context["viewer_title"] == "PDF Original"
+    assert response.context["pdf_url"] == serve_url
+    assert response.context["fallback_pdf_url"] == serve_url
+    assert response.context["back_url"] == detail_url
+    assert str(foreign_case.case_id) in response.content.decode()
 
 
 @pytest.mark.django_db

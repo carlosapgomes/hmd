@@ -139,12 +139,13 @@
         <code>FAILED</code>, sem nova tentativa automática.
       </li>
       <li>
-        <strong>Meus casos</strong> (<em>Meus casos</em>): a lista mostra apenas os
-        casos <em>ativos</em> (em andamento) — tudo exceto <code>CLEANED</code> —
-        com a contagem no cabeçalho da lista. Os casos encerrados (seus ou de
-        qualquer NIR) ficam na página <em>Casos Encerrados</em> (busca por nº de
-        ocorrência ou nome do paciente). O detalhe mostra documentos, trilha e
-        comunicações apenas dos seus casos.
+        <strong>Casos em Processamento</strong> (<em>Casos em Processamento</em>):
+        a lista mostra os casos <em>ativos</em> (em andamento) de <strong>qualquer
+        criador</strong> — tudo exceto <code>CLEANED</code> — com a contagem no
+        cabeçalho da lista: o NIR atua como equipe sobre toda a fila de regulação.
+        Os casos encerrados (seus ou de qualquer NIR) ficam na página <em>Casos
+        Encerrados</em> (busca por nº de ocorrência ou nome do paciente). O detalhe
+        mostra documentos, trilha e comunicações apenas dos seus casos.
       </li>
       <li>
         <strong>Ciência do recebimento</strong>: quando a resposta final é
@@ -175,9 +176,10 @@
         <em>Pendentes</em> traz os casos aguardando decisão
         (<code>AWAITING_DOCTOR</code>), ordenados por tempo de tela, com filtro
         por subtipo (médico generalista e admin veem todos); a aba
-        <em>Decididos Hoje</em> traz apenas as decisões do dia corrente
-        registradas por você mesmo, ordenadas da mais recente para a mais
-        antiga — incluindo casos que já foram encerrados no mesmo dia.
+        <em>Decididos Hoje</em> traz as decisões do dia corrente da
+        especialidade — de qualquer decisor, dentro do seu acesso por subtipo —
+        ordenadas da mais recente para a mais antiga, com o decisor visível no
+        card — incluindo casos que já foram encerrados no mesmo dia.
         Decisões de dias anteriores não aparecem em nenhuma aba: o médico não
         possui histórico próprio de decisões antigas (paridade com o sistema de
         referência; casos que passaram por decisão de agendamento seguem visíveis
@@ -237,9 +239,10 @@
         <em>Pendentes</em> traz os casos prontos para agendamento
         (<code>SCHEDULER_REQUESTED</code> e casos reabertos por intercorrência
         em <code>AWAITING_SCHEDULING</code>), ordenados por tempo de tela;
-        a aba <em>Processados Hoje</em> traz apenas as suas confirmações e
-        negações do dia corrente (incluindo casos já encerrados no mesmo dia),
-        ordenadas da mais recente para a mais antiga. Decisões de dias
+        a aba <em>Processados Hoje</em> traz as confirmações e negações do
+        dia corrente de qualquer agendador da equipe — com o decisor visível
+        no card — incluindo casos já encerrados no mesmo dia, ordenadas da
+        mais recente para a mais antiga. Decisões de dias
         anteriores não aparecem em nenhuma aba — consulte o <em>Histórico do
         agendador</em> (busca por nº de ocorrência ou nome). A fila não é
         separada por unidade.
@@ -258,9 +261,16 @@
         (obrigatório) — o caso é publicado com resposta final ao NIR.
       </li>
       <li>
-        <strong>PDF do relatório</strong>: após a decisão de agendamento, os PDFs
-        do relatório original ficam disponíveis por documento, apenas para os casos
-        processados por você mesmo.
+        <strong>PDF do relatório</strong>: após a decisão de agendamento
+        (confirmação ou negação, por qualquer agendador da equipe), os PDFs
+        do relatório original e o texto extraído ficam disponíveis por
+        documento, para qualquer agendador da equipe, nos cards
+        <em>Texto Extraído do PDF</em> e <em>Visualizar PDF Original</em>,
+        enquanto o caso estiver nos estados pós-decisão (casos reabertos
+        por intercorrência ou já encerrados ficam de fora).
+        Casos de negativa médica direta, que não passam pelo agendamento,
+        não expõem PDF nem texto extraído à equipe de agendamento (o NIR
+        segue acessando os documentos pela sua própria superfície).
       </li>
       <li>
         <strong>Intercorrência (desmarcar/reabrir)</strong>: para um caso
@@ -282,10 +292,12 @@
       <li>
         <strong>Notificações</strong>: o sino na barra superior mostra um
         <em>badge</em> com a quantidade de notificações não lidas. Cada
-        notificação é criada por um marco do caso — resposta final disponível,
-        caso pronto para agendamento, reabertura por intercorrência e
-        encerramento administrativo — e abrir a notificação leva ao detalhe do
-        caso na visão do seu papel ativo.
+        notificação é criada por um marco do caso e segue o criador do caso:
+        resposta final disponível e encerramento administrativo notificam o
+        criador; caso pronto para agendamento notifica todos os agendadores
+        ativos; reabertura por intercorrência notifica o criador e todos os
+        agendadores ativos. Abrir a notificação leva ao detalhe do caso na
+        visão do seu papel ativo.
       </li>
       <li>
         <strong>Painel</strong> (<em>Painel</em>): resumo gerencial de casos

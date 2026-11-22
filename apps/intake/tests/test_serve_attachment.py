@@ -146,7 +146,9 @@ def test_serve_attachment_foreign_case_404(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R1: anexo de caso alheio → 404 sem vazar informação."""
+    """R1 INVERTIDO (visibilidade-por-equipe slice 002, D6/D8: nome preservado,
+    corpo invertido): anexo de caso alheio é servido com 200 a qualquer NIR
+    (equipe — qualquer criador, guard de papel)."""
     other_nir = user_factory("nir-alheio-anexo", NIR_ROLE)
     foreign_case = _create_case(other_nir, pdf_factory, [_pdf_attachment()])
     foreign_attachment = foreign_case.attachments.get()
@@ -154,8 +156,12 @@ def test_serve_attachment_foreign_case_404(
     client.force_login(nir_user)
     response = client.get(_serve_url(foreign_case, foreign_attachment))
 
-    assert response.status_code == 404
-    assert str(foreign_case.case_id) not in response.content.decode()
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/pdf"
+    assert response.headers.get("X-Frame-Options") == "SAMEORIGIN"
+    assert response["Content-Disposition"] == 'inline; filename="laudo-anexo.pdf"'
+    served_bytes = b"".join(response.streaming_content)  # type: ignore[attr-defined]
+    assert served_bytes == b"%PDF-1.4 conteudo do anexo pdf"
 
 
 @pytest.mark.django_db
@@ -292,15 +298,23 @@ def test_attachment_pdf_viewer_foreign_case_404(
     user_factory: Callable[[str, str], User],
     pdf_factory: Callable[..., SimpleUploadedFile],
 ) -> None:
-    """R2: viewer de anexo de caso alheio → 404 (mesmo guard do serve)."""
+    """R2 INVERTIDO (visibilidade-por-equipe slice 002, D6/D8: nome preservado,
+    corpo invertido): viewer de anexo de caso alheio responde 200 com o
+    contrato do viewer mobile a qualquer NIR (paridade serve×viewer)."""
     other_nir = user_factory("nir-alheio-viewer", NIR_ROLE)
     foreign_case = _create_case(other_nir, pdf_factory, [_pdf_attachment()])
     foreign_attachment = foreign_case.attachments.get()
+    detail_url = reverse("intake:case_detail", args=[foreign_case.case_id])
+    serve_url = _serve_url(foreign_case, foreign_attachment)
 
     client.force_login(nir_user)
     response = client.get(_viewer_url(foreign_case, foreign_attachment))
 
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.context["viewer_title"] == "Anexo"
+    assert response.context["pdf_url"] == serve_url
+    assert response.context["fallback_pdf_url"] == serve_url
+    assert response.context["back_url"] == detail_url
 
 
 @pytest.mark.django_db

@@ -478,26 +478,112 @@ def test_ack_wrong_state_rejected(nir_user: User) -> None:
 
 
 @pytest.mark.django_db
-def test_ack_non_creator_rejected(
+def test_ack_non_creator_allowed_team_scope(
     nir_user: User,
     doctor_user: User,
     user_factory: Callable[[str, str], User],
 ) -> None:
-    """R4: quem não é o criador não confirma — erro nomeado sem nenhuma escrita."""
+    """R1/D6 (visibilidade-por-equipe, slice 004): NIR não-criador confirma —
+    CLEANED com os 3 eventos e o OPERADOR como ator (inversão do antigo
+    ``ValueError ...criador...``)."""
     case = _denial_final_case(created_by=nir_user, decided_by=doctor_user)
     _attach_documents(case, nir_user, "relatorio-sesab.pdf")
     other_nir = user_factory("nir-alheio-ack", NIR_ROLE)
     events_before = case.events.count()
+
+    acknowledge_case_receipt(case, user=other_nir, role=NIR_ROLE)
+
+    fresh = Case.objects.get(pk=case.case_id)
+    assert fresh.status == CaseStatus.CLEANED
+    assert fresh.events.count() == events_before + 3
+    assert _event_types(fresh)[-3:] == [
+        case_status_event_type(CaseStatus.AWAITING_NIR_ACK),
+        case_status_event_type(CaseStatus.CLEANING),
+        case_status_event_type(CaseStatus.CLEANED),
+    ]
+    ack_events = list(fresh.events.order_by("id"))[-3:]
+    assert all(event.actor == other_nir for event in ack_events)
+    assert all(event.actor_role == NIR_ROLE for event in ack_events)
+    assert list(fresh.documents.values_list("pk", flat=True)) == []
+    assert fresh.extracted_text == ""
+
+
+@pytest.mark.django_db
+def test_ack_revoked_nir_role_denied(
+    nir_user: User,
+    doctor_user: User,
+    user_factory: Callable[[str, str], User],
+) -> None:
+    """R2 (defesa em profundidade): papel ``nir`` revogado no banco com sessão
+    stalada (``role='nir'`` alegado, sem vínculo) → ``PermissionError`` sem
+    efeito — o re-check consulta o vínculo real, não a sessão."""
+    from apps.accounts.models import Role
+
+    case = _denial_final_case(created_by=nir_user, decided_by=doctor_user)
+    _attach_documents(case, nir_user, "relatorio-sesab.pdf")
+    operator = user_factory("nir-ack-revogado", NIR_ROLE)
+    operator.roles.remove(Role.objects.get(name=NIR_ROLE))
+    assert not operator.roles.filter(name=NIR_ROLE).exists()
+    events_before = case.events.count()
     document_ids_before = list(case.documents.values_list("pk", flat=True))
 
-    with pytest.raises(ValueError, match="criador"):
-        acknowledge_case_receipt(case, user=other_nir, role=NIR_ROLE)
+    with pytest.raises(PermissionError):
+        acknowledge_case_receipt(case, user=operator, role=NIR_ROLE)
 
     fresh = Case.objects.get(pk=case.case_id)
     assert fresh.status == CaseStatus.FINAL_REPLY_POSTED
     assert fresh.events.count() == events_before
     assert list(fresh.documents.values_list("pk", flat=True)) == document_ids_before
     assert fresh.extracted_text == EXTRACTED_TEXT
+
+
+@pytest.mark.django_db
+def test_ack_wrong_role_string_denied(
+    nir_user: User,
+    doctor_user: User,
+) -> None:
+    """R2: papel ativo alegado fora de ``nir`` → ``PermissionError`` sem efeito
+    (mesmo com vínculo ``nir`` no banco)."""
+    case = _denial_final_case(created_by=nir_user, decided_by=doctor_user)
+    _attach_documents(case, nir_user, "relatorio-sesab.pdf")
+    events_before = case.events.count()
+
+    with pytest.raises(PermissionError):
+        acknowledge_case_receipt(case, user=nir_user, role=DOCTOR_ROLE)
+
+    fresh = Case.objects.get(pk=case.case_id)
+    assert fresh.status == CaseStatus.FINAL_REPLY_POSTED
+    assert fresh.events.count() == events_before
+    assert fresh.extracted_text == EXTRACTED_TEXT
+
+
+@pytest.mark.django_db
+def test_ack_non_creator_retention_preserves(
+    nir_user: User,
+    doctor_user: User,
+    user_factory: Callable[[str, str], User],
+) -> None:
+    """R1 (retenção, flag False): ciência do não-criador encerra em CLEANED
+    preservando campos, rows e arquivos."""
+    case = _denial_final_case(created_by=nir_user, decided_by=doctor_user)
+    _attach_documents(case, nir_user, "relatorio-sesab.pdf")
+    other_nir = user_factory("nir-alheio-retencao", NIR_ROLE)
+    document_names = [d.file.name for d in case.documents.all() if d.file.name]
+    assert all(default_storage.exists(name) for name in document_names)
+    events_before = case.events.count()
+
+    with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=False):
+        acknowledge_case_receipt(case, user=other_nir, role=NIR_ROLE)
+
+    fresh = Case.objects.get(pk=case.case_id)
+    assert fresh.status == CaseStatus.CLEANED
+    assert fresh.events.count() == events_before + 3
+    ack_events = list(fresh.events.order_by("id"))[-3:]
+    assert all(event.actor == other_nir for event in ack_events)
+    assert fresh.extracted_text == EXTRACTED_TEXT
+    assert fresh.anonymized_text == ANONYMIZED_TEXT
+    assert fresh.documents.count() == 1
+    assert all(default_storage.exists(name) for name in document_names)
 
 
 # ── R3: arquivos físicos deletados após o commit; outros casos intactos ────

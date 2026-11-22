@@ -96,6 +96,9 @@ quando já definido no agendamento.
           {% endif %}
         </div>
         <div class="fw-semibold patient-name">{{ item.patient_name }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}</div>
+        {% if item.decided_by_display %}
+        <div class="small text-muted">Processado por {{ item.decided_by_display }}</div>
+        {% endif %}
         <div class="small text-muted case-meta">
           {% if tab == 'aguardando' %}⏱ Aguardando há {{ item.created_at|timesince }}{% else %}Recebido há {{ item.created_at|timesince }}{% endif %}{% if item.transport_label %} <span class="badge rounded-pill {{ item.transport_badge_class }}">🚑 {{ item.transport_label }}</span>{% endif %}
           <span class="mx-2">·</span> Recebido em {{ item.created_at|date:"d/m/Y H:i" }}

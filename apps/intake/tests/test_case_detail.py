@@ -14,6 +14,7 @@ listava apenas os declarados e o NIR decidia às cegas.
 from __future__ import annotations
 
 import re
+import uuid
 from collections.abc import Callable, Iterator
 
 import pytest
@@ -22,6 +23,7 @@ from django.test import Client, override_settings
 from django.urls import reverse
 
 from apps.accounts.models import User
+from apps.cases.communications import post_user_communication
 from apps.cases.models import Case, CaseStatus
 from apps.cases.procedures import record_detected_procedures
 from apps.intake.services import create_case_with_documents
@@ -193,6 +195,56 @@ def test_detail_without_record_number_uses_short_uid_fallback(
     assert str(case.case_id) not in _visible_text(body)
     assert "—" in card
     assert "Idade" not in card
+
+
+@pytest.mark.django_db
+def test_detail_team_case_visible_to_non_creator_with_integrity(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R1 (visibilidade-por-equipe slice 002): NIR não-criador abre o detalhe
+    de caso ativo de outro NIR — 200 com conteúdo íntegro (documentos com
+    links de serve/viewer, comunicações, card de identificação e trilha)."""
+    other_nir = user_factory("nir-alheio-equipe", NIR_ROLE)
+    foreign_case = _identified_case(
+        other_nir,
+        pdf_factory,
+        record_number="5040778",
+        patient_name="Paciente Da Equipe",
+        patient_age=61,
+    )
+    document = list(foreign_case.documents.all())[0]
+    post_user_communication(
+        foreign_case, user=other_nir, role=NIR_ROLE, body="Aguardando complemento."
+    )
+
+    client.force_login(nir_user)
+    response = client.get(reverse("intake:case_detail", args=[foreign_case.case_id]))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    # Documentos servidos com segurança (links de serve + viewer do contrato).
+    assert document.original_filename in body
+    assert reverse("intake:serve_document", args=[foreign_case.case_id, document.pk]) in body
+    assert reverse("intake:pdf_viewer", args=[foreign_case.case_id, document.pk]) in body
+    # Comunicações, identificação e trilha íntegras.
+    assert "Aguardando complemento." in body
+    assert "Paciente Da Equipe" in body
+    assert "Trilha de eventos" in body
+
+
+@pytest.mark.django_db
+def test_detail_unknown_case_404(
+    client: Client,
+    nir_user: User,
+) -> None:
+    """R1 (visibilidade-por-equipe slice 002): caso inexistente → 404."""
+    client.force_login(nir_user)
+    response = client.get(reverse("intake:case_detail", args=[uuid.uuid4()]))
+
+    assert response.status_code == 404
 
 
 @pytest.mark.django_db

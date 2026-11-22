@@ -1,10 +1,12 @@
 """Aba «Decididos Hoje» do médico + carimbos médicos (slice 005, R1/R3/R4).
 
-R1: a aba ``decididos`` lista decisões médicas do dia corrente pelo próprio
-médico (``doctor_decided_by`` + ``doctor_decided_at`` na janela local),
-qualquer status atual (inclui caso encerrado no mesmo dia), ordenada por
-data/hora desc; caso de ontem fora de TODAS as abas; decisor nulo
-(backfill fail-closed) fora da aba de todos.
+R1: a aba ``decididos`` lista decisões médicas do dia corrente de qualquer
+decisor da especialidade (``doctor_decided_by__isnull=False`` +
+``doctor_decided_at`` na janela local, dentro do acesso por subtipo do
+visualizador), qualquer status atual (inclui caso encerrado no mesmo dia),
+ordenada por data/hora desc, com o decisor visível no card; caso de ontem
+fora de TODAS as abas; decisor nulo (backfill fail-closed) fora da aba de
+todos.
 R3: ``record_doctor_procedure_decisions`` carimba o par
 ``doctor_decided_at``/``by`` no MESMO atomic (+ anti-drift contra
 ``Max(rows)``); migration 0014 com backfill auditável por eventos.
@@ -122,7 +124,12 @@ def test_decided_today_includes_only_own_decisions(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R1: decisões de hoje de OUTRO médico não aparecem na minha aba."""
+    """R1: decisões de hoje de OUTRO médico aparecem na aba, com o decisor visível.
+
+    Título histórico preservado com corpo invertido (D8): a aba é da
+    especialidade, não do decisor — o caso alheio em subtipo acessível ao
+    visualizador (generalista vê tudo) é listado com o nome do decisor.
+    """
     mine = user_factory("medico-proprio-hoje", (DOCTOR_ROLE,))
     other = user_factory("medico-outro-hoje", (DOCTOR_ROLE,))
     own = _decided_case(nir_user, mine, (ANGIO_TYPE,), patient_name="Paciente Proprio")
@@ -133,8 +140,9 @@ def test_decided_today_includes_only_own_decisions(
 
     assert str(own.case_id) in page
     assert "Paciente Proprio" in page
-    assert str(alien.case_id) not in page
-    assert "Paciente Alheio" not in page
+    assert str(alien.case_id) in page
+    assert "Paciente Alheio" in page
+    assert other.display_name in page
 
 
 @pytest.mark.django_db
@@ -200,6 +208,75 @@ def test_null_decider_excluded_from_everyone(
 
 
 @pytest.mark.django_db
+def test_decided_today_respects_viewer_subtype(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+    assign_specialties: Callable[[User, Sequence[str]], None],
+) -> None:
+    """R1: decisão de outro médico fora do acesso por subtipo NÃO é listada."""
+    viewer = user_factory("medico-visor-equipe", (DOCTOR_ROLE,))
+    assign_specialties(viewer, ("angio",))
+    other = user_factory("medico-outro-equipe", (DOCTOR_ROLE,))
+    visible = _decided_case(nir_user, other, (ANGIO_TYPE,), patient_name="Paciente Equipe Visivel")
+    hidden = _decided_case(nir_user, other, (CARDIO_TYPE,), patient_name="Paciente Fora Do Acesso")
+    login_user(viewer, DOCTOR_ROLE)
+
+    page, partial = _decided_bodies(client)
+
+    assert str(visible.case_id) in page
+    assert "Paciente Equipe Visivel" in page
+    assert other.display_name in page
+    assert str(hidden.case_id) not in page
+    assert "Paciente Fora Do Acesso" not in page
+    assert str(hidden.case_id) not in partial
+
+
+@pytest.mark.django_db
+def test_decided_today_render_query_count_bounded_independent_of_card_count(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R3 (matriz ``assertNumQueries``): sem N+1 do decisor no card.
+
+    Renderizar a aba decididos (página cheia E partial) com 1 ou 4 cards
+    executa o MESMO número de queries e dentro de um teto fixo — o decisor
+    vem de ``select_related("doctor_decided_by")``, nunca de query por card.
+    """
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    doctor = user_factory("medico-queries-hoje", (DOCTOR_ROLE,))
+    login_user(doctor, DOCTOR_ROLE)
+    queue_url = reverse("doctor:queue") + "?tab=decididos"
+    partial_url = reverse("doctor:queue_partial") + "?tab=decididos"
+
+    def _query_count(url: str) -> int:
+        with CaptureQueriesContext(connection) as captured:
+            response = client.get(url)
+        assert response.status_code == 200
+        return len(captured.captured_queries)
+
+    _decided_case(nir_user, doctor, (ANGIO_TYPE,), patient_name="Paciente Query Hoje Um")
+    page_count_few = _query_count(queue_url)
+    partial_count_few = _query_count(partial_url)
+
+    other = user_factory("medico-queries-outro", (DOCTOR_ROLE,))
+    for index in range(3):
+        _decided_case(nir_user, other, (ANGIO_TYPE,), patient_name=f"Paciente Query Equipe {index}")
+    page_count_many = _query_count(queue_url)
+    partial_count_many = _query_count(partial_url)
+
+    assert page_count_many == page_count_few
+    assert partial_count_many == partial_count_few
+    assert page_count_many <= 25
+    assert partial_count_many <= 25
+
+
+@pytest.mark.django_db
 def test_decided_today_ordered_by_decision_desc(
     client: Client,
     nir_user: User,
@@ -229,8 +306,9 @@ def test_decided_today_counts_titles_and_empty_state(
     nir_user: User,
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
+    assign_specialties: Callable[[User, Sequence[str]], None],
 ) -> None:
-    """R4: badges contam decisões de hoje do próprio médico; títulos «Hoje»."""
+    """R4: badges contam decisões de hoje da especialidade (qualquer decisor)."""
     doctor = user_factory("medico-conta-hoje", (DOCTOR_ROLE,))
     other = user_factory("medico-conta-outro", (DOCTOR_ROLE,))
     _decided_case(nir_user, doctor, (ANGIO_TYPE,), patient_name="Paciente Conta Um")
@@ -244,10 +322,14 @@ def test_decided_today_counts_titles_and_empty_state(
 
     assert "Casos decididos hoje" in body
     assert "Decididos Hoje" in body
-    assert 'data-count="2"' in body
-    assert "Paciente Conta Alheia" not in body
+    assert 'data-count="3"' in body
+    assert "Paciente Conta Alheia" in body
 
-    login_user(user_factory("medico-vazio-hoje", (DOCTOR_ROLE,)), DOCTOR_ROLE)
+    # Aba da especialidade: o vazio precisa de um visualizador sem nenhuma
+    # decisão acessível hoje — especialista em subtipo sem decisões no dia.
+    empty_viewer = user_factory("medico-vazio-hoje", (DOCTOR_ROLE,))
+    assign_specialties(empty_viewer, ("radio",))
+    login_user(empty_viewer, DOCTOR_ROLE)
     empty_body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
 
     assert "Nenhum caso decidido hoje" in empty_body
@@ -433,8 +515,11 @@ def test_backfill_flow_lists_decision_in_decider_tab(
     assert str(fresh.case_id) in page
     assert "Paciente Backfill Fluxo" in page
 
+    # Inversão D6: a aba é da especialidade — outro médico com acesso ao
+    # subtipo também lista a decisão, com o decisor visível.
     login_user(other, DOCTOR_ROLE)
     alien_page, _ = _decided_bodies(client)
 
-    assert str(fresh.case_id) not in alien_page
-    assert "Paciente Backfill Fluxo" not in alien_page
+    assert str(fresh.case_id) in alien_page
+    assert "Paciente Backfill Fluxo" in alien_page
+    assert doctor.display_name in alien_page

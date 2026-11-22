@@ -34,7 +34,13 @@ MANUAL_PATH = "/manual/"
 CONFIGURED_UNIT_LABELS = {1: "Hemodinâmica HGRS", 2: "Unidade Satélite"}
 
 # Marcos por papel/seção (R2/R4): strings que o template DEVE conter.
-NIR_MARKERS = ("Enviar relatório", "anexos", "Meus casos", "ciência", "reenvio")
+NIR_MARKERS = (
+    "Enviar relatório",
+    "anexos",
+    "Casos em Processamento",
+    "ciência",
+    "reenvio",
+)
 DOCTOR_MARKERS = (
     "Fila médica",
     "verificação de paciente",
@@ -49,6 +55,8 @@ SCHEDULER_MARKERS = (
     "intercorrência",
     "PDF do relatório",
     "Processados Hoje",
+    "à equipe de agendamento",
+    "estados pós-decisão",
 )
 CROSS_CUTTING_MARKERS = ("Notificações", "Painel", "PWA")
 
@@ -177,6 +185,34 @@ class TestManualUnitLabels:
         assert "Unidade Satélite" in body
         assert "Unidade 1" not in body
         assert "Unidade 2" not in body
+
+
+@pytest.mark.django_db
+class TestManualSchedulerTeamScope:
+    """R4 (slice 007): seção Agendador em escopo de equipe + notificações
+    descritas com precisão (seguem o criador, com o fan-out vigente)."""
+
+    def test_manual_scheduler_processed_today_is_team_scope(
+        self, client: Client, nir_user: User
+    ) -> None:
+        body = _manual_body(client, nir_user)
+
+        assert "qualquer agendador" in body
+
+    def test_manual_scheduler_pdf_bound_to_scheduling_decision(
+        self, client: Client, nir_user: User
+    ) -> None:
+        body = _manual_body(client, nir_user)
+
+        assert "decisão de agendamento" in body
+        assert "processados por você mesmo" not in body
+
+    def test_manual_notifications_follow_creator_with_fanout(
+        self, client: Client, nir_user: User
+    ) -> None:
+        body = _manual_body(client, nir_user)
+
+        assert "criador do caso" in body
 
 
 @pytest.mark.django_db

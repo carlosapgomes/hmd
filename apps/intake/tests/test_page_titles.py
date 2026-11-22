@@ -11,6 +11,7 @@ import re
 from collections.abc import Callable, Iterator
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, override_settings
 from django.urls import reverse
 
@@ -72,11 +73,11 @@ def test_intake_home_page_title(client: Client, nir_user: User) -> None:
 
 @pytest.mark.django_db
 def test_intake_my_cases_page_title(client: Client, nir_user: User) -> None:
-    """Meus casos tem ``h1.page-title`` com o nome da visão (OLI-004 R1)."""
+    """Casos em processamento tem ``h1.page-title`` com o nome da visão."""
     client.force_login(nir_user)
     response = client.get(reverse("intake:my_cases"))
     assert response.status_code == 200
-    _assert_page_title(response.content.decode(), "Todos os seus encaminhamentos")
+    _assert_page_title(response.content.decode(), "Casos em processamento")
 
 
 @pytest.mark.django_db
@@ -105,3 +106,52 @@ def test_intake_corrected_resubmission_page_title(
     response = client.get(reverse("intake:case_resubmit", args=[case.case_id]))
     assert response.status_code == 200
     _assert_page_title(response.content.decode(), "Reenviar corrigido")
+
+
+@pytest.mark.django_db
+def test_batch_result_alert_links_team_list_label(
+    client: Client,
+    nir_user: User,
+    pdf_factory: Callable[..., SimpleUploadedFile],
+) -> None:
+    """R2 (equipe, fix-1 review P1): o alerta pós-lote da home renderiza o
+    link exato «Casos em Processamento» (title case, classe ``alert-link``).
+
+    Trava uma regressão de rótulo SÓ nessa superfície: asserções genéricas de
+    ``"Casos em Processamento" in body`` passariam pelo nav/``<h2>`` mesmo com
+    o alerta revertido ao texto antigo.
+    """
+    client.force_login(nir_user)
+    response = client.post(
+        reverse("intake:home"),
+        {
+            "documents": [pdf_factory(name="lote-a.pdf"), pdf_factory(name="lote-b.pdf")],
+            "procedure_type": "art_perif",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "2 casos criados" in body
+    my_cases_url = reverse("intake:my_cases")
+    assert f'<a href="{my_cases_url}" class="alert-link">Casos em Processamento</a>' in body
+
+
+@pytest.mark.django_db
+def test_case_detail_breadcrumb_uses_team_list_label(client: Client, nir_user: User) -> None:
+    """R2 (equipe, fix-1 review P1): o breadcrumb do detalhe renderiza o texto
+    exato «Casos em Processamento» apontando à lista da equipe.
+
+    Trava uma regressão de rótulo SÓ nessa superfície: asserções genéricas de
+    ``"Casos em Processamento" in body`` passariam pelo ``<h1>``/nav mesmo com
+    o breadcrumb revertido ao texto antigo.
+    """
+    case = Case.objects.create(created_by=nir_user)
+    client.force_login(nir_user)
+    body = client.get(reverse("intake:case_detail", args=[case.case_id])).content.decode()
+
+    my_cases_url = reverse("intake:my_cases")
+    expected = (
+        f'<li class="breadcrumb-item"><a href="{my_cases_url}">Casos em Processamento</a></li>'
+    )
+    assert expected in body

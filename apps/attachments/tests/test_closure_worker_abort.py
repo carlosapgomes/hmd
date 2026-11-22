@@ -29,7 +29,7 @@ from django.core.management import call_command
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 
-from apps.accounts.models import User
+from apps.accounts.models import Role, User
 from apps.anonymization.engine import AnonymizationEngine
 from apps.attachments import extraction as extraction_module
 from apps.attachments.models import (
@@ -232,6 +232,10 @@ def test_ack_before_extraction_aborts_without_ocr_dispatch(
     """D8 (ciência): CLEANED pela ciência do NIR ANTES da extração → no-op,
     sem dispatch externo (spy no OCR) e sem evento DISPATCHED."""
     doctor = User.objects.create_user(username="medico-anexo-abort", password="senha-teste")
+    # Alinhamento ao contrato R2 (visibilidade-por-equipe, slice 004): a ciência
+    # exige vínculo real ao papel ``nir`` — a fixture ``owner_user`` deste módulo
+    # nasce sem papéis, então o vínculo é concedido aqui (intenção do teste: ciência do NIR).
+    owner_user.roles.add(Role.objects.get_or_create(name=NIR_ROLE)[0])
     case = _denial_final_case(created_by=owner_user, decided_by=doctor)
     attachment = attachment_record_factory(
         case,

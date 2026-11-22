@@ -366,14 +366,16 @@ def intake_home(request: HttpRequest) -> HttpResponse:
 
 
 def _build_my_cases_context(request: HttpRequest) -> dict[str, object]:
-    """Contexto de "meus casos" (assembly único página + partial, D1).
+    """Contexto de "Casos em Processamento" (assembly único página + partial).
 
-    Escopo por criador em qualquer combinação (R2): os filtros server-side
-    ``q``/``status``/``procedure_type`` (AND) aplicam-se DENTRO do queryset do
-    criador e ANTES do cálculo dos sufixos de desambiguação (D4 — como as
-    abas). Sem paginação nesta view (D2: a lista segue materializada).
+    Escopo de equipe em qualquer combinação (visibilidade-por-equipe,
+    slice 001): os filtros server-side ``q``/``status``/``procedure_type``
+    (AND) aplicam-se DENTRO do queryset de ativos de qualquer criador
+    (tudo exceto ``CLEANED``) e ANTES do cálculo dos sufixos de
+    desambiguação (D4 — como as abas). Sem paginação nesta view (D2: a
+    lista segue materializada).
     """
-    user = _require_user(request)
+    _require_user(request)
     requested_tab = request.GET.get("tab", _DEFAULT_MY_CASES_TAB)
     current_tab = requested_tab if requested_tab in _MY_CASES_TABS else _DEFAULT_MY_CASES_TAB
 
@@ -398,11 +400,11 @@ def _build_my_cases_context(request: HttpRequest) -> dict[str, object]:
     partial_params = [("tab", current_tab), *filter_params]
     partial_url = f"{reverse('intake:my_cases_partial')}?{urlencode(partial_params)}"
 
-    own_cases = Case.objects.filter(created_by=user)
-    # Contador do header (reenvio-corrigido-qualquer-nir, slice 002, D3):
-    # total de ativos do criador, sem os filtros de busca (o header conta a
-    # lista, não os filtros); o badge de encerrados desaparece com a aba.
-    active_cases = own_cases.exclude(status=CaseStatus.CLEANED)
+    # Escopo de equipe (visibilidade-por-equipe, slice 001): todos os casos
+    # ativos de qualquer criador.
+    # Contador do header: total de ativos da equipe, sem os filtros de busca
+    # (o header conta a lista, não os filtros).
+    active_cases = Case.objects.exclude(status=CaseStatus.CLEANED)
     selected_cases = active_cases
 
     filtered_cases = selected_cases
@@ -467,13 +469,14 @@ def _build_my_cases_context(request: HttpRequest) -> dict[str, object]:
 
 @role_required("nir")
 def my_cases(request: HttpRequest) -> HttpResponse:
-    """Lista "meus casos" com apenas ativos (R3, escopo por criador).
+    """Lista «Casos em Processamento» com apenas ativos (R3, escopo de equipe).
 
-    Lista os casos do criador em tudo exceto ``CLEANED`` (reenvio-corrigido-
-    qualquer-nir, slice 002, D3 — sem navegação Ativos/Encerrados). O ``?tab=``
-    legado (incluindo ``closed``) e valores desconhecidos/ausentes caem na
-    default segura de ativos, preservando os filtros — nunca vaza nem quebra.
-    Os encerrados são alcançados pela página «Casos Encerrados» (busca global).
+    Lista os casos ativos de qualquer criador em tudo exceto ``CLEANED``
+    (visibilidade-por-equipe, slice 001 — sem navegação Ativos/Encerrados).
+    O ``?tab=`` legado (incluindo ``closed``) e valores desconhecidos/
+    ausentes caem na default segura de ativos, preservando os filtros —
+    nunca vaza nem quebra. Os encerrados são alcançados pela página
+    «Casos Encerrados» (busca global).
 
     Slice 003 do painel-lista-encerramento (R3/D4): o queryset pré-carrega
     ``events`` (além de ``procedures``) e o caso ``CLEANED`` com evento
@@ -495,12 +498,12 @@ def my_cases(request: HttpRequest) -> HttpResponse:
 
 @role_required("nir")
 def my_cases_partial(request: HttpRequest) -> HttpResponse:
-    """Fragmento de "meus casos" para o auto-refresh htmx de 20 s (R3/D1).
+    """Fragmento de «Casos em Processamento» para o auto-refresh htmx de 20 s.
 
     Reutiliza o assembly da página cheia (``_build_my_cases_context``) e
     renderiza SÓ ``intake/_my_cases_content.html`` — o mesmo fragmento que a
     página inclui no server-side. Mesmos guards (``role_required``) e o mesmo
-    escopo por criador (só ativos) com os mesmos filtros da URL.
+    escopo de equipe (só ativos) com os mesmos filtros da URL.
     """
     return render(request, "intake/_my_cases_content.html", _build_my_cases_context(request))
 
@@ -703,15 +706,14 @@ def _assemble_case_detail_context(
         final_reply = next((m for m in reversed(communications) if m.author is not None), None)
 
     corrections = list(case.corrected_by.order_by("created_at", "pk"))
-    # Links condicionais (reenvio-corrigido-qualquer-nir, R5/D4): o link do
-    # caso corrigido respeita a autorização do VISITANTE — próprio → detalhe
-    # do caso; alheio ativo → referência sem link (guard ativo preservado);
-    # alheio encerrado → detalhe histórico. Sem ``viewer`` nada é próprio.
-    viewer_id = viewer.pk if viewer is not None else None
+    # Links em escopo de equipe (visibilidade-por-equipe, slice 004, R3): o
+    # link do caso corrigido leva ao detalhe do caso quando ativo e ao
+    # detalhe histórico quando encerrado — para qualquer ``nir``, sem
+    # partição próprio/alheio (``viewer`` segue na assinatura por
+    # compatibilidade de chamada, sem efeito sobre os links).
     correction_items = [
         {
             "correction": correction,
-            "is_own": viewer_id is not None and correction.created_by_id == viewer_id,
             "is_cleaned": correction.status == CaseStatus.CLEANED,
         }
         for correction in corrections
@@ -797,10 +799,11 @@ def _assemble_case_detail_context(
 
 @role_required("nir")
 def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
-    """Detalhe do caso do próprio NIR: docs, comunicações, resultado e trilha.
+    """Detalhe do caso em escopo de equipe: docs, comunicações, resultado e trilha.
 
-    O queryset filtra ``created_by=user`` — caso alheio (ou inexistente)
-    responde 404 sem vazar informação (D6/D9). Exibe status/timestamps, tipos
+    Guard de papel (qualquer ``nir`` ativo alcança casos de qualquer criador —
+    visibilidade-por-equipe, slice 002); caso inexistente responde 404 sem
+    vazar informação. Exibe status/timestamps, tipos
     declarados, flag de retenção com motivo, documentos com link de abertura
     (``serve_document``), a thread de comunicações do change 03 e a trilha de
     eventos (slice 002 do trilha-eventos-todos-perfis: a mesma trilha do
@@ -817,7 +820,6 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     case = get_object_or_404(
         Case.objects.select_related("created_by").prefetch_related("procedures"),
         case_id=case_id,
-        created_by=user,
     )
     context = _assemble_case_detail_context(case, viewer=user)
     return render(request, "intake/case_detail.html", context)
@@ -828,22 +830,24 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
 def case_ack(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     """Confirma o recebimento da resposta final e encerra o caso (R2/D1).
 
-    POST escopado ao caso do próprio NIR — caso alheio/inexistente → 404
-    (``created_by`` no queryset; sem vazar informação). Delega ao serviço
-    transacional ``acknowledge_case_receipt`` com o papel ativo da sessão:
-    sucesso → flash + redirect ao detalhe (caso ``CLEANED``); estado fora de
-    ``FINAL_REPLY_POSTED`` → mensagem de erro + redirect ao detalhe, nunca 500.
+    POST em escopo de equipe (qualquer ``nir`` registra a ciência de caso de
+    qualquer criador; inexistente → 404; papel revogado → 403). Delega ao
+    serviço transacional ``acknowledge_case_receipt`` com o papel ativo da
+    sessão: sucesso → flash + redirect ao detalhe (caso ``CLEANED``); estado
+    fora de ``FINAL_REPLY_POSTED`` → mensagem de erro + redirect ao detalhe,
+    nunca 500.
     """
     user = _require_user(request)
     active_role = request.session.get("active_role", "")
     case = get_object_or_404(
         Case.objects.only("pk", "case_id", "created_by_id", "agency_record_number"),
         case_id=case_id,
-        created_by=user,
     )
     detail_url = reverse("intake:case_detail", args=[case.case_id])
     try:
         acknowledge_case_receipt(case=case, user=user, role=active_role)
+    except PermissionError as exc:
+        raise PermissionDenied(str(exc)) from exc
     except ValueError as exc:
         logger.warning("case_ack_rejected user=%s case=%s motivo=%s", user.pk, case.case_id, exc)
         messages.error(request, str(exc))
@@ -867,8 +871,8 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     inexistente → 404). Caso fora de ``CLEANED`` ou intake desligado →
     mensagem + redirect sem escrita, nunca 500. O destino da recusa é o
     detalhe histórico quando o caso está no escopo histórico (sempre, para
-    ``CLEANED`` — R4/D2); fora dele, o detalhe do criador (vigente para o
-    acesso direto do criador a caso ativo). O form reúne arquivos + tipos
+    ``CLEANED``); fora dele, o detalhe do caso ativo (unificado — qualquer
+    ``nir`` o alcança). O form reúne arquivos + tipos
     declarados do catálogo + motivo; o POST delega ao serviço transacional
     ``create_corrected_resubmission`` — sucesso → redirect ao detalhe do
     NOVO caso (do reenviador) com flash; erro de validação (motivo, arquivo
@@ -886,16 +890,14 @@ def case_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         ),
         case_id=case_id,
     )
-    # Destino da recusa (R4): o reenvio legítimo exige ``CLEANED`` — sempre
-    # no escopo histórico, acessível a qualquer ``nir``; fora do escopo, o
-    # próprio criador preserva o vigente (detalhe do criador) e o caso
-    # alheio cai no fallback da spec (busca de encerrados, sem 404).
+    # Destino da recusa (visibilidade-por-equipe, slice 004, R4): o reenvio
+    # legítimo exige ``CLEANED`` — sempre no escopo histórico, acessível a
+    # qualquer ``nir``; fora do escopo, o detalhe do caso ativo (unificado —
+    # qualquer ``nir`` o alcança).
     if _in_historical_scope(case):
         refuse_url = reverse("intake:closed_case_detail", args=[case.case_id])
-    elif case.created_by_id == user.pk:
-        refuse_url = reverse("intake:case_detail", args=[case.case_id])
     else:
-        refuse_url = reverse("intake:closed_cases_search")
+        refuse_url = reverse("intake:case_detail", args=[case.case_id])
     # Intake desligado (D7; P2 review: checado ANTES do estado, para a
     # mensagem de "desabilitado" prevalecer sobre a de estado em qualquer
     # caso) — bloqueado sem efeito.
@@ -961,18 +963,18 @@ def pdf_viewer(
     case_id: uuid.UUID,
     document_id: int,
 ) -> HttpResponse:
-    """Viewer mobile do PDF original do caso do próprio NIR (slice PVP-002, R1).
+    """Viewer mobile do PDF original em escopo de equipe (slice PVP-002, R1).
 
-    Mesmo guard fail-closed de ``serve_document``: queryset por criador —
-    caso alheio, documento de outro caso ou inexistente → 404. O ``?next=``
+    Mesmo guard fail-closed de ``serve_document`` (guard de papel — qualquer
+    ``nir`` alcança casos de qualquer criador; visibilidade-por-equipe,
+    slice 002): documento de outro caso ou inexistente → 404. O ``?next=``
     passa por ``resolve_safe_next_url`` (fallback ao detalhe); o template
     ``pdf_viewer/mobile_pdf_viewer.html`` recebe título, URLs do PDF e volta.
     """
-    user = _require_user(request)
+    _require_user(request)
     case = get_object_or_404(
         Case.objects.only("case_id", "created_by"),
         case_id=case_id,
-        created_by=user,
     )
     document = get_object_or_404(
         CaseDocument.objects.only("pk", "case_id", "file"),
@@ -1002,21 +1004,21 @@ def attachment_pdf_viewer(
     case_id: uuid.UUID,
     attachment_id: int,
 ) -> HttpResponse:
-    """Viewer mobile do anexo PDF do caso do próprio NIR (slice PVP-006, R2).
+    """Viewer mobile do anexo PDF em escopo de equipe (slice PVP-006, R2).
 
-    Mesmo guard fail-closed de ``serve_attachment``: queryset por criador —
-    caso alheio, anexo de outro caso ou inexistente → 404. SOMENTE para
+    Mesmo guard fail-closed de ``serve_attachment`` (guard de papel — qualquer
+    ``nir`` alcança casos de qualquer criador; visibilidade-por-equipe,
+    slice 002): anexo de outro caso ou inexistente → 404. SOMENTE para
     ``application/pdf`` (D3): imagens e outros tipos usam link direto +
     ``<img loading=lazy>`` (sem viewer dedicado) → 404. Anexo sem arquivo →
     404 fail-closed (lição P1-4). O ``?next=`` passa por
     ``resolve_safe_next_url`` (fallback ao detalhe); o template
     ``pdf_viewer/mobile_pdf_viewer.html`` recebe título, URLs do PDF e volta.
     """
-    user = _require_user(request)
+    _require_user(request)
     case = get_object_or_404(
         Case.objects.only("case_id", "created_by"),
         case_id=case_id,
-        created_by=user,
     )
     attachment = get_object_or_404(
         CaseAttachment.objects.only("pk", "case_id", "file", "content_type"),
@@ -1047,19 +1049,19 @@ def serve_attachment(
     case_id: uuid.UUID,
     attachment_id: int,
 ) -> HttpResponse:
-    """Serve o arquivo do anexo do caso do próprio NIR (slice PVP-006, R1).
+    """Serve o arquivo do anexo em escopo de equipe (slice PVP-006, R1).
 
-    Mesmo guard fail-closed de ``serve_document`` (queryset por criador —
-    caso alheio, anexo de outro caso ou inexistente → 404). Content-type
+    Mesmo guard fail-closed de ``serve_document`` (guard de papel — qualquer
+    ``nir`` alcança casos de qualquer criador; visibilidade-por-equipe,
+    slice 002: anexo de outro caso ou inexistente → 404). Content-type
     ORIGINAL do upload e filename original; anexo sem arquivo → 404
     fail-closed (lição P1-4). O arquivo servido é o ORIGINAL (R4 — bytes
     intactos, mesma política dos serves de documento).
     """
-    user = _require_user(request)
+    _require_user(request)
     case = get_object_or_404(
         Case.objects.only("case_id", "created_by"),
         case_id=case_id,
-        created_by=user,
     )
     attachment = get_object_or_404(
         CaseAttachment.objects.only("pk", "case_id", "file", "original_filename", "content_type"),
@@ -1085,19 +1087,19 @@ def serve_document(
     case_id: uuid.UUID,
     document_id: int,
 ) -> HttpResponse:
-    """Serve o PDF do documento do caso do próprio NIR (R3).
+    """Serve o PDF do documento em escopo de equipe (R3).
 
     Resolve caso e documento por ids internos (``case_id`` UUID + pk do
     ``CaseDocument``) — o nome/path armazenado jamais vem do cliente (sem path
-    traversal). Caso alheio, documento de outro caso ou inexistente → 404.
-    Entrega via ``FileResponse`` com content-type ``application/pdf`` e
-    filename original do upload.
+    traversal). Guard de papel — qualquer ``nir`` alcança casos de qualquer
+    criador (visibilidade-por-equipe, slice 002); documento de outro caso ou
+    inexistente → 404. Entrega via ``FileResponse`` com content-type
+    ``application/pdf`` e filename original do upload.
     """
-    user = _require_user(request)
+    _require_user(request)
     case = get_object_or_404(
         Case.objects.only("case_id", "created_by"),
         case_id=case_id,
-        created_by=user,
     )
     document = get_object_or_404(
         CaseDocument.objects.only("pk", "case_id", "file", "original_filename"),
@@ -1140,7 +1142,8 @@ def _gate_action_error(message: str, case_id: uuid.UUID, *, status: int) -> Http
 def gate_release(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     """Libera caso retido: despacho pela (estado, razão) da retenção (R7).
 
-    POST escopado ao caso do próprio NIR (alheio/inexistente → 404). O efeito
+    POST em escopo de equipe (qualquer ``nir`` opera caso de qualquer criador;
+    inexistente → 404; papel revogado → 403). O efeito
     roda no serviço transacional ``release_retained_case``: retenção de
     FORMATO avança a ANONYMIZING (comportamento atual) e retenção por
     divergência (``LLM_EXTRACTING`` + ``procedure_divergence``) avança a
@@ -1153,10 +1156,11 @@ def gate_release(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     case = get_object_or_404(
         Case.objects.only("pk", "case_id", "created_by_id", "agency_record_number"),
         case_id=case_id,
-        created_by=user,
     )
     try:
         target = release_retained_case(case=case, user=user, role=active_role)
+    except PermissionError as exc:
+        raise PermissionDenied(str(exc)) from exc
     except CaseNotRetainedError as exc:
         logger.warning("gate_release_rejected user=%s case=%s motivo=%s", user.pk, case_id, exc)
         return _gate_action_error(str(exc), case_id, status=400)
@@ -1182,7 +1186,8 @@ def gate_release(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
 def gate_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     """Reenvia documentos de um caso retido e reprocessa do zero (R2).
 
-    POST escopado ao caso do próprio NIR (alheio/inexistente → 404). Recebe os
+    POST em escopo de equipe (qualquer ``nir`` opera caso de qualquer criador;
+    inexistente → 404; papel revogado → 403). Recebe os
     novos PDFs no campo ``documents`` e delega ao serviço transacional
     ``resubmit_case_documents`` (mesma validação do slice 001, substituição de
     documentos, zeragem de flag/texto/nº e reenfileiramento). Sucesso → redirect
@@ -1194,7 +1199,6 @@ def gate_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     case = get_object_or_404(
         Case.objects.only("pk", "case_id", "created_by_id", "agency_record_number"),
         case_id=case_id,
-        created_by=user,
     )
     # Intake desligado (D7): bloqueia o reenvio do gate antes do serviço — a
     # resposta volta ao detalhe (302), nunca 4xx/500 nem efeito colateral.
@@ -1209,6 +1213,8 @@ def gate_resubmit(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
             role=active_role,
             files=documents,
         )
+    except PermissionError as exc:
+        raise PermissionDenied(str(exc)) from exc
     except IntakeValidationError as exc:
         logger.warning("gate_resubmit_invalid user=%s case=%s motivo=%s", user.pk, case_id, exc)
         return _gate_action_error(str(exc), case_id, status=400)
@@ -1250,8 +1256,8 @@ def _procedure_review_support_error(case_id: uuid.UUID, case_reference: str) -> 
 def procedure_review_confirm(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     """Confirma o procedimento do caso e solicita o reprocessamento (R3/D2).
 
-    POST escopado ao caso do próprio NIR (alheio/inexistente → 404, sem
-    vazar informação). A cardinalidade é validada via ``getlist`` (um único
+    POST em escopo de equipe (qualquer ``nir`` confirma caso de qualquer criador;
+    inexistente → 404, sem vazar informação). A cardinalidade é validada via ``getlist`` (um único
     valor — o ChoiceField sozinho tomaria o último de um campo repetido) e
     o restante pelo ``ProcedureReviewForm``; a defesa de mutação continua no
     serviço ``confirm_case_procedure_review``. Sucesso → redirect ao detalhe
@@ -1267,7 +1273,6 @@ def procedure_review_confirm(request: HttpRequest, case_id: uuid.UUID) -> HttpRe
     case = get_object_or_404(
         Case.objects.only("pk", "case_id", "created_by_id", "agency_record_number"),
         case_id=case_id,
-        created_by=user,
     )
     detail_url = reverse("intake:case_detail", args=[case.case_id])
     selected = request.POST.getlist("procedure_type")
@@ -1361,7 +1366,6 @@ def procedure_review_confirm(request: HttpRequest, case_id: uuid.UUID) -> HttpRe
     full_case = get_object_or_404(
         Case.objects.select_related("created_by").prefetch_related("procedures"),
         case_id=case_id,
-        created_by=user,
     )
     context = _assemble_case_detail_context(full_case, review_form=display_form, viewer=user)
     return render(request, "intake/case_detail.html", context, status=400)

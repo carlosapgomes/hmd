@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}{{ app_display_name }} — Todos os seus encaminhamentos{% endblock %}
+{% block title %}{{ app_display_name }} — Casos em processamento{% endblock %}
 
-{% block page_title %}<h1 class="page-title">Todos os seus encaminhamentos</h1>{% endblock %}
+{% block page_title %}<h1 class="page-title">Casos em processamento</h1>{% endblock %}
 
 {% block nav %}{% include "intake/_nav.html" with active_tab="my_cases" active_count=active_count filter_qs=filter_qs %}{% endblock %}
 

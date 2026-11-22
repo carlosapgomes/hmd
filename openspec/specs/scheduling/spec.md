@@ -8,7 +8,7 @@ Confirmar, negar e reabrir o agendamento de casos aceitos pelo médico nas duas 
 
 ### Requirement: Fila do agendador completa
 
-O sistema SHALL exibir ao papel ativo `scheduler`/`admin` as abas `Pendentes` (`SCHEDULER_REQUESTED`/`AWAITING_SCHEDULING`) e `Processados Hoje` — decisões de agendamento (confirmação ou negação) registradas no dia corrente pelo próprio agendador, independentemente do status atual do caso. Pendentes permanecem ordenadas por `days_on_screen` desc nulls-last e FIFO; Processados Hoje SHALL ser ordenada pela data/hora da decisão de agendamento, mais recente primeiro, paginada e sem filtro de unidade. Pendentes terá filtro server-side opcional por tipo de procedimento, busca client-side e cards 8/12 + tempo/ação 4/12 em desktop, com espera única, decisões médicas por procedimento e ações de reserva. Guards, partial a cada 20 s, contadores, unidade exibida quando definida e apresentação da aba processada são preservados; uid nunca é exibido. Casos decididos em dias anteriores NÃO aparecem nas abas — a consulta de casos antigos é atendida pelo «Histórico do agendador».
+O sistema SHALL exibir ao papel ativo `scheduler`/`admin` as abas `Pendentes` (`SCHEDULER_REQUESTED`/`AWAITING_SCHEDULING`) e `Processados Hoje` — decisões de agendamento (confirmação ou negação) registradas no dia corrente **por qualquer agendador (equipe), independentemente do status atual do caso e de quem processou**. Pendentes permanecem ordenadas por `days_on_screen` desc nulls-last e FIFO; Processados Hoje SHALL ser ordenada pela data/hora da decisão de agendamento, mais recente primeiro, paginada, sem filtro de unidade e exibindo o decisor (nome legível) no card. Pendentes terá filtro server-side opcional por tipo de procedimento, busca client-side e cards 8/12 + tempo/ação 4/12 em desktop, com espera única, decisões médicas por procedimento e ações de reserva. Guards, partial a cada 20 s, contadores, unidade exibida quando definida e apresentação da aba processada são preservados; uid nunca é exibido. Casos decididos em dias anteriores NÃO aparecem nas abas — a consulta de casos antigos é atendida pelo «Histórico do agendador».
 
 #### Scenario: Agendador vê a fila completa
 
@@ -36,7 +36,7 @@ O sistema SHALL exibir ao papel ativo `scheduler`/`admin` as abas `Pendentes` (`
 
 #### Scenario: Processados Hoje limita-se às decisões do dia corrente
 
-- **GIVEN** um caso com decisão de agendamento hoje pelo agendador autenticado e outro caso decidido ontem ainda não encerrado
+- **GIVEN** um caso com decisão de agendamento hoje e outro caso decidido ontem ainda não encerrado
 - **WHEN** o agendador acessa a aba processados
 - **THEN** apenas o caso decidido hoje aparece, ordenado pela data/hora da decisão (mais recente primeiro); o caso de ontem não aparece em nenhuma aba e permanece consultável pelo «Histórico do agendador»
 
@@ -44,13 +44,13 @@ O sistema SHALL exibir ao papel ativo `scheduler`/`admin` as abas `Pendentes` (`
 
 - **GIVEN** decisões de agendamento registradas hoje por outro agendador
 - **WHEN** o agendador autenticado acessa a aba processados
-- **THEN** nenhuma delas é listada — a aba é escopada ao decisor
+- **THEN** elas são listadas com o decisor visível no card — a aba é da equipe de agendamento, não do decisor
 
 #### Scenario: Aba processada usa rótulo de recebimento
 
 - **GIVEN** um caso já processado pelo agendamento com nome e idade
 - **WHEN** o agendador acessa a aba processados
-- **THEN** o card exibe o rótulo «Recebido há …» e NÃO exibe «Aguardando», com a idade junto do nome
+- **THEN** o card exibe o rótulo «Recebido há …», o decisor da decisão e NÃO exibe «Aguardando», com a idade junto do nome
 
 #### Scenario: Cards sem o identificador interno do caso
 
@@ -114,7 +114,7 @@ O sistema SHALL exibir ao papel ativo `scheduler`/`admin` as abas `Pendentes` (`
 
 #### Scenario: Badges de contagem nas abas
 
-- **GIVEN** 2 casos aguardando e 4 decisões de agendamento do dia corrente pelo próprio agendador
+- **GIVEN** 2 casos aguardando e 4 decisões de agendamento do dia corrente (de qualquer agendador)
 - **WHEN** a fila é renderizada
 - **THEN** as abas exibem as contagens 2 e 4
 
@@ -135,8 +135,6 @@ O sistema SHALL exibir ao papel ativo `scheduler`/`admin` as abas `Pendentes` (`
 - **GIVEN** um card com múltiplos procedimentos, decisões e ação
 - **WHEN** a fila é exibida em viewport de 390 px
 - **THEN** as regiões empilham, badges quebram linha, a ação permanece acessível com alvo mínimo de 44 px e não há overflow horizontal
-
-
 ### Requirement: Confirmação de agendamento com unidade e resposta final
 
 O sistema SHALL confirmar o agendamento de um caso em `SCHEDULER_REQUESTED` ou `AWAITING_SCHEDULING` registrando unidade (1 ou 2), data/hora e local, encadeando as transições até `FINAL_REPLY_POSTED` no mesmo atomic (na origem `AWAITING_SCHEDULING` a transição de entrada de fila não é re-disparada) e postando na thread do caso a resposta final ao NIR: para unidade 1, o texto padrão com local e data/hora; para unidade 2, exatamente "Recusar o relatório — caso agendado na {label da unidade 2 configurada}, que comunicará a Secretaria" (com os defaults de ambiente: "Recusar o relatório — caso agendado na Unidade 2, que comunicará a Secretaria"). Data/hora no passado é rejeitada. A abertura da página de confirmação reserva o caso (contexto próprio do agendador) e a submissão exige reserva vigente (token de lock), liberando-a ao concluir com sucesso.
@@ -208,7 +206,7 @@ O sistema SHALL permitir desmarcar, por intercorrência, um caso confirmado na u
 
 ### Requirement: Visão do agendador limitada ao necessário
 
-O detalhe do caso para o agendador SHALL exibir a identificação do paciente (nome, data de nascimento, número de ocorrência), o **sumário clínico completo re-identificado apenas na renderização** (paridade ats-web — o truncamento à primeira linha é removido), os procedimentos com as decisões médicas (incluindo motivos das negativas), os dados de agendamento, a thread de comunicações e, ao final, a trilha de eventos em card collapsible «Trilha de eventos» (a mesma do painel: rótulos legíveis com badge por categoria, ator com papel em português, data/hora; fechado por padrão) — sem os demais artefatos do pipeline (estrutura extraída, alertas da policy, sugestão). O `<title>` e o breadcrumb do detalhe SHALL usar a **referência humana** do caso — nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel) — e o uid completo NÃO aparece em texto visível (permanece apenas como chave das URLs). O PDF do relatório original e o texto extraído SHALL ficar disponíveis ao agendador somente após a decisão de agendamento, para casos processados por ele mesmo — por documento do relatório (o relatório pode chegar em múltiplos PDFs ordenados) — nos cards `Texto Extraído do PDF` e `Visualizar PDF Original` (spec `pdf-original-viewer`).
+O detalhe do caso para o agendador SHALL exibir a identificação do paciente (nome, data de nascimento, número de ocorrência), o **sumário clínico completo re-identificado apenas na renderização** (paridade ats-web — o truncamento à primeira linha é removido), os procedimentos com as decisões médicas (incluindo motivos das negativas), os dados de agendamento, a thread de comunicações e, ao final, a trilha de eventos em card collapsible «Trilha de eventos» (a mesma do painel: rótulos legíveis com badge por categoria, ator com papel em português, data/hora; fechado por padrão) — sem os demais artefatos do pipeline (estrutura extraída, alertas da policy, sugestão). O `<title>` e o breadcrumb do detalhe SHALL usar a **referência humana** do caso — nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel) — e o uid completo NÃO aparece em texto visível (permanece apenas como chave das URLs). O PDF do relatório original e o texto extraído SHALL ficar disponíveis ao agendador somente após a decisão de agendamento — **para qualquer agendador da equipe, em casos com decisão registrada por qualquer decisor (decisão do dono 2026-11-22)** — por documento do relatório (o relatório pode chegar em múltiplos PDFs ordenados) — nos cards `Texto Extraído do PDF` e `Visualizar PDF Original` (spec `pdf-original-viewer`).
 
 #### Scenario: Agendador vê o diagnóstico resumido re-identificado
 
@@ -224,14 +222,14 @@ O detalhe do caso para o agendador SHALL exibir a identificação do paciente (n
 
 #### Scenario: PDF disponível apenas de caso processado pelo próprio agendador
 
-- **GIVEN** um caso confirmado pelo agendador autenticado, com dois documentos de relatório
-- **WHEN** ele solicita o PDF de cada documento do caso
+- **GIVEN** um caso confirmado por qualquer agendador, com dois documentos de relatório
+- **WHEN** qualquer agendador solicita o PDF de cada documento do caso
 - **THEN** cada documento original é servido como PDF
 
 #### Scenario: PDF negado a outro agendador ou a caso reaberto
 
-- **GIVEN** um caso confirmado por outro agendador e um caso reaberto por intercorrência (sem agendador vinculado)
-- **WHEN** o agendador autenticado solicita o PDF de qualquer um deles
+- **GIVEN** um caso reaberto por intercorrência (fora dos estados pós-decisão de agendamento)
+- **WHEN** qualquer agendador solicita o PDF
 - **THEN** recebe HTTP 404 e nenhum conteúdo do documento é exposto
 
 #### Scenario: Detalhe do agendador usa a referência humana
@@ -242,9 +240,9 @@ O detalhe do caso para o agendador SHALL exibir a identificação do paciente (n
 
 #### Scenario: Texto extraído sob o mesmo gate do PDF
 
-- **GIVEN** um caso confirmado pelo agendador autenticado, com texto extraído
+- **GIVEN** um caso confirmado por qualquer agendador, com texto extraído
 - **WHEN** ele abre o detalhe do agendamento
-- **THEN** o card `Texto Extraído do PDF` exibe o texto; em caso de outro agendador ou fora do gate, nem o card de texto nem o de PDF aparecem
+- **THEN** o card `Texto Extraído do PDF` exibe o texto; fora do gate de estado, nem o card de texto nem o de PDF aparecem
 
 #### Scenario: Trilha do agendador mostra quem decidiu e quem criou
 
@@ -252,7 +250,11 @@ O detalhe do caso para o agendador SHALL exibir a identificação do paciente (n
 - **WHEN** o agendador abre o detalhe e expande a trilha de eventos
 - **THEN** os eventos de criação e de decisão médica exibem o nome do ator com o papel em português e a data/hora; o card permanece fechado por padrão e o sumário completo permanece visível acima
 
+#### Scenario: PDF e texto de caso processado por outro agendador da equipe
 
+- **GIVEN** um caso confirmado por outro agendador, em estado pós-decisão
+- **WHEN** um agendador diferente abre o detalhe do agendamento
+- **THEN** os cards `Texto Extraído do PDF` e `Visualizar PDF Original` aparecem e o PDF é servido normalmente (equipe de agendamento)
 ### Requirement: Rótulos de unidade configuráveis por ambiente
 
 O sistema SHALL exibir os nomes das unidades de agendamento a partir das variáveis de ambiente `HMD_UNIT_1_LABEL` e `HMD_UNIT_2_LABEL` (defaults "Unidade 1" e "Unidade 2"), com fonte única de resolução, em todos os pontos de exibição: choices do formulário de confirmação, resposta final ao NIR da unidade 2, painel, detail do caso e manual do usuário. O valor persistido de agendamento continua sendo o código da unidade (1 ou 2); labels não alteram validação, FSM ou dados históricos já gravados.
@@ -325,7 +327,7 @@ texto visível.
 
 - **GIVEN** um resultado de busca no histórico
 - **WHEN** o agendador abre o detalhe do caso
-- **THEN** o detalhe é exibido em leitura (mesmo conteúdo do detalhe do agendador) sem botões de confirmação, negação ou desmarcação, e o PDF/texto extraído seguem o gate de casos processados por ele mesmo
+- **THEN** o detalhe é exibido em leitura (mesmo conteúdo do detalhe do agendador) sem botões de confirmação, negação ou desmarcação, e o PDF/texto extraído seguem o gate de equipe — estados pós-decisão de agendamento com decisão registrada por qualquer decisor (decisão do dono 2026-11-22)
 
 #### Scenario: Negativa médica encerrada não entra no histórico
 
@@ -338,7 +340,6 @@ texto visível.
 - **GIVEN** usuário com papel ativo `nir`
 - **WHEN** acessa a página de histórico do agendador
 - **THEN** recebe HTTP 403
-
 ### Requirement: Badge de transporte nos cards da fila do agendador
 
 Os cards da fila do agendador (abas Pendentes e Processados Hoje) SHALL exibir um badge com o tipo de transporte do caso quando presente: `UTI Móvel` com ênfase visual de gravidade e `Ambulância Básica` em estilo neutro, com rótulos canônicos — mesma apresentação das demais filas (paridade de sinal entre papéis). Caso sem transporte extraído não exibe badge.

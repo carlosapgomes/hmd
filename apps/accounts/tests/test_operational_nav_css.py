@@ -200,14 +200,14 @@ class TestOperationalNavMarkup:
         ).content.decode()
         nav = _nav_segment(body)
         assert '<span class="badge' not in nav
-        my_tag, _ = _link(nav, "Meus Casos")
+        my_tag, _ = _link(nav, "Casos em Processamento")
         closed_tag, _ = _link(nav, "Casos Encerrados")
         assert 'data-count="1"' in my_tag
         assert "nav-count-badge--neutral" in my_tag
         assert "data-count" not in closed_tag
-        assert ">Meus Casos</a>" in nav
+        assert ">Casos em Processamento</a>" in nav
         assert ">Casos Encerrados</a>" in nav
-        # filter_qs (OLI-004) preservado só no link da área (Meus Casos).
+        # filter_qs (OLI-004) preservado só no link da área (Casos em Processamento).
         assert "q=999001" in my_tag and "status=FAILED" in my_tag
         assert "q=999001" not in closed_tag
         assert 'aria-current="page"' in my_tag
@@ -230,11 +230,11 @@ class TestOperationalNavMarkup:
 
         body = client.get(reverse("profile")).content.decode()
         nav = _nav_segment(body)
-        assert "Meus Casos" in nav
+        assert "Casos em Processamento" in nav
         assert "data-count" not in nav
         assert "nav-count-badge" not in nav
         assert '<span class="badge' not in nav
-        assert ">Meus Casos</a>" in nav
+        assert ">Casos em Processamento</a>" in nav
 
     def test_transversal_page_has_no_active_tab(self, client: Client) -> None:
         """Páginas transversais (perfil) mantêm a faixa sem aba ativa."""

@@ -118,6 +118,11 @@ def _future_datetime(**kwargs: int) -> datetime:
     return timezone.now() + timedelta(**kwargs)
 
 
+def _deny(case: Case, scheduler: User, *, reason: str = "sem vaga na unidade") -> None:
+    """Nega o agendamento do caso via serviço transacional."""
+    deny_case_scheduling(case, reason=reason, user=scheduler, role=SCHEDULER_ROLE)
+
+
 def _confirm(
     case: Case,
     scheduler: User,
@@ -792,13 +797,14 @@ def test_historical_detail_pdf_gate_own_scheduler(
 
 
 @pytest.mark.django_db
-def test_historical_detail_pdf_denied_other_scheduler(
+def test_historical_detail_pdf_shown_to_other_scheduler_of_team(
     client: Client,
     nir_user: User,
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """Outro agendador (não decisor): PDF segue 404 fail-closed no gate."""
+    """R1 (equipe, inversão D6): detalhe histórico de caso confirmado por
+    OUTRO agendador — outro agendador vê os cards e o PDF é servido."""
     doctor = user_factory("medico-pdf-alheio", ("doctor",))
     decider = user_factory("agendador-pdf-decisor", ("scheduler",))
     other = user_factory("agendador-pdf-alheio", ("scheduler",))
@@ -819,9 +825,44 @@ def test_historical_detail_pdf_denied_other_scheduler(
     response = client.get(reverse(DETAIL_URL, args=[case.case_id]))
 
     assert response.status_code == 200
-    assert "Visualizar PDF Original" not in response.content.decode()
+    assert "Visualizar PDF Original" in response.content.decode()
     pdf_response = client.get(reverse("scheduler:case_pdf", args=[case.case_id, 1]))
-    assert pdf_response.status_code == 404
+    assert pdf_response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_historical_detail_pdf_denied_case_other_scheduler_of_team(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R1 (equipe): detalhe histórico de caso NEGADO pelo agendamento por
+    outro decisor — outro agendador vê os cards e o PDF é servido."""
+    doctor = user_factory("medico-pdf-negado-hist", ("doctor",))
+    decider = user_factory("agendador-pdf-negado-decisor", ("scheduler",))
+    other = user_factory("agendador-pdf-negado-outro", ("scheduler",))
+    case = _awaiting_scheduling_case(nir_user, doctor, [CARDIO_TYPE])
+    _deny(case, decider)
+    case.refresh_from_db()
+    assert case.status == CaseStatus.FINAL_REPLY_POSTED
+    CaseDocument.objects.create(
+        case=case,
+        file=SimpleUploadedFile("relatorio.pdf", b"%PDF-1.4 fake", content_type="application/pdf"),
+        position=1,
+        original_filename="relatorio.pdf",
+        content_type="application/pdf",
+        size_bytes=12,
+        uploaded_by=nir_user,
+    )
+
+    login_user(other, SCHEDULER_ROLE)
+    response = client.get(reverse(DETAIL_URL, args=[case.case_id]))
+
+    assert response.status_code == 200
+    assert "Visualizar PDF Original" in response.content.decode()
+    pdf_response = client.get(reverse("scheduler:case_pdf", args=[case.case_id, 1]))
+    assert pdf_response.status_code == 200
 
 
 @pytest.mark.django_db

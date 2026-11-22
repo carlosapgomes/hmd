@@ -1,10 +1,12 @@
-"""Aba «Processados Hoje» do agendador (slice 005, R2/R4).
+"""Aba «Processados Hoje» do agendador (slice 006, R1–R4).
 
-R2: a aba ``processados`` lista decisões de agendamento (confirmação OU
-negação) do dia corrente pelo próprio agendador
-(``scheduling_decided_by`` + ``scheduling_decided_at`` do slice 004 na
-janela local), qualquer status atual, ordenada por data/hora desc; caso de
-dia anterior fora das abas (consultável no Histórico do slice 004).
+R1: a aba ``processados`` lista decisões de agendamento (confirmação OU
+negação) do dia corrente de qualquer agendador da equipe
+(``scheduling_decided_by__isnull=False`` + ``scheduling_decided_at`` do
+slice 004 na janela local), qualquer status atual, ordenada por data/hora
+desc, com o decisor visível no card; caso de dia anterior fora das abas
+(consultável no Histórico do slice 004).
+R2: decisor nulo (backfill fail-closed) fora da aba de todos.
 R4: contadores, títulos («Processados Hoje») e estado vazio com a nova
 semântica; pendentes inalteradas em escopo e ordenação.
 """
@@ -167,20 +169,33 @@ def test_processed_today_includes_only_own_decisions(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R2: decisões de hoje de OUTRO agendador não aparecem na minha aba."""
+    """R1: decisões de hoje de OUTRO agendador aparecem na aba, com o decisor visível.
+
+    Título histórico preservado com corpo invertido (D8): a aba é da equipe
+    de agendamento, não do decisor — confirmação E negação de outro
+    agendador são listadas com o nome do decisor.
+    """
     doctor = user_factory("medico-outro-proc", (DOCTOR_ROLE,))
     mine = user_factory("agendador-proprio-hoje", (SCHEDULER_ROLE,))
     other = user_factory("agendador-outro-hoje", (SCHEDULER_ROLE,))
     own = _confirmed_case(nir_user, doctor, mine, patient_name="Paciente Proprio Proc")
     alien = _confirmed_case(nir_user, doctor, other, patient_name="Paciente Alheio Proc")
+    alien_denied = _denied_case(nir_user, doctor, other, patient_name="Paciente Alheio Negado")
     login_user(mine, SCHEDULER_ROLE)
 
-    page, _ = _processed_bodies(client)
+    page, partial = _processed_bodies(client)
 
     assert str(own.case_id) in page
     assert "Paciente Proprio Proc" in page
-    assert str(alien.case_id) not in page
-    assert "Paciente Alheio Proc" not in page
+    assert str(alien.case_id) in page
+    assert "Paciente Alheio Proc" in page
+    assert str(alien_denied.case_id) in page
+    assert "Paciente Alheio Negado" in page
+    assert other.display_name in page
+    assert str(alien.case_id) in partial
+    assert str(alien_denied.case_id) in partial
+    assert "Paciente Alheio Negado" in partial
+    assert other.display_name in partial
 
 
 @pytest.mark.django_db
@@ -216,7 +231,11 @@ def test_processed_null_decider_excluded_from_everyone(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R2: decisão com decisor nulo (fail-closed) fora da aba de todos."""
+    """R2: decisão com decisor nulo (fail-closed) fora da aba de todos.
+
+    A row segue consultável pelo Histórico do slice 004 (universo =
+    ``scheduling_decided_at`` preenchido, qualquer decisor).
+    """
     doctor = user_factory("medico-nulo-proc", (DOCTOR_ROLE,))
     scheduler = user_factory("agendador-nulo-fora", (SCHEDULER_ROLE,))
     legacy = _confirmed_case(nir_user, doctor, scheduler, patient_name="Paciente Nulo Proc")
@@ -229,6 +248,11 @@ def test_processed_null_decider_excluded_from_everyone(
     page, _ = _processed_bodies(client)
 
     assert "Paciente Nulo Proc" not in page
+
+    historical = client.get(
+        reverse("scheduler:historical_search"), {"q": "Paciente Nulo Proc"}
+    ).content.decode()
+    assert "Paciente Nulo Proc" in historical
 
 
 @pytest.mark.django_db
@@ -255,6 +279,50 @@ def test_processed_today_ordered_by_decision_desc(
     assert page.index(str(newer.case_id)) < page.index(str(older.case_id))
 
 
+@pytest.mark.django_db
+def test_processed_today_render_query_count_bounded_independent_of_card_count(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+    login_user: Callable[[User, str], None],
+) -> None:
+    """R3 (matriz ``assertNumQueries``): sem N+1 do decisor no card.
+
+    Renderizar a aba processados (página cheia E partial) com 1 ou 4 cards
+    executa o MESMO número de queries e dentro de um teto fixo — o decisor
+    vem de ``select_related("scheduling_decided_by")``, nunca de query por card.
+    """
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    doctor = user_factory("medico-queries-hoje", (DOCTOR_ROLE,))
+    scheduler = user_factory("agendador-queries-hoje", (SCHEDULER_ROLE,))
+    login_user(scheduler, SCHEDULER_ROLE)
+    queue_url = reverse("scheduler:queue") + "?tab=processados"
+    partial_url = reverse("scheduler:queue_partial") + "?tab=processados"
+
+    def _query_count(url: str) -> int:
+        with CaptureQueriesContext(connection) as captured:
+            response = client.get(url)
+        assert response.status_code == 200
+        return len(captured.captured_queries)
+
+    _confirmed_case(nir_user, doctor, scheduler, patient_name="Paciente Query Hoje Um")
+    page_count_few = _query_count(queue_url)
+    partial_count_few = _query_count(partial_url)
+
+    other = user_factory("agendador-queries-outro", (SCHEDULER_ROLE,))
+    for index in range(3):
+        _confirmed_case(nir_user, doctor, other, patient_name=f"Paciente Query Equipe {index}")
+    page_count_many = _query_count(queue_url)
+    partial_count_many = _query_count(partial_url)
+
+    assert page_count_many == page_count_few
+    assert partial_count_many == partial_count_few
+    assert page_count_many <= 25
+    assert partial_count_many <= 25
+
+
 # ── R4: contadores, títulos e estado vazio ────────────────────────────────
 
 
@@ -265,23 +333,27 @@ def test_processed_today_counts_titles_and_empty_state(
     user_factory: Callable[..., User],
     login_user: Callable[[User, str], None],
 ) -> None:
-    """R4: badges contam decisões de hoje do próprio agendador; títulos «Hoje»."""
+    """R4: badges contam decisões de hoje da equipe (qualquer decisor); títulos «Hoje»."""
     doctor = user_factory("medico-conta-proc", (DOCTOR_ROLE,))
     scheduler = user_factory("agendador-conta-hoje", (SCHEDULER_ROLE,))
     other = user_factory("agendador-conta-outro", (SCHEDULER_ROLE,))
-    _confirmed_case(nir_user, doctor, scheduler, patient_name="Paciente Conta Um Proc")
-    _denied_case(nir_user, doctor, scheduler, patient_name="Paciente Conta Dois Proc")
+    first = _confirmed_case(nir_user, doctor, scheduler, patient_name="Paciente Conta Um Proc")
+    second = _denied_case(nir_user, doctor, scheduler, patient_name="Paciente Conta Dois Proc")
     stale = _confirmed_case(nir_user, doctor, scheduler, patient_name="Paciente Conta Velha Proc")
     _backdate_scheduling_decision(stale, timezone.now() - timedelta(days=1, hours=2))
-    _confirmed_case(nir_user, doctor, other, patient_name="Paciente Conta Alheia Proc")
+    alien = _confirmed_case(nir_user, doctor, other, patient_name="Paciente Conta Alheia Proc")
     login_user(scheduler, SCHEDULER_ROLE)
 
     body = client.get(reverse("scheduler:queue"), {"tab": "processados"}).content.decode()
 
     assert "Processados Hoje" in body
-    assert 'data-count="2"' in body
-    assert "Paciente Conta Alheia Proc" not in body
+    assert 'data-count="3"' in body
+    assert "Paciente Conta Alheia Proc" in body
 
+    # A aba é da equipe: o vazio exige um dia sem nenhuma decisão — rebaixa
+    # as três decisões de hoje para fora da janela e revisita como outro visor.
+    for case in (first, second, alien):
+        _backdate_scheduling_decision(case, timezone.now() - timedelta(days=1, hours=2))
     login_user(user_factory("agendador-vazio-hoje", (SCHEDULER_ROLE,)), SCHEDULER_ROLE)
     empty_body = client.get(reverse("scheduler:queue"), {"tab": "processados"}).content.decode()
 

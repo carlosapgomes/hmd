@@ -16,7 +16,6 @@ import uuid
 
 import pytest
 from django.core.files.base import ContentFile
-from django.http import Http404
 
 from apps.accounts.models import Role, User
 from apps.cases.events import CaseEventType
@@ -368,15 +367,22 @@ def test_confirm_rejects_wrong_role(
 def test_confirm_rejects_non_owner(
     nir_user: User, other_nir_user: User, enqueue_recorder: list[uuid.UUID]
 ) -> None:
+    """R2 (visibilidade-por-equipe slice 003, corpo invertido — D6: título
+    antitético preservado): NIR não-criador confirma o procedimento da equipe —
+    a confirmação é aceita com o OPERADOR como ator do evento."""
     case = _make_marked_retained_case(nir_user)
-    events_before = case.events.count()
-    with pytest.raises(Http404):
-        confirm_case_procedure_review(
-            **_confirm_kwargs(case, user=other_nir_user)  # type: ignore[arg-type]
-        )
-    case.refresh_from_db()
-    assert case.events.count() == events_before
-    assert enqueue_recorder == []
+    result = confirm_case_procedure_review(
+        **_confirm_kwargs(case, user=other_nir_user)  # type: ignore[arg-type]
+    )
+    result.refresh_from_db()
+    assert result.manual_review_required is False
+    assert result.manual_review_reason == ""
+    confirmation = CaseEvent.objects.get(
+        case=case, event_type=CaseEventType.CASE_PROCEDURE_REVIEW_CONFIRMED
+    )
+    assert confirmation.actor == other_nir_user
+    assert confirmation.actor_role == NIR_ROLE
+    assert enqueue_recorder == [case.case_id]
 
 
 @pytest.mark.django_db(transaction=True)

@@ -27,7 +27,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
-from apps.cases.closure import POST_CLOSURE_ISSUE_STATUS_OPENED
+from apps.cases.closure import POST_CLOSURE_ISSUE_STATUS_OPENED, administratively_close_case
 from apps.cases.events import CaseEventType
 from apps.cases.models import Case, CaseStatus, SchedulingUnit
 
@@ -491,14 +491,15 @@ def test_historical_search_reachable_from_nir_nav(
     client: Client,
     nir_user: User,
 ) -> None:
-    """O nav do NIR expõe a busca histórica em link distinto da aba por criador."""
+    """O nav do NIR expõe a busca histórica como «Casos Encerrados» (sem aba
+    por criador — reenvio-corrigido-qualquer-nir slice 002)."""
     client.force_login(nir_user)
     body = client.get(reverse("intake:my_cases")).content.decode()
     search_url = reverse(SEARCH_URL)
 
-    assert f'href="{search_url}"' in body
-    # A aba de encerrados por criador permanece apontando para my_cases.
-    assert 'href="/intake/cases/?tab=closed"' in body
+    assert f'href="{search_url}">Casos Encerrados</a>' in body
+    # Sem aba de encerrados por criador no nav.
+    assert 'href="/intake/cases/?tab=closed"' not in body
 
     followed = client.get(search_url)
     assert followed.status_code == 200
@@ -514,3 +515,45 @@ def test_intranet_guard_covers_historical_search(client: Client, nir_user: User)
     response = client.get(reverse(SEARCH_URL), {"q": "5040778"}, REMOTE_ADDR=EXTERNAL_IP)
 
     assert response.status_code == 403
+
+
+# ── Resultado do encerramento administrativo no detalhe histórico (fix-1 P1) ──
+
+# Motivo do catálogo do encerramento administrativo usado na fixture.
+ADMIN_CLOSURE_REASON_CODE = "stuck_lock"
+ADMIN_CLOSURE_REASON_TEXT = "lock do worker nao liberado apos 24h"
+MANAGER_ROLE = "manager"
+
+
+@pytest.mark.django_db
+def test_historical_detail_shows_administrative_closure_result_and_reason(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[[str, str], User],
+) -> None:
+    """Cenário «Encerramento administrativo visível ao criador» (spec
+    case-closure, fix-1 do slice 002): caso do criador encerrado
+    administrativamente é localizado pela busca e o detalhe histórico exibe o
+    resultado «Encerrado administrativamente» + o motivo registrado; caso
+    ``CLEANED`` sem encerramento administrativo segue sem o selo."""
+    manager = user_factory("gestor-fix1-adm", MANAGER_ROLE)
+    case = _open_case(nir_user, record_number="6060607", patient_name="Paciente Encer Adm")
+    administratively_close_case(
+        case=case,
+        user=manager,
+        active_role=MANAGER_ROLE,
+        reason_code=ADMIN_CLOSURE_REASON_CODE,
+        reason_text=ADMIN_CLOSURE_REASON_TEXT,
+    )
+    plain = _eligible_closed_case(nir_user, record_number="6060608", patient_name="Paciente Comum")
+
+    client.force_login(nir_user)
+    search_body = client.get(reverse(SEARCH_URL), {"q": "6060607"}).content.decode()
+    assert reverse(DETAIL_URL, args=[case.case_id]) in search_body
+
+    body = client.get(reverse(DETAIL_URL, args=[case.case_id])).content.decode()
+    assert "Encerrado administrativamente" in body
+    assert ADMIN_CLOSURE_REASON_TEXT in body
+
+    plain_body = client.get(reverse(DETAIL_URL, args=[plain.case_id])).content.decode()
+    assert "Encerrado administrativamente" not in plain_body

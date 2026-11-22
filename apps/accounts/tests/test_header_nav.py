@@ -149,7 +149,10 @@ class TestNavR2:
         assert "Casos Encerrados" in body
         assert _active_link_href(body, "Novo Encaminhamento") == reverse("intake:home")
         assert "?tab=active" in body
-        assert "?tab=closed" in body
+        # Slice 002 (reenvio-corrigido-qualquer-nir): sem aba de encerrados por
+        # criador — «Casos Encerrados» é a busca global (rota inalterada).
+        assert "?tab=closed" not in body
+        assert reverse("intake:closed_cases_search") in body
 
     def test_nir_nav_my_cases_active_and_closed(self, client: Client) -> None:
         user = _create_user("nv-nir-my", ("nir",))
@@ -158,11 +161,13 @@ class TestNavR2:
         body = client.get(reverse("intake:my_cases") + "?tab=active").content.decode()
         assert _active_link_href(body, "Meus Casos") == reverse("intake:my_cases") + "?tab=active"
 
+        # Slice 002 (reenvio-corrigido-qualquer-nir): o ``?tab=closed`` legado
+        # cai nos ativos; «Casos Encerrados» ativa na busca global.
         body = client.get(reverse("intake:my_cases") + "?tab=closed").content.decode()
-        assert (
-            _active_link_href(body, "Casos Encerrados")
-            == reverse("intake:my_cases") + "?tab=closed"
-        )
+        assert _active_link_href(body, "Meus Casos") == reverse("intake:my_cases") + "?tab=active"
+
+        body = client.get(reverse("intake:closed_cases_search")).content.decode()
+        assert _active_link_href(body, "Casos Encerrados") == reverse("intake:closed_cases_search")
 
     def test_doctor_nav_pending_and_decided_active(self, client: Client) -> None:
         user = _create_user("nv-doc", ("doctor",))

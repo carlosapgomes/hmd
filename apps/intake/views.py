@@ -133,9 +133,10 @@ _FINAL_REPLY_STATES = frozenset(
 # Formato de exibição da data/hora do agendamento (fuso local da aplicação).
 _SCHEDULED_AT_FORMAT = "%d/%m/%Y %H:%M"
 
-# Abas de "meus casos" (R3): ``active`` é a default; ``closed`` lista apenas
-# casos ``CLEANED``. Valor desconhecido de ``?tab=`` cai na default (seguro).
-_MY_CASES_TABS = frozenset({"active", "closed"})
+# Aba de "meus casos" (reenvio-corrigido-qualquer-nir, slice 002, D3): só
+# ativos — ``active`` é a única aba; o ``?tab=`` legado (incluindo ``closed``)
+# e qualquer valor desconhecido caem na default segura (ativos).
+_MY_CASES_TABS = frozenset({"active"})
 _DEFAULT_MY_CASES_TAB = "active"
 
 # Filtros server-side de "meus casos" (ui-parity-queues slice 003, R2/D4):
@@ -375,9 +376,9 @@ def _build_my_cases_context(request: HttpRequest) -> dict[str, object]:
     requested_tab = request.GET.get("tab", _DEFAULT_MY_CASES_TAB)
     current_tab = requested_tab if requested_tab in _MY_CASES_TABS else _DEFAULT_MY_CASES_TAB
 
-    # Filtros preservados na URL do partial e nas pills (D4): só entram os
-    # vigentes (``q`` curto é ecoado no form, mas não filtra — a consulta
-    # é que o ignora).
+    # Filtros preservados na URL do partial e no link do header (D4): só
+    # entram os vigentes (``q`` curto é ecoado no form, mas não filtra — a
+    # consulta é que o ignora).
     search = request.GET.get("q", "").strip()
     status_filter = request.GET.get("status", "")
     if status_filter not in _MY_CASES_STATUS_VALUES:
@@ -397,11 +398,11 @@ def _build_my_cases_context(request: HttpRequest) -> dict[str, object]:
     partial_url = f"{reverse('intake:my_cases_partial')}?{urlencode(partial_params)}"
 
     own_cases = Case.objects.filter(created_by=user)
-    # Contadores das pills (D5/D6): totais do criador por aba, sem os filtros
-    # de busca (as pills navegam entre abas, não entre filtros).
+    # Contador do header (reenvio-corrigido-qualquer-nir, slice 002, D3):
+    # total de ativos do criador, sem os filtros de busca (o header conta a
+    # lista, não os filtros); o badge de encerrados desaparece com a aba.
     active_cases = own_cases.exclude(status=CaseStatus.CLEANED)
-    closed_cases = own_cases.filter(status=CaseStatus.CLEANED)
-    selected_cases = closed_cases if current_tab == "closed" else active_cases
+    selected_cases = active_cases
 
     filtered_cases = selected_cases
     if len(search) >= _MY_CASES_MIN_SEARCH_LENGTH:
@@ -450,7 +451,6 @@ def _build_my_cases_context(request: HttpRequest) -> dict[str, object]:
         "items": items,
         "current_tab": current_tab,
         "active_count": active_cases.count(),
-        "closed_count": closed_cases.count(),
         # Filtros vigentes (form ecoa ``q``/``status``/``procedure_type``).
         "search": search,
         "status_filter": status_filter,
@@ -464,13 +464,13 @@ def _build_my_cases_context(request: HttpRequest) -> dict[str, object]:
 
 @role_required("nir")
 def my_cases(request: HttpRequest) -> HttpResponse:
-    """Lista "meus casos" com abas ativos/encerrados (R3, escopo por criador).
+    """Lista "meus casos" com apenas ativos (R3, escopo por criador).
 
-    A aba **ativos** (default de ``?tab=``, com fallback seguro para valores
-    desconhecidos) lista os casos do criador em tudo exceto ``CLEANED``; a
-    aba **encerrados** lista apenas os ``CLEANED`` — mesmo formato de items,
-    badges e ordenação (``created_at desc``). ``?tab=`` desconhecido/ausente
-    nunca vaza nem quebra: cai em ativos.
+    Lista os casos do criador em tudo exceto ``CLEANED`` (reenvio-corrigido-
+    qualquer-nir, slice 002, D3 — sem navegação Ativos/Encerrados). O ``?tab=``
+    legado (incluindo ``closed``) e valores desconhecidos/ausentes caem na
+    default segura de ativos, preservando os filtros — nunca vaza nem quebra.
+    Os encerrados são alcançados pela página «Casos Encerrados» (busca global).
 
     Slice 003 do painel-lista-encerramento (R3/D4): o queryset pré-carrega
     ``events`` (além de ``procedures``) e o caso ``CLEANED`` com evento
@@ -497,7 +497,7 @@ def my_cases_partial(request: HttpRequest) -> HttpResponse:
     Reutiliza o assembly da página cheia (``_build_my_cases_context``) e
     renderiza SÓ ``intake/_my_cases_content.html`` — o mesmo fragmento que a
     página inclui no server-side. Mesmos guards (``role_required``) e o mesmo
-    escopo por criador com os mesmos filtros/aba da URL.
+    escopo por criador (só ativos) com os mesmos filtros da URL.
     """
     return render(request, "intake/_my_cases_content.html", _build_my_cases_context(request))
 
@@ -587,9 +587,15 @@ def closed_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse
     (o reaberto segue no escopo histórico); motivo ausente → re-render com
     erro (HTTP 400), sem escrita (garantia do serviço); caso inelegível →
     re-render com o motivo de inelegibilidade e status 400, sem escrita.
+
+    Fix-1 do slice 002 (spec case-closure, cenário «Encerramento
+    administrativo visível ao criador»): caso ``CLEANED`` com evento
+    administrativo projeta o resultado «Encerramento administrativo» + motivo
+    registrado no card Resultado (reutiliza ``_administrative_closure_result``
+    — o card de decisões médicas sozinho não cobre esse encerramento).
     """
     case = get_object_or_404(
-        Case.objects.select_related("created_by").prefetch_related("procedures"),
+        Case.objects.select_related("created_by").prefetch_related("procedures", "events"),
         case_id=case_id,
     )
     if not _in_historical_scope(case):
@@ -597,6 +603,15 @@ def closed_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse
     ineligibility_reason = get_post_closure_issue_ineligibility_reason(case)
     eligible = ineligibility_reason == ""
     issue_form: PostClosureIssueForm | None = PostClosureIssueForm() if eligible else None
+    # Resultado do encerramento administrativo (fix-1): só para ``CLEANED``
+    # com evento — sem ele, nada muda (strings vazias, card inalterado).
+    admin_closure = (
+        _administrative_closure_result(case) if case.status == CaseStatus.CLEANED else None
+    )
+    admin_closure_context = {
+        "admin_closure_result": admin_closure[0] if admin_closure else "",
+        "admin_closure_reason": admin_closure[1] if admin_closure else "",
+    }
 
     if request.method == "POST":
         if not eligible:
@@ -612,6 +627,7 @@ def closed_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse
                     "eligible": False,
                     "ineligibility_reason": ineligibility_reason,
                     "issue_form": None,
+                    **admin_closure_context,
                 }
             )
             return render(request, "intake/closed_case_detail.html", context, status=400)
@@ -651,6 +667,7 @@ def closed_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse
             "eligible": eligible,
             "ineligibility_reason": ineligibility_reason,
             "issue_form": issue_form,
+            **admin_closure_context,
         }
     )
     status = 400 if request.method == "POST" else 200

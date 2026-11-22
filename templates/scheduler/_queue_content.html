@@ -33,7 +33,7 @@ quando já definido no agendamento.
         <div class="col-lg-8">
           <div class="fw-semibold patient-name">{{ item.patient_name }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}{% if item.unit_label %} <span class="badge rounded-pill text-bg-info">{{ item.unit_label }}</span>{% endif %}</div>
           <div class="small text-muted case-meta">
-            Nº de ocorrência: {{ item.agency_record_number }}{% if item.patient_gender %} · {{ item.patient_gender }}{% endif %}{% if item.origin_unit %} · 🏥 {{ item.origin_unit }}{% endif %}
+            Nº de ocorrência: {{ item.agency_record_number }}{% if item.patient_gender %} · {{ item.patient_gender }}{% endif %}{% if item.origin_unit %} · 🏥 {{ item.origin_unit }}{% endif %}{% if item.transport_label %} <span class="badge rounded-pill {{ item.transport_badge_class }}">🚑 {{ item.transport_label }}</span>{% endif %}
           </div>
           {% if item.reopen_reason %}
           <div class="alert alert-warning py-2 px-3 mt-1 mb-2 small">
@@ -97,7 +97,7 @@ quando já definido no agendamento.
         </div>
         <div class="fw-semibold patient-name">{{ item.patient_name }}{% if item.patient_age is not None %} · {{ item.patient_age }} a{% endif %}</div>
         <div class="small text-muted case-meta">
-          {% if tab == 'aguardando' %}⏱ Aguardando há {{ item.created_at|timesince }}{% else %}Recebido há {{ item.created_at|timesince }}{% endif %}
+          {% if tab == 'aguardando' %}⏱ Aguardando há {{ item.created_at|timesince }}{% else %}Recebido há {{ item.created_at|timesince }}{% endif %}{% if item.transport_label %} <span class="badge rounded-pill {{ item.transport_badge_class }}">🚑 {{ item.transport_label }}</span>{% endif %}
           <span class="mx-2">·</span> Recebido em {{ item.created_at|date:"d/m/Y H:i" }}
           {% if item.days_on_screen is not None %}<span class="mx-2">·</span><span class="badge rounded-pill text-bg-light border text-muted">{{ item.days_on_screen }} d em tela</span>{% endif %}
         </div>

@@ -413,6 +413,7 @@ _RESUBMIT_CLEARED_FIELDS = (
     "patient_race",
     "days_on_screen",
     "origin_unit",
+    "transport_type",
     "manual_review_required",
     "manual_review_reason",
 )
@@ -801,6 +802,7 @@ def resubmit_case_documents(
             locked.patient_race = ""
             locked.days_on_screen = None
             locked.origin_unit = ""
+            locked.transport_type = None
             locked.manual_review_required = False
             locked.manual_review_reason = ""
             locked.save(update_fields=_RESUBMIT_CLEARED_FIELDS)

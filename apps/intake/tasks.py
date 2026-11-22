@@ -49,6 +49,7 @@ from apps.intake.pdf_utils import (
     extract_agency_record_number,
     extract_document_text,
     extract_header_metadata,
+    extract_transport_type,
     strip_watermark,
 )
 from apps.intake.regulation_gate import GateResult, evaluate_regulation_report
@@ -239,6 +240,11 @@ def _extract_and_decide(case: Case, *, lock: CaseLock) -> bool:
     # D3/D4): extração PURA sobre o texto limpo, fora do atomic; a
     # persistência vai no mesmo write do ``extracted_text`` (writer único).
     header_metadata = extract_header_metadata(cleaned_text)
+    # Tipo de transporte (transport-badge, slice 001, R3/D1): extração PURA
+    # sobre o texto limpo, fora do atomic; a persistência vai no mesmo write
+    # do ``extracted_text`` (writer único); o evento de extração NÃO carrega
+    # o valor (R4).
+    transport_type = extract_transport_type(cleaned_text)
 
     with transaction.atomic():
         current = Case.objects.select_for_update().get(pk=case.pk)
@@ -262,6 +268,7 @@ def _extract_and_decide(case: Case, *, lock: CaseLock) -> bool:
         current.patient_race = header_metadata.race or ""
         current.days_on_screen = header_metadata.days_on_screen
         current.origin_unit = header_metadata.origin_unit or ""
+        current.transport_type = transport_type
         current.save(
             update_fields=[
                 "extracted_text",
@@ -272,6 +279,7 @@ def _extract_and_decide(case: Case, *, lock: CaseLock) -> bool:
                 "patient_race",
                 "days_on_screen",
                 "origin_unit",
+                "transport_type",
             ]
         )
         if gate.ok:

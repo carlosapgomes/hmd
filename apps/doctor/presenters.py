@@ -546,6 +546,9 @@ def build_case_detail_context(case: Case) -> dict[str, object]:
         "patient_age": case.patient_age,
         "patient_gender": case.patient_gender,
         "patient_race": case.patient_race,
+        # Transporte solicitado (transport-badge, slice 003, R1/R2): rótulo
+        # canônico do model; vazio quando ausente (o template usa «—").
+        "transport_label": case.get_transport_type_display() if case.transport_type else "",
     }
 
     sections = build_structure_sections(structured)

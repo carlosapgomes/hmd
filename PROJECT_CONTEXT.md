@@ -35,6 +35,32 @@ django-fsm substituído por django-fsm-2 (MIT; API django-fsm preservada — vie
 
 ## Estado atual (execução do roadmap)
 
+**Change `transport-badge` (3 slices + gate, ARQUIVADA em 2026-11-22)**: badge de
+transporte do relatório de regulação de ponta a ponta — descoberta no corpus
+real (9/9 PDFs com o label `TRANSPORTE:`); (001) extração determinística no
+worker de PDF (regex linha-âncorado com whitespace horizontal — valor na
+mesma linha; sem delimitação de seção, D1; última ocorrência vence sobre o
+texto do caso na ordem declarada, D2; domínio fechado `basic|mobile_icu` com
+`BÁSICA`→basic e rejeição silenciosa de desconhecidos, D3) + `Case.transport_type`
+(TextChoices, labels canônicos) + migration 0015 aditiva sem backfill (D5) +
+ciclo de vida: reenvio zera na transação do resubmit, `CLEANED` preserva em
+ambos os modos por ausência de `_CLEANED_EMPTY_VALUES` sem tocar closure.py
+(D6), evento de extração sem o valor; (002) badge 🚑 nos cards das três filas
+(NIR, médica nas 2 abas, agendador nas 2 abas) — «UTI Móvel» `text-bg-warning`
+com ênfase, «Ambulância Básica» `text-bg-info` neutra, rótulo sempre do
+`TextChoices` e classe do mapeamento único `TRANSPORT_BADGE_CLASSES` em
+`apps/cases/models.py` (paridade de sinal entre papéis; ausente → sem badge);
+(003) linha «Transporte» no card de identificação do detalhe médico (dt/dd
+com `|default:"—"`, espelhada na página de decisão pela partial
+`_case_cards.html` compartilhada). Pipeline LLM/anonização intocado. Execução:
+loops pi-subagents-openspec-loop/2 por slice (worker muse-spark-1.3-contributor:high
++ reviewer gpt-6.1-terra:high; slice 001 exigiu 1 fix cycle — 2 P1 de lacuna
+de teste; 002/003 limpos no round 1). Specs promovidas ×3 (intake-nir +2,
+doctor-decision +2, scheduling +1 ADDED; validate --specs --strict 17/17).
+Suíte 2331→2369. Quirks documentados nos slices: divergência nominal do
+Read-first do slice 002 (`_case_cards` vs `_queue_content` — fila é
+`_queue_content.html`; `_case_cards.html` é do detalhe/decisão).
+
 **Change `paridade-ats-filas-historico-intercorrencia` (5 slices, ARQUIVADA em 2026-11-21)**: paridade operacional com o ats-web — (001) sumário clínico COMPLETO re-identificado ao agendador no detalhe (truncamento à 1ª linha removido; cards seguem com one-liner); (002) intercorrência pós-encerramento: FSM `CLEANED→AWAITING_SCHEDULING` + serviço `open_post_closure_issue` (atomic/lock, motivo LIVRE obrigatório — reuso do padrão do desmarcar, decisão do dono; evento `CASE_POST_CLOSURE_ISSUE_OPENED` com motivo+snapshot admin), marcador canônico `clinical_data_disposed_at` (gravado na minimização E na purga; backfill; emenda ADR-0010), issue única zerada em QUALQUER chegada a CLEANED (ciência ou encerramento administrativo), fan-out de notificação aos agendadores no marco de reabertura (spec notifications MODIFIED — vale também para a pré-ciência); (003) busca NIR de encerrados por nº/nome de QUALQUER criador (cap 50, referência humana, guarda de escopo histórico própria sem afrouxar guards por criador; detalhe read-only; POST inelegível → 400 re-render sem escrita) + nav «Buscar Encerrados»; (004) «Histórico» do agendador (universo por carimbos `scheduling_decided_at/by` — confirmação E negação carimbam no atomic, nunca zerados pela reabertura; migration 0013 com backfill por eventos fail-closed; badge honesto de reaberto; dados de agendamento anteriores no resultado) + detalhe em leitura com gate de PDF intacto; (005) abas «Decididos Hoje»/«Processados Hoje» por decisor com janela do dia local (helper único `apps/cases/day_bounds.py`; carimbos `doctor_decided_at/by` no atomic da decisão + migration 0014 backfill auditável + anti-drift; caso de ontem fora das abas; encerrado-hoje dentro; decisor nulo fail-closed; manual atualizado com a PERDA APROVADA do histórico médico — paridade ats-web). Política de PHI do dono registrada no design D1 (prontuário eletrônico como referência; fronteira LLM intocada). Execução: loops pi-subagents-openspec-loop/2 (worker muse-spark-1.3-contributor:high + reviewer gpt-6.1-terra:high, máx 2 rodadas/slice, gate independente da pai; 2 slices exigiram ciclo de fix; 1 P1 aberto contra verdict leniente → ciclo aberto pela controladora). Specs promovidas ×5 (scheduling MODIFIED×2+ADDED, doctor-decision MODIFIED, intake-nir ADDED, notifications MODIFIED) + NOVA `post-closure-issue`; validate --specs --strict 17/17. Suíte 2221→2314. **Micro-change `tests-hardening-paridade-ats` (skip_specs, ARQUIVADA)**: quitou P2s deferidos — histórico testado pelo caminho real (`open_post_closure_issue`), CLEANED+PDF mesmo decisor (cards ausentes+404), fluxo backfill 0014 até a aba do decisor. Pendências/residuais: P2 #1 (RED da corrida — documentado), smoke runtime das abas no piloto, premissa do backfill revisar em produção antes de flip/purga, verify-hmd skills citam rótulos antigos.
 
 **Change `reenvio-corrigido-qualquer-nir` (2 slices, ARQUIVADA em 2026-11-21)**: decisões do dono — (001) reenvio corrigido aberto a QUALQUER usuário com papel ativo `nir` (guarda por papel em view E serviço — `_assert_owned_by` removido; validações 1 PDF/1 tipo/motivo intactas; paridade ats-web `get_object_or_404` sem filtro de criador; reenviador = criador do novo ciclo: notificações+ciência passam a ele); ação «Reenviar corrigido» no detalhe histórico; navegação sem 404 para não-criador (breadcrumb/cancelar/recusas → detalhe histórico; caso alheio fora do escopo → busca; recusas seguem redirect testado); links condicionais em «Reenvios corrigidos» (próprio→detalhe; alheio ativo→referência sem link; alheio CLEANED→histórico). (002) consolidação do nav NIR (opção A): my_cases SÓ ativos (`?tab=closed` legado → fallback seguro preservando filtros), nav 3 itens com «Casos Encerrados» = busca global (URL intacta), badge closed removido, manual atualizado; selo «Encerrado administrativamente»+motivo migrado ao detalhe histórico (órfão da aba removida — P1 do review, fix com extensão de escopo autorizada pela controladora). Plano revisado por reviewer independente (NEEDS-REWORK: BLOCKER guarda no serviço + 2 MAJORs navegação/links — resolvidos antes de codar). Loops pi-subagents-openspec-loop/2 (2 BLOCK→fix→OK). Specs promovidas: case-closure ×2 + intake-nir ×2 MODIFIED; validate --specs --strict 17/17. Suíte 2325→2331. **Residual preexistente (backlog)**: motivo do admin-closure não projetado em `event_detail_lines` após reabertura; `.pi/` skills citam `?tab=closed` (dir ignorado).

@@ -19,7 +19,7 @@ aceitação, escalada); este arquivo apenas indexa a sequência.
   Contract: slices/slice-003-detalhe-medico.md
   (linha «Transporte» no card de identificação; ausente → «—»)
 
-- [ ] S4 — Gate final da change (após S1–S3 aceitos): rodar o gate completo
+- [x] S4 — Gate final da change (após S1–S3 aceitos): rodar o gate completo
   (`uv run ruff check . && uv run ruff format --check . && uv run mypy . &&
   uv run pytest`) e `openspec validate transport-badge --specs --strict`;
   conferir no diff que nenhum evento/trilha carrega o valor do transporte e

@@ -12,7 +12,7 @@ próximo.
   Contract: slices/slice-003-gate-confirmacao-equipe.md
 - [x] S4 — Ciência por qualquer `nir` (closure + case_ack) e reenvios corrigidos sem partição próprio/alheio
   Contract: slices/slice-004-ciencia-reenvios-equipe.md
-- [ ] S5 — «Decididos Hoje» da especialidade (isnull=False, subtipo, decisor no card, badge, manual médico)
+- [x] S5 — «Decididos Hoje» da especialidade (isnull=False, subtipo, decisor no card, badge, manual médico)
   Contract: slices/slice-005-decididos-hoje-especialidade.md
 - [ ] S6 — «Processados Hoje» da equipe (isnull=False, decisor no card, badge)
   Contract: slices/slice-006-processados-hoje-equipe.md

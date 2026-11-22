@@ -402,7 +402,7 @@ def test_queue_decided_tab(
         nir_user, doctor, (NEURO_TYPE,), decisions={NEURO_TYPE: ("approved", "")}
     )
     awaiting = _make_awaiting_case(nir_user, (RADIO_TYPE,))
-    # Slice 005: a aba decididos é escopada ao decisor.
+    # Slice 005 (visibilidade-por-equipe slice 005): a aba decididos é da especialidade — login como decisor segue válido.
     login_user(doctor, DOCTOR_ROLE)
 
     response = client.get(reverse("doctor:queue"), {"tab": "decididos"})
@@ -595,7 +595,7 @@ def test_queue_decided_card_shows_result_without_waiting(
         patient_name="Paciente Decidido",
         patient_age=84,
     )
-    # Slice 005: a aba decididos é escopada ao decisor.
+    # Slice 005 (visibilidade-por-equipe slice 005): a aba decididos é da especialidade — login como decisor segue válido.
     login_user(doctor, DOCTOR_ROLE)
 
     body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
@@ -644,7 +644,7 @@ def test_queue_decided_mixed_dispositions_per_procedure(
         patient_gender="Masculino",
         origin_unit="Unidade 2",
     )
-    # Slice 005: a aba decididos é escopada ao decisor.
+    # Slice 005 (visibilidade-por-equipe slice 005): a aba decididos é da especialidade — login como decisor segue válido.
     login_user(doctor, DOCTOR_ROLE)
 
     body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()
@@ -692,7 +692,7 @@ def test_queue_decided_card_structure_and_cta(
         patient_name="Paciente Cta Decidido",
         agency_record_number="OLI003",
     )
-    # Slice 005: a aba decididos é escopada ao decisor.
+    # Slice 005 (visibilidade-por-equipe slice 005): a aba decididos é da especialidade — login como decisor segue válido.
     login_user(doctor, DOCTOR_ROLE)
 
     body = client.get(reverse("doctor:queue"), {"tab": "decididos"}).content.decode()

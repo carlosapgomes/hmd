@@ -63,9 +63,11 @@ def queue_counters(request: HttpRequest) -> dict[str, int]:
     apenas contagens leves, sem queries globais sem guard: fora desses
     papéis ativos (e para anônimo) o processor devolve ``{}`` sem tocar na
     tabela de casos. Pendentes seguem por estado (``TAB_STATUSES`` das
-    próprias views, import local sem ciclo); as abas «Hoje» contam as
-    decisões do dia corrente NO FUSO LOCAL pelo próprio usuário (mesma regra
-    das views, sem duplicar a janela — ``local_day_bounds``). As chaves são
+    próprias views, import local sem ciclo); a aba «Hoje» do médico conta as
+    decisões do dia corrente NO FUSO LOCAL de qualquer decisor da
+    especialidade (mesma regra da view — ``isnull=False`` + matriz de
+    subtipo do visualizador — sem duplicar a janela — ``local_day_bounds``).
+    As chaves são
     distintas por área (``doctor_*``/``scheduler_*``) porque o admin usa
     as duas filas; os plugs mapeiam para ``pending_count``/``decided_count``/
     ``processed_count`` dos partials.
@@ -94,8 +96,11 @@ def queue_counters(request: HttpRequest) -> dict[str, int]:
 
         counters["doctor_pending_count"] = _doctor_count(DOCTOR_TAB_STATUSES["aguardando"])
         start, end = local_day_bounds()
+        # Visibilidade-por-equipe slice 005 (R4): a aba é da especialidade —
+        # qualquer decisor (``isnull=False``, contrato fail-closed) dentro da
+        # matriz de subtipo do visualizador, coerente com a view.
         decided_today = Case.objects.filter(
-            doctor_decided_by=user,
+            doctor_decided_by__isnull=False,
             doctor_decided_at__gte=start,
             doctor_decided_at__lt=end,
         )

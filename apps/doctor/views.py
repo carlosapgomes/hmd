@@ -110,8 +110,9 @@ QUEUE_PAGE_SIZE = 20
 
 # Estados por aba (R3/D5): ``aguardando`` (default) = AWAITING_DOCTOR
 # (única aba por estado — slice 005). ``decididos`` NÃO é mais um conjunto
-# de estados: é a janela do dia corrente por decisor
-# (``doctor_decided_by`` + ``doctor_decided_at`` — ``_decided_today_cases``),
+# de estados: é a janela do dia corrente da especialidade
+# (``doctor_decided_by__isnull=False`` + ``doctor_decided_at`` —
+# ``_decided_today_cases``),
 # qualquer status atual; o tuple abaixo segue como referência dos estados
 # pós-decisão e valida o ``?tab=`` (desconhecido cai em ``aguardando``).
 TAB_STATUSES: dict[str, tuple[CaseStatus, ...]] = {
@@ -227,20 +228,22 @@ def _decided_today_cases(
     access: DoctorAccess,
     subtype: str,
 ) -> QuerySet[Case]:
-    """Casos da aba «Decididos Hoje» (slice 005, R1/D5/D7).
+    """Casos da aba «Decididos Hoje» (visibilidade-por-equipe slice 005, R1).
 
-    Decisões médicas do dia corrente NO FUSO LOCAL pelo próprio médico
-    (``doctor_decided_by`` + ``doctor_decided_at`` na janela ``[start,
-    end)``), INDEPENDENTEMENTE do status atual — inclui caso encerrado no
-    mesmo dia; decisão de dia anterior (ou decisor nulo do backfill
-    fail-closed) não aparece na aba de ninguém. Ordenação pela data/hora
-    da decisão (mais recente primeiro). A matriz de subtipo (D2) e o filtro
-    server-side valem como nos pendentes; o médico NÃO tem superfície de
-    histórico própria (perda aprovada por paridade, D7).
+    Decisões médicas do dia corrente NO FUSO LOCAL de QUALQUER decisor da
+    especialidade (``doctor_decided_by__isnull=False`` + ``doctor_decided_at``
+    na janela ``[start, end)`` — troca exigida pelo contrato fail-closed das
+    migrations 0014: rows com decisor nulo continuam fora), INDEPENDENTEMENTE
+    do status atual — inclui caso encerrado no mesmo dia; decisão de dia
+    anterior não aparece na aba de ninguém. Ordenação pela data/hora da
+    decisão (mais recente primeiro). A matriz de subtipo do visualizador (D2)
+    e o filtro server-side valem como nos pendentes; o decisor vem de
+    ``select_related`` para o card (R3, sem N+1). O médico NÃO tem superfície
+    de histórico própria (perda aprovada por paridade, D7).
     """
     start, end = local_day_bounds()
     cases = Case.objects.filter(
-        doctor_decided_by=user,
+        doctor_decided_by__isnull=False,
         doctor_decided_at__gte=start,
         doctor_decided_at__lt=end,
     )
@@ -257,7 +260,7 @@ def _decided_today_cases(
         ).distinct()
     return (
         cases.order_by("-doctor_decided_at", "created_at", "case_id")
-        .select_related("locked_by")
+        .select_related("locked_by", "doctor_decided_by")
         .prefetch_related("procedures")
     )
 
@@ -331,7 +334,7 @@ def _pending_counts_by_subtype(
     return counts
 
 
-def _queue_item(case: Case, *, user: User) -> dict[str, object]:
+def _queue_item(case: Case, *, user: User, include_decider: bool = False) -> dict[str, object]:
     """Item de card da fila: campos de exibição + tipos declarados por subtipo.
 
     Os tipos saem das rows já pré-carregadas (``prefetch_related``),
@@ -341,12 +344,18 @@ def _queue_item(case: Case, *, user: User) -> dict[str, object]:
     decisão (``doctor_decided_at``) da própria row — sem consultar
     ``decision_event``/trilha/presenter por card, sem N+1. O estado de
     reserva (D2) entra em ``lock`` para o card escolher a ação
-    (Avaliar/Continuar/Reservado).
+    (Avaliar/Continuar/Reservado). Com ``include_decider`` (aba decididos da
+    especialidade, slice 005 R3), o nome legível do decisor entra em
+    ``decided_by_display`` — lido do ``select_related("doctor_decided_by")``
+    da query da aba, sem query por card; nas demais abas o campo fica vazio
+    sem tocar o banco.
     """
     rows = [row for row in case.procedures.all() if row.declared_by_nir]
     rows.sort(key=lambda row: _CATALOG_INDEX[row.procedure_type])
+    decider = case.doctor_decided_by if include_decider else None
     return {
         "case_id": case.case_id,
+        "decided_by_display": decider.display_name if decider is not None else "",
         "status_label": case.get_status_display(),
         "patient_name": case.patient_name or "—",
         "patient_age": case.patient_age,
@@ -413,7 +422,7 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
     # SQL — tipos declarados derivados das rows já pré-carregadas, sem query
     # por card (P2).
     items = [
-        _queue_item(case, user=user)
+        _queue_item(case, user=user, include_decider=(tab == "decididos"))
         for case in page.object_list
         if access.allows_declared_types(_declared_types_of_case(case))
     ]
@@ -448,7 +457,8 @@ def queue(request: HttpRequest) -> HttpResponse:
 
     Pendentes ordenadas por tempo de tela (``days_on_screen`` desc
     nulls-last, desempate FIFO); «Decididos Hoje» pela data/hora da decisão
-    do próprio médico no dia corrente (mais recente primeiro).
+    de qualquer decisor da especialidade no dia corrente (mais recente
+    primeiro), com o decisor visível no card.
     """
     return render(request, "doctor/queue.html", _build_queue_context(request))
 

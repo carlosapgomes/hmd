@@ -16,9 +16,11 @@ Contrato: [slice-001-reenvio-qualquer-nir.md](slices/slice-001-reenvio-qualquer-
 
 Contrato: [slice-002-consolidacao-nav.md](slices/slice-002-consolidacao-nav.md). Depende de 001. Design D3/D5; specs delta `case-closure` (resultado/criador) + `intake-nir` (meus casos).
 
-- [ ] 2.1 Demonstrar RED: my_cases lista apenas ativos sem navegação Ativos/Encerrados (`?tab=closed` legado cai na default preservando filtros); nav com 3 itens («Buscar Encerrados» renomeado «Casos Encerrados»; badge de encerrados removido); redirect pós-ciência e botão de reenvio no detalhe do criador preservados.
-- [ ] 2.2 Implementar views/templates (`my_cases` sem aba; `_nav.html` 3 itens; contadores) + manual do usuário atualizado; testes.
-- [ ] 2.3 Executar bateria completa e produzir relatório em `/tmp/hmd-reenvio-002-report.md`.
+- [x] 2.1 Demonstrar RED: my_cases lista apenas ativos sem navegação Ativos/Encerrados (`?tab=closed` legado cai na default preservando filtros); nav com 3 itens («Buscar Encerrados» renomeado «Casos Encerrados»; badge de encerrados removido); redirect pós-ciência e botão de reenvio no detalhe do criador preservados.
+- [x] 2.2 Implementar views/templates (`my_cases` sem aba; `_nav.html` 3 itens; contadores) + manual do usuário atualizado; testes.
+- [x] 2.3 Executar bateria completa e produzir relatório em `/tmp/hmd-reenvio-002-report.md`.
+
+> Nota de execução: loop controlado pela pai (pi-subagents-openspec-loop/2) — implementação 1 rodada + review 1 (BLOCK: 1×P1 — resultado+motivo do encerramento administrativo órfou com a aba removida; extensão de escopo a `closed_case_detail` AUTORIZADA pela controladora, spec prevalece sobre lista de sensíveis) + fix 1 rodada (selo «Encerrado administrativamente»+motivo no detalhe histórico via `_administrative_closure_result` reutilizado; CLEANED comum sem selo; teste do cenário da spec) + review 2 FINAL («OK with notes», zero findings); gate pai pós-fix: ruff/format/mypy verdes, pytest 2331 passed; isolamento do fix por fingerprints (views.py + teste; card do template já vinha da implementação). **Residual preexistente (nota do reviewer, não causado por este delta)**: motivo do admin-closure não projetado em `event_detail_lines` após reabertura — candidato a backlog. Evidências: `/tmp/hmd-reenvio-002-report.md`, `/tmp/hmd-reenvio-002-fix-1-report.md`, raiz `reenvio-002-20261121T215229`.
 
 ## Encerramento (após 002)
 

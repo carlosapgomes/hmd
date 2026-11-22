@@ -418,7 +418,7 @@ _RESUBMIT_CLEARED_FIELDS = (
 )
 
 
-def _assert_nir_role(user: User | None, role: str | None) -> None:
+def _assert_nir_role(user: User | None, role: str | None, *, action: str = "Ação de gate") -> None:
     """Re-check DENTRO da transação: papel ativo ``nir`` com vínculo real (equipe).
 
     Defesa em profundidade (visibilidade-por-equipe, D1): o guard de papel da
@@ -426,12 +426,14 @@ def _assert_nir_role(user: User | None, role: str | None) -> None:
     após revogação) — o serviço consulta o vínculo real
     (``user.roles.filter(...)``), não a sessão. Papel alegado fora de ``nir``
     ou ator sem o papel → ``PermissionError`` (a view traduz em 403). Roda
-    ANTES das checagens de retenção e de lock ativo.
+    ANTES das checagens de retenção e de lock ativo. ``action`` nomeia a
+    ação na mensagem (paridade semântica por fluxo — ex.: ``"Confirmação de
+    procedimento"``), mantendo o texto idêntico ao inline histórico.
     """
     if role != REVIEW_ROLE:
-        raise PermissionError("Ação de gate restrita ao papel nir.")
+        raise PermissionError(f"{action} restrita ao papel nir.")
     if user is None or not user.roles.filter(name=REVIEW_ROLE).exists():
-        raise PermissionError("Ação de gate restrita ao papel nir.")
+        raise PermissionError(f"{action} restrita ao papel nir.")
 
 
 def _assert_no_active_lock(case: Case) -> None:
@@ -648,11 +650,7 @@ def confirm_case_procedure_review(
             locked = Case.objects.select_for_update().get(pk=case.pk)
         except Case.DoesNotExist:
             raise Http404 from None
-        if role != REVIEW_ROLE:
-            raise PermissionError("Confirmação de procedimento restrita ao papel nir.")
-        assert user is not None
-        if not user.roles.filter(name=REVIEW_ROLE).exists():
-            raise PermissionError("Confirmação de procedimento restrita ao papel nir.")
+        _assert_nir_role(user, role, action="Confirmação de procedimento")
         if not has_procedure_review_marker(locked):
             raise ValueError(
                 "Este caso não está sob o contrato de revisão de procedimento — "

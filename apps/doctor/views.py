@@ -224,7 +224,6 @@ def _accessible_cases(
 
 def _decided_today_cases(
     *,
-    user: User,
     access: DoctorAccess,
     subtype: str,
 ) -> QuerySet[Case]:
@@ -409,7 +408,7 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
     subtype = requested_subtype if requested_subtype in subtype_options else ""
 
     if tab == "decididos":
-        cases = _decided_today_cases(user=user, access=access, subtype=subtype)
+        cases = _decided_today_cases(access=access, subtype=subtype)
     else:
         cases = _accessible_cases(statuses=TAB_STATUSES[tab], access=access, subtype=subtype)
     if tab == "aguardando":

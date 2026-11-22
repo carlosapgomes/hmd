@@ -12,6 +12,7 @@ RED: o processor ainda não existe e as filas não exibem os totais.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import timedelta
 
 import pytest
 from django.contrib.auth.models import AnonymousUser
@@ -155,6 +156,36 @@ def test_scheduler_counters_nonzero() -> None:
 
     assert queue_counters(_request_for(scheduler, "scheduler")) == {  # type: ignore[arg-type]
         "scheduler_pending_count": 2,
+        "scheduler_processed_count": 1,
+    }
+
+
+@pytest.mark.django_db
+def test_scheduler_counter_counts_team_decisions() -> None:
+    """R4: o badge conta decisões de outro agendador, coerente com a aba.
+
+    Decisão de hoje por outro agendador conta; decisor nulo (fail-closed)
+    e decisão de ontem não contam.
+    """
+    creator = _create_user("cnt-nir-equipe-sch", ("nir",))
+    viewer = _create_user("cnt-sch-equipe", ("scheduler",))
+    other = _create_user("cnt-sch-equipe-outro", ("scheduler",))
+    team = _make_case(creator, CaseStatus.FINAL_REPLY_POSTED)
+    Case.objects.filter(pk=team.pk).update(
+        scheduling_decided_at=timezone.now(), scheduling_decided_by=other
+    )
+    null = _make_case(creator, CaseStatus.FINAL_REPLY_POSTED)
+    Case.objects.filter(pk=null.pk).update(
+        scheduling_decided_at=timezone.now(), scheduling_decided_by=None
+    )
+    old = _make_case(creator, CaseStatus.FINAL_REPLY_POSTED)
+    Case.objects.filter(pk=old.pk).update(
+        scheduling_decided_at=timezone.now() - timedelta(days=1, hours=2),
+        scheduling_decided_by=other,
+    )
+
+    assert queue_counters(_request_for(viewer, "scheduler")) == {  # type: ignore[arg-type]
+        "scheduler_pending_count": 0,
         "scheduler_processed_count": 1,
     }
 

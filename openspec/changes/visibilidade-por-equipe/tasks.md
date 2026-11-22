@@ -14,7 +14,7 @@ próximo.
   Contract: slices/slice-004-ciencia-reenvios-equipe.md
 - [x] S5 — «Decididos Hoje» da especialidade (isnull=False, subtipo, decisor no card, badge, manual médico)
   Contract: slices/slice-005-decididos-hoje-especialidade.md
-- [ ] S6 — «Processados Hoje» da equipe (isnull=False, decisor no card, badge)
+- [x] S6 — «Processados Hoje» da equipe (isnull=False, decisor no card, badge)
   Contract: slices/slice-006-processados-hoje-equipe.md
 - [ ] S7 — PDF/texto do agendador por decisão de agendamento (equipe) + manual agendador
   Contract: slices/slice-007-pdf-agendador-decisao.md

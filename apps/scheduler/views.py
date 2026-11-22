@@ -216,7 +216,7 @@ def _form_error_text(form: SchedulerConfirmForm) -> str:
     return " ".join(errors) if errors else "Formulário inválido."
 
 
-def _queue_item(case: Case, *, user: User) -> dict[str, object]:
+def _queue_item(case: Case, *, user: User, include_decider: bool = False) -> dict[str, object]:
     """Item de card da fila: identificação + tipos declarados + unidade + reserva.
 
     Os tipos saem das rows já pré-carregadas (``prefetch_related``),
@@ -225,14 +225,20 @@ def _queue_item(case: Case, *, user: User) -> dict[str, object]:
     (``compute_lock_display``) alimenta as três variantes de ação do card
     aguardando: livre (ação), própria (▶ Continuar) e de outro (🔒 Reservado).
     OLI-002 D8: disposição por procedimento projetada das mesmas rows, sem
-    consultar events por card.
+    consultar events por card. Com ``include_decider`` (aba processados da
+    equipe, slice 006 R3), o nome legível do decisor entra em
+    ``decided_by_display`` — lido do ``select_related("scheduling_decided_by")``
+    da query da aba, sem query por card; nas demais abas o campo fica vazio
+    sem tocar o banco.
     """
     rows = [row for row in case.procedures.all() if row.declared_by_nir]
     rows.sort(key=lambda row: _CATALOG_INDEX[row.procedure_type])
     scheduled_unit = case.scheduled_unit
     unit_label_text = unit_label(scheduled_unit) if scheduled_unit else ""
+    decider = case.scheduling_decided_by if include_decider else None
     return {
         "case_id": str(case.case_id),
+        "decided_by_display": decider.display_name if decider is not None else "",
         "status_label": case.get_status_display(),
         "patient_name": case.patient_name or "—",
         "patient_age": case.patient_age,
@@ -288,20 +294,23 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
     expire_stale_locks_for_statuses(TAB_STATUSES["aguardando"])
 
     if tab == "processados":
-        # Slice 005 (R2/D5): «Processados Hoje» — decisões de agendamento
-        # (confirmação OU negação) do dia corrente NO FUSO LOCAL pelo próprio
-        # agendador, qualquer status atual; caso de dia anterior (ou decisor
-        # nulo do backfill fail-closed) fora das abas — consultável no
-        # Histórico do slice 004. Ordenação pela data/hora da decisão.
+        # Slice 006 (R1/R2/D3): «Processados Hoje» — decisões de agendamento
+        # (confirmação OU negação) do dia corrente NO FUSO LOCAL de QUALQUER
+        # decisor da equipe (``scheduling_decided_by__isnull=False`` —
+        # contrato fail-closed da migration 0013: rows com decisor nulo
+        # continuam fora), qualquer status atual; caso de dia anterior fora
+        # das abas — consultável no Histórico do slice 004. Ordenação pela
+        # data/hora da decisão. O decisor vem de ``select_related`` para o
+        # card (R3, sem N+1).
         start, end = local_day_bounds()
         cases = (
             Case.objects.filter(
-                scheduling_decided_by=user,
+                scheduling_decided_by__isnull=False,
                 scheduling_decided_at__gte=start,
                 scheduling_decided_at__lt=end,
             )
             .order_by("-scheduling_decided_at", "created_at", "case_id")
-            .select_related("locked_by")
+            .select_related("locked_by", "scheduling_decided_by")
             .prefetch_related("procedures")
         )
     else:
@@ -317,7 +326,10 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
             .prefetch_related("procedures")
         )
     page = Paginator(cases, QUEUE_PAGE_SIZE).get_page(request.GET.get("page", "1"))
-    items = [_queue_item(case, user=user) for case in page.object_list]
+    items = [
+        _queue_item(case, user=user, include_decider=(tab == "processados"))
+        for case in page.object_list
+    ]
 
     filter_parts: list[tuple[str, str]] = [("tab", tab)]
     if procedure_type:
@@ -343,9 +355,9 @@ def queue(request: HttpRequest) -> HttpResponse:
     Pendentes ordenadas por tempo de tela (``days_on_screen`` desc
     nulls-last, desempate FIFO por ``created_at`` e ``case_id`` — mesma
     expressão da fila médica); «Processados Hoje» pela data/hora da decisão
-    do próprio agendador no dia corrente (mais recente primeiro). Sem filtro
-    por unidade (fila completa, plano §4). Aba desconhecida cai no default
-    ``aguardando``.
+    de qualquer agendador da equipe no dia corrente (mais recente primeiro),
+    com o decisor visível no card. Sem filtro por unidade (fila completa,
+    plano §4). Aba desconhecida cai no default ``aguardando``.
     """
     return render(request, "scheduler/queue.html", _build_queue_context(request))
 

@@ -118,8 +118,11 @@ def queue_counters(request: HttpRequest) -> dict[str, int]:
             status__in=SCHEDULER_TAB_STATUSES["aguardando"]
         ).count()
         start, end = local_day_bounds()
+        # Visibilidade-por-equipe slice 006 (R4): a aba é da equipe —
+        # qualquer decisor (``isnull=False``, contrato fail-closed), coerente
+        # com a view.
         counters["scheduler_processed_count"] = Case.objects.filter(
-            scheduling_decided_by=user,
+            scheduling_decided_by__isnull=False,
             scheduling_decided_at__gte=start,
             scheduling_decided_at__lt=end,
         ).count()

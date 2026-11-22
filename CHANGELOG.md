@@ -4,6 +4,27 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.25] — 2026-11-22
+
+**Badge de transporte do relatório (extração determinística do
+`TRANSPORTE:`)** — 1 change (`transport-badge`), 3 slices TDD com
+revisão independente por slice. Suíte 2331 → **2369** (+38 testes).
+**COM migration (0015):** novo campo `Case.transport_type` — o passo
+`migrate` do deploy aplica schema.
+
+- Extração determinística do label `TRANSPORTE:` no worker de PDF
+  (regex linha-âncorado sobre o texto já limpo, mesmo write do
+  `extracted_text` — verificado em 9/9 PDFs do corpus real);
+  normalização tolerante (`Ambulância Básica`/`BÁSICA` → `basic`,
+  `UTI Móvel` → `mobile_icu`); desconhecido/ausente → vazio (nunca
+  inventado).
+- Badge `🚑` nos cards das três filas (meus casos, fila médica,
+  agendador) — `UTI Móvel` com ênfase visual de gravidade, básica
+  neutra; linha de transporte no card de identificação do detalhe
+  médico.
+- Sem mudanças no pipeline LLM (prompts, schemas, policy e fronteira de
+  anonimização intactos; o valor não é PII).
+
 ## [0.1.24] — 2026-11-22
 
 **Reenvio corrigido por qualquer NIR + consolidação do nav (paridade

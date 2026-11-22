@@ -4,6 +4,28 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.24] — 2026-11-22
+
+**Reenvio corrigido por qualquer NIR + consolidação do nav (paridade
+ats-web)** — 1 change (`reenvio-corrigido-qualquer-nir`), 2 slices TDD
+com revisão independente por slice. Suíte 2314 → **2331** (+17 testes).
+Sem migrations (deploy direto).
+
+- **Reenvio corrigido por qualquer papel `nir` ativo** (admin incluso),
+  não só o criador: guarda por papel em view e serviço, ação «Reenviar
+  corrigido» no detalhe histórico (criador e não-criador, mesma porta);
+  o reenviador torna-se o criador do novo caso (notificações e ciência
+  do novo ciclo). Invariantes preservadas: 1 PDF + 1 tipo, motivo
+  obrigatório, original íntegro com supersedição, desambiguação de nº
+  duplicado.
+- **Consolidação do nav (opção A)**: «Meus Casos» lista só ativos
+  (`?tab=closed` legado cai na default segura); nav do NIR em 3 itens —
+  «Casos Encerrados» passa a ser a busca global (badge de encerrados
+  removido, manual atualizado); selo de encerramento administrativo no
+  detalhe histórico.
+- Acessos do criador preservados por outras vias (redirect pós-ciência,
+  notificações, links condicionais sem 404 entre criadores).
+
 ## [0.1.23] — 2026-11-21
 
 **Paridade operacional: sumário completo ao agendador, busca histórica,

@@ -22,9 +22,14 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.cases.closure import post_doctor_denial_reply
 from apps.cases.models import Case, CaseDocument, CaseProcedure, CaseStatus
 from apps.cases.procedures import record_doctor_procedure_decisions
-from apps.scheduler.services import confirm_case_scheduling, reopen_scheduling_after_incident
+from apps.scheduler.services import (
+    confirm_case_scheduling,
+    deny_case_scheduling,
+    reopen_scheduling_after_incident,
+)
 
 SCHEDULER_ROLE = "scheduler"
 ADMIN_ROLE = "admin"
@@ -73,6 +78,49 @@ def _scheduler_requested_case(
     )
     case.refresh_from_db()
     assert case.status == CaseStatus.SCHEDULER_REQUESTED
+    return case
+
+
+def _denied_case(*, created_by: User, decided_by: User, scheduling_decider: User) -> Case:
+    """Caso negado pelo serviço: FINAL_REPLY_POSTED com decisão carimbada."""
+    case = _scheduler_requested_case(created_by, decided_by, (ANGIO_TYPE,))
+    deny_case_scheduling(
+        case,
+        reason="sem vaga na unidade",
+        user=scheduling_decider,
+        role=SCHEDULER_ROLE,
+    )
+    case.refresh_from_db()
+    assert case.status == CaseStatus.FINAL_REPLY_POSTED
+    assert case.scheduling_decided_at is not None
+    return case
+
+
+def _medical_denial_replied_case(*, created_by: User, decided_by: User) -> Case:
+    """Negativa médica total publicada — FINAL_REPLY_POSTED sem decisão."""
+    case = Case.objects.create(created_by=created_by)
+    CaseProcedure.objects.create(case=case, procedure_type=ANGIO_TYPE, declared_by_nir=True)
+    for operation in (
+        "start_pdf_extraction",
+        "complete_pdf_extraction",
+        "complete_anonymization",
+        "complete_llm_extraction",
+        "complete_llm_summarization",
+    ):
+        getattr(case, operation)(user=None, role=SYSTEM_ROLE)
+    assert case.status == CaseStatus.AWAITING_DOCTOR
+    record_doctor_procedure_decisions(
+        case,
+        {ANGIO_TYPE: ("denied", "sem indicação clínica")},
+        user=decided_by,
+        role=DOCTOR_ROLE,
+    )
+    case.refresh_from_db()
+    assert case.status == CaseStatus.DOCTOR_DENIED
+    post_doctor_denial_reply(case, user=decided_by, role=DOCTOR_ROLE)
+    case.refresh_from_db()
+    assert case.status == CaseStatus.FINAL_REPLY_POSTED
+    assert case.scheduling_decided_at is None
     return case
 
 
@@ -152,18 +200,61 @@ def test_pdf_viewer_renders_mobile_viewer_with_contract_context(
 
 
 @pytest.mark.django_db
-def test_pdf_viewer_other_scheduler_404(
+def test_pdf_viewer_other_scheduler_team_200(
     client: Client,
     nir_user: User,
     user_factory: Callable[..., User],
 ) -> None:
-    """R1: outro agendador (detalhe permitido) recebe 404 fail-closed no viewer."""
+    """R1 (equipe, inversão D6): caso confirmado por OUTRO agendador — um
+    agendador diferente abre o viewer (gate por decisão + estado)."""
     doctor = user_factory("medico-viewer-outro", (DOCTOR_ROLE,))
     owner = user_factory("agendador-viewer-owner", (SCHEDULER_ROLE,))
     case = _confirmed_case(1, created_by=nir_user, decided_by=doctor, scheduled_by=owner)
     document = _add_document(case, nir_user, position=1)
+    serve_url = reverse("scheduler:case_pdf", args=[case.case_id, document.position])
     other = user_factory("agendador-viewer-estrangeiro", (SCHEDULER_ROLE,))
     _login(client, other, SCHEDULER_ROLE)
+
+    response = client.get(_viewer_url(case, document.position))
+
+    assert response.status_code == 200
+    assert response.context["pdf_url"] == serve_url
+    assert response.context["back_url"] == reverse("scheduler:case_detail", args=[case.case_id])
+
+
+@pytest.mark.django_db
+def test_pdf_viewer_denied_case_other_scheduler_team_200(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R1 (equipe): caso NEGADO pelo agendamento por outro decisor — outro
+    agendador abre o viewer (a negação também é decisão de agendamento)."""
+    doctor = user_factory("medico-viewer-negado", (DOCTOR_ROLE,))
+    decider = user_factory("agendador-viewer-negado-decisor", (SCHEDULER_ROLE,))
+    case = _denied_case(created_by=nir_user, decided_by=doctor, scheduling_decider=decider)
+    document = _add_document(case, nir_user, position=1)
+    other = user_factory("agendador-viewer-negado-outro", (SCHEDULER_ROLE,))
+    _login(client, other, SCHEDULER_ROLE)
+
+    response = client.get(_viewer_url(case, document.position))
+
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_pdf_viewer_medical_denial_without_decision_404(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2 (guarda de decisão D7): negativa médica total em
+    FINAL_REPLY_POSTED sem decisão de agendamento → 404 no viewer."""
+    doctor = user_factory("medico-viewer-negmed", (DOCTOR_ROLE,))
+    case = _medical_denial_replied_case(created_by=nir_user, decided_by=doctor)
+    document = _add_document(case, nir_user, position=1)
+    scheduler = user_factory("agendador-viewer-negmed", (SCHEDULER_ROLE,))
+    _login(client, scheduler, SCHEDULER_ROLE)
 
     response = client.get(_viewer_url(case, document.position))
 
@@ -221,7 +312,8 @@ def test_pdf_viewer_allows_admin_role(
     nir_user: User,
     user_factory: Callable[..., User],
 ) -> None:
-    """R1: papel ativo admin fora do gate de scheduled_by → 404 (gate fail-closed)."""
+    """R1 (equipe, inversão D6): papel ativo admin abre o viewer de caso
+    com decisão de agendamento (o gate não é mais por decisor)."""
     doctor = user_factory("medico-viewer-admin", (DOCTOR_ROLE,))
     scheduler = user_factory("agendador-viewer-admin", (SCHEDULER_ROLE,))
     case = _confirmed_case(1, created_by=nir_user, decided_by=doctor, scheduled_by=scheduler)
@@ -231,7 +323,7 @@ def test_pdf_viewer_allows_admin_role(
 
     response = client.get(_viewer_url(case, document.position))
 
-    assert response.status_code == 404
+    assert response.status_code == 200
 
 
 @pytest.mark.django_db

@@ -16,9 +16,9 @@ próximo.
   Contract: slices/slice-005-decididos-hoje-especialidade.md
 - [x] S6 — «Processados Hoje» da equipe (isnull=False, decisor no card, badge)
   Contract: slices/slice-006-processados-hoje-equipe.md
-- [ ] S7 — PDF/texto do agendador por decisão de agendamento (equipe) + manual agendador
+- [x] S7 — PDF/texto do agendador por decisão de agendamento (equipe) + manual agendador
   Contract: slices/slice-007-pdf-agendador-decisao.md
 
 ## Gate final (controlador)
 
-- [ ] G — Após S7: gate completo de `AGENTS.md` §2 (`ruff check` && `ruff format --check` && `mypy` && `pytest`) e `openspec validate visibilidade-por-equipe --strict` (pós-archive: `openspec validate --specs --strict`)
+- [x] G — Após S7: gate completo de `AGENTS.md` §2 (`ruff check` && `ruff format --check` && `mypy` && `pytest`) e `openspec validate visibilidade-por-equipe --strict` (pós-archive: `openspec validate --specs --strict`) — executado no slice 007 pelo worker (§2 completo, 2401 passed) e pela controladoria (validate --strict OK, 2026-11-22)

@@ -186,6 +186,34 @@ class TestManualUnitLabels:
 
 
 @pytest.mark.django_db
+class TestManualSchedulerTeamScope:
+    """R4 (slice 007): seção Agendador em escopo de equipe + notificações
+    descritas com precisão (seguem o criador, com o fan-out vigente)."""
+
+    def test_manual_scheduler_processed_today_is_team_scope(
+        self, client: Client, nir_user: User
+    ) -> None:
+        body = _manual_body(client, nir_user)
+
+        assert "qualquer agendador" in body
+
+    def test_manual_scheduler_pdf_bound_to_scheduling_decision(
+        self, client: Client, nir_user: User
+    ) -> None:
+        body = _manual_body(client, nir_user)
+
+        assert "decisão de agendamento" in body
+        assert "processados por você mesmo" not in body
+
+    def test_manual_notifications_follow_creator_with_fanout(
+        self, client: Client, nir_user: User
+    ) -> None:
+        body = _manual_body(client, nir_user)
+
+        assert "criador do caso" in body
+
+
+@pytest.mark.django_db
 class TestNavbarManualLink:
     """R3: link "Manual" na navbar — autenticados, nova aba."""
 

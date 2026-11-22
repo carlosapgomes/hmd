@@ -27,9 +27,10 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.cases.closure import post_doctor_denial_reply
 from apps.cases.models import Case, CaseDocument, CaseProcedure, CaseStatus
 from apps.cases.procedures import record_doctor_procedure_decisions
-from apps.scheduler.services import confirm_case_scheduling
+from apps.scheduler.services import confirm_case_scheduling, deny_case_scheduling
 
 SCHEDULER_ROLE = "scheduler"
 DOCTOR_ROLE = "doctor"
@@ -103,6 +104,68 @@ def _add_document(case: Case, uploaded_by: User, *, position: int) -> CaseDocume
         size_bytes=len(uploaded.read()),
         uploaded_by=uploaded_by,
     )
+
+
+def _denied_case(
+    *,
+    created_by: User,
+    decided_by: User,
+    scheduling_decider: User,
+    extracted_text: str = "TEXTO EXTRAIDO DO RELATORIO DO AGENDADOR",
+) -> Case:
+    """Caso negado pelo serviço (autor da decisão = scheduling_decider)."""
+    case = _scheduler_requested_case(created_by, decided_by, (ANGIO_TYPE,))
+    deny_case_scheduling(
+        case,
+        reason="sem vaga na unidade",
+        user=scheduling_decider,
+        role=SCHEDULER_ROLE,
+    )
+    case.refresh_from_db()
+    assert case.status == CaseStatus.FINAL_REPLY_POSTED
+    assert case.scheduling_decided_at is not None
+    Case.objects.filter(pk=case.pk).update(extracted_text=extracted_text)
+    case.refresh_from_db()
+    return case
+
+
+def _medical_denial_replied_case(
+    *,
+    created_by: User,
+    decided_by: User,
+    extracted_text: str = "TEXTO DA NEGATIVA MEDICA QUE NAO DEVE VAZAR",
+) -> Case:
+    """Negativa médica total publicada (DOCTOR_DENIED → FINAL_REPLY_POSTED).
+
+    Nunca passa pelo agendamento: ``scheduling_decided_at`` segue nulo — o
+    caso cai em ``PDF_ALLOWED_STATUSES`` só pelo estado (a brecha da D7).
+    """
+    case = Case.objects.create(created_by=created_by)
+    CaseProcedure.objects.create(case=case, procedure_type=ANGIO_TYPE, declared_by_nir=True)
+    for operation in (
+        "start_pdf_extraction",
+        "complete_pdf_extraction",
+        "complete_anonymization",
+        "complete_llm_extraction",
+        "complete_llm_summarization",
+    ):
+        getattr(case, operation)(user=None, role=SYSTEM_ROLE)
+    assert case.status == CaseStatus.AWAITING_DOCTOR
+    record_doctor_procedure_decisions(
+        case,
+        {ANGIO_TYPE: ("denied", "sem indicação clínica")},
+        user=decided_by,
+        role=DOCTOR_ROLE,
+    )
+    case.refresh_from_db()
+    assert case.status == CaseStatus.DOCTOR_DENIED
+    post_doctor_denial_reply(case, user=decided_by, role=DOCTOR_ROLE)
+    case.refresh_from_db()
+    assert case.status == CaseStatus.FINAL_REPLY_POSTED
+    assert case.scheduling_decided_at is None
+    Case.objects.filter(pk=case.pk).update(extracted_text=extracted_text)
+    case.refresh_from_db()
+    return case
 
 
 def _confirmed_case(
@@ -279,26 +342,74 @@ def test_detail_replaces_documents_table_with_cards(
 
 
 @pytest.mark.django_db
-def test_detail_no_cards_outside_gate_other_scheduler(
+def test_detail_shows_cards_to_other_scheduler_of_team(
     client: Client,
     nir_user: User,
     user_factory: Callable[..., User],
 ) -> None:
-    """R2: outro agendador (detalhe permitido) não vê NENHUM dos dois cards."""
+    """R1 (equipe, inversão D6): caso confirmado por OUTRO agendador — um
+    agendador diferente vê os dois cards (gate por decisão + estado)."""
     doctor = user_factory("medico-fora-gate", (DOCTOR_ROLE,))
     owner = user_factory("agendador-fora-gate-owner", (SCHEDULER_ROLE,))
     case = _confirmed_case(1, created_by=nir_user, decided_by=doctor, scheduled_by=owner)
-    _add_document(case, nir_user, position=1)
+    document = _add_document(case, nir_user, position=1)
+    serve_url = reverse("scheduler:case_pdf", args=[case.case_id, document.position])
     other = user_factory("agendador-fora-gate-outro", (SCHEDULER_ROLE,))
     _login(client, other, SCHEDULER_ROLE)
 
     body = _detail_body(client, case)
 
+    assert "Texto Extraído do PDF" in body
+    assert "Visualizar PDF Original" in body
+    assert "TEXTO EXTRAIDO DO RELATORIO DO AGENDADOR" in body
+    assert serve_url in unescape(body)
+    assert "js/pdf-lazy-embed.js" in body
+
+
+@pytest.mark.django_db
+def test_detail_shows_cards_for_denied_case_to_other_scheduler(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R1 (equipe): caso NEGADO pelo agendamento por outro decisor — a
+    negação também carimba a decisão, então outro agendador vê os cards."""
+    doctor = user_factory("medico-negado-equipe", (DOCTOR_ROLE,))
+    decider = user_factory("agendador-negado-decisor", (SCHEDULER_ROLE,))
+    case = _denied_case(created_by=nir_user, decided_by=doctor, scheduling_decider=decider)
+    _add_document(case, nir_user, position=1)
+    other = user_factory("agendador-negado-outro", (SCHEDULER_ROLE,))
+    _login(client, other, SCHEDULER_ROLE)
+
+    body = _detail_body(client, case)
+
+    assert "Texto Extraído do PDF" in body
+    assert "Visualizar PDF Original" in body
+    assert "TEXTO EXTRAIDO DO RELATORIO DO AGENDADOR" in body
+
+
+@pytest.mark.django_db
+def test_detail_no_cards_for_medical_denial_without_scheduling_decision(
+    client: Client,
+    nir_user: User,
+    user_factory: Callable[..., User],
+) -> None:
+    """R2 (guarda de decisão D7): negativa médica total em
+    FINAL_REPLY_POSTED (``scheduling_decided_at`` nulo) — SEM cards de
+    PDF/texto e 404 nas rotas de serve/viewer (o estado sozinho é a brecha)."""
+    doctor = user_factory("medico-negmed-cards", (DOCTOR_ROLE,))
+    case = _medical_denial_replied_case(created_by=nir_user, decided_by=doctor)
+    _add_document(case, nir_user, position=1)
+    scheduler = user_factory("agendador-negmed-cards", (SCHEDULER_ROLE,))
+    _login(client, scheduler, SCHEDULER_ROLE)
+
+    body = _detail_body(client, case)
+
     assert "Texto Extraído do PDF" not in body
     assert "Visualizar PDF Original" not in body
-    assert "TEXTO EXTRAIDO DO RELATORIO DO AGENDADOR" not in body
-    assert "js/pdf-lazy-embed.js" not in body
-    assert "Documentos" not in body
+    assert "TEXTO DA NEGATIVA MEDICA QUE NAO DEVE VAZAR" not in body
+    assert client.get(reverse("scheduler:case_pdf", args=[case.case_id, 1])).status_code == 404
+    assert client.get(reverse("scheduler:pdf_viewer", args=[case.case_id, 1])).status_code == 404
 
 
 @pytest.mark.django_db

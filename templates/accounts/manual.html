@@ -239,9 +239,10 @@
         <em>Pendentes</em> traz os casos prontos para agendamento
         (<code>SCHEDULER_REQUESTED</code> e casos reabertos por intercorrência
         em <code>AWAITING_SCHEDULING</code>), ordenados por tempo de tela;
-        a aba <em>Processados Hoje</em> traz apenas as suas confirmações e
-        negações do dia corrente (incluindo casos já encerrados no mesmo dia),
-        ordenadas da mais recente para a mais antiga. Decisões de dias
+        a aba <em>Processados Hoje</em> traz as confirmações e negações do
+        dia corrente de qualquer agendador da equipe — com o decisor visível
+        no card — incluindo casos já encerrados no mesmo dia, ordenadas da
+        mais recente para a mais antiga. Decisões de dias
         anteriores não aparecem em nenhuma aba — consulte o <em>Histórico do
         agendador</em> (busca por nº de ocorrência ou nome). A fila não é
         separada por unidade.
@@ -260,9 +261,13 @@
         (obrigatório) — o caso é publicado com resposta final ao NIR.
       </li>
       <li>
-        <strong>PDF do relatório</strong>: após a decisão de agendamento, os PDFs
-        do relatório original ficam disponíveis por documento, apenas para os casos
-        processados por você mesmo.
+        <strong>PDF do relatório</strong>: após a decisão de agendamento
+        (confirmação ou negação, por qualquer agendador da equipe), os PDFs
+        do relatório original e o texto extraído ficam disponíveis por
+        documento, para qualquer agendador da equipe, nos cards
+        <em>Texto Extraído do PDF</em> e <em>Visualizar PDF Original</em>.
+        Casos de negativa médica direta, que não passam pelo agendamento,
+        não expõem PDF nem texto extraído a ninguém.
       </li>
       <li>
         <strong>Intercorrência (desmarcar/reabrir)</strong>: para um caso
@@ -284,10 +289,12 @@
       <li>
         <strong>Notificações</strong>: o sino na barra superior mostra um
         <em>badge</em> com a quantidade de notificações não lidas. Cada
-        notificação é criada por um marco do caso — resposta final disponível,
-        caso pronto para agendamento, reabertura por intercorrência e
-        encerramento administrativo — e abrir a notificação leva ao detalhe do
-        caso na visão do seu papel ativo.
+        notificação é criada por um marco do caso e segue o criador do caso:
+        resposta final disponível e encerramento administrativo notificam o
+        criador; caso pronto para agendamento notifica todos os agendadores
+        ativos; reabertura por intercorrência notifica o criador e todos os
+        agendadores ativos. Abrir a notificação leva ao detalhe do caso na
+        visão do seu papel ativo.
       </li>
       <li>
         <strong>Painel</strong> (<em>Painel</em>): resumo gerencial de casos

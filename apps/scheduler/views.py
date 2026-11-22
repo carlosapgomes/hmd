@@ -34,11 +34,13 @@ Casos processados abrem read-only, sem claim.
 
 R7: ``scheduler:case_pdf`` serve os PDFs do relatório original por position
 (padrão do doctor do change 07; decisão do supervisor — o HMD é multi-PDF via
-``CaseDocument`` e não tem ``Case.pdf_file``): SOMENTE quando
-``scheduled_by == request.user`` E status ∈ {``SCHEDULING_CONFIRMED``,
+``CaseDocument`` e não tem ``Case.pdf_file``): SOMENTE com decisão de
+agendamento registrada (``scheduling_decided_at`` não nulo — qualquer
+decisor da equipe) E status ∈ {``SCHEDULING_CONFIRMED``,
 ``SCHEDULING_DENIED``, ``FINAL_REPLY_POSTED``, ``AWAITING_NIR_ACK``} (404
-fail-closed — inclusive caso reaberto por intercorrência, cujo
-``scheduled_by`` foi limpo); links de PDF no detalhe apenas nessa condição.
+fail-closed — inclusive caso reaberto por intercorrência, fora do conjunto, e
+negativa médica direta sem decisão); links de PDF no detalhe apenas nessa
+condição.
 """
 
 from __future__ import annotations
@@ -133,6 +135,22 @@ PDF_ALLOWED_STATUSES: frozenset[CaseStatus] = frozenset(
         CaseStatus.AWAITING_NIR_ACK,
     }
 )
+
+
+def _scheduler_can_view_pdf(case: Case) -> bool:
+    """Gate de PDF/texto do agendador (slice 007, D7): decisão + estado.
+
+    Qualquer agendador da equipe vê e serve o PDF/texto de casos com decisão
+    de agendamento registrada (confirmação OU negação — ambas carimbam
+    ``scheduling_decided_at``) em estado pós-decisão. A guarda de decisão é
+    OBRIGATÓRIA: ``PDF_ALLOWED_STATUSES`` inclui ``FINAL_REPLY_POSTED``/
+    ``AWAITING_NIR_ACK``, e a negativa médica total alcança esses estados SEM
+    passar pelo agendamento (``scheduling_decided_at`` nulo) — status sozinho
+    exporia o relatório a qualquer agendador. Nunca usar ``scheduled_by``
+    aqui (a negação de agendamento não o grava).
+    """
+    return case.scheduling_decided_at is not None and case.status in PDF_ALLOWED_STATUSES
+
 
 # Mensagens de sucesso/flash das ações (R4) e de corrida concorrente (R5/D5).
 CONFIRM_SUCCESS_MESSAGE = "Agendamento confirmado."
@@ -458,10 +476,10 @@ def historical_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResp
     Reutiliza o presenter do detalhe vigente (mesmo conteúdo) com as flags de
     ação forçadas a ``False`` (sem claim de reserva, sem forms de
     confirmação/negação/desmarcação, sem banner de intercorrência) e o gate de
-    PDF/texto preservado (``scheduled_by == request.user`` E status em
-    ``PDF_ALLOWED_STATUSES`` — ``CLEANED`` segue fora, paridade ats-web).
+    PDF/texto por decisão de agendamento + estado (slice 007, D7 —
+    ``_scheduler_can_view_pdf``; ``CLEANED`` segue fora, paridade ats-web).
     """
-    user = _require_user(request)
+    _require_user(request)
     case = get_object_or_404(
         Case.objects.select_related("scheduling_decided_by"),
         case_id=case_id,
@@ -475,7 +493,7 @@ def historical_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResp
     context["incident_disabled"] = False
     context["is_historical"] = True
 
-    can_view_pdf = case.scheduled_by_id == user.pk and case.status in PDF_ALLOWED_STATUSES
+    can_view_pdf = _scheduler_can_view_pdf(case)
     context["can_view_pdf"] = can_view_pdf
     if can_view_pdf:
         context["case"] = case
@@ -497,7 +515,7 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     renderização) acrescido dos forms de ação por estado (confirmar/negar em
     SCHEDULER_REQUESTED/AWAITING_SCHEDULING; desmarcar em FINAL_REPLY_POSTED
     com unidade 1) e dos documentos PDF apenas quando a condição R7 vale
-    (``scheduled_by == request.user`` E status pós-decisão).
+    (decisão de agendamento registrada E status pós-decisão — slice 007, D7).
 
     R1–R3/D4 (case-work-lock, slice 004): caso agendável RESERVA o caso no
     GET (claim ``scheduler_confirm``) e exporta o token nos forms; reserva de
@@ -537,7 +555,7 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     if bool(context["can_reopen"]):
         context["reopen_form"] = SchedulerReopenForm()
 
-    can_view_pdf = case.scheduled_by_id == user.pk and case.status in PDF_ALLOWED_STATUSES
+    can_view_pdf = _scheduler_can_view_pdf(case)
     context["can_view_pdf"] = can_view_pdf
     if can_view_pdf:
         # Cards do relatório (slice PVP-004, R2/D1): a view monta pdf_items
@@ -818,22 +836,22 @@ def pdf_viewer(
     case_id: uuid.UUID,
     position: int,
 ) -> HttpResponse:
-    """Viewer mobile do PDF original do caso processado pelo próprio agendador.
+    """Viewer mobile do PDF original do caso com decisão de agendamento.
 
     Mesmo gate fail-closed de ``case_pdf``: papel ativo scheduler/admin +
-    ``scheduled_by == request.user`` + status em ``PDF_ALLOWED_STATUSES``
+    decisão de agendamento registrada + status em ``PDF_ALLOWED_STATUSES``
     (fora → 404 fail-closed, sem distinguir). Position inexistente ou
     documento sem arquivo → 404 (lição P1-4 do PVP-002). O ``?next=`` passa
     por ``resolve_safe_next_url`` (fallback ao detalhe do agendador); o
     template ``pdf_viewer/mobile_pdf_viewer.html`` recebe título, URLs do
     PDF e volta.
     """
-    user = _require_user(request)
+    _require_user(request)
     case = get_object_or_404(
-        Case.objects.only("case_id", "status", "scheduled_by_id"),
+        Case.objects.only("case_id", "status", "scheduling_decided_at"),
         case_id=case_id,
     )
-    if case.scheduled_by_id != user.pk or case.status not in PDF_ALLOWED_STATUSES:
+    if not _scheduler_can_view_pdf(case):
         # 404 fail-closed (nunca 403): não distingue existência/caso alheio.
         raise Http404("PDF indisponível para este caso.")
     document = get_object_or_404(
@@ -858,7 +876,7 @@ def pdf_viewer(
     )
 
 
-# ── R7: PDF do caso processado pelo próprio agendador ─────────────────────
+# ── R7: PDF do caso com decisão de agendamento (equipe) ─────────────────────
 
 
 @role_required("scheduler", "admin")
@@ -870,20 +888,20 @@ def case_pdf(
 ) -> HttpResponse:
     """Serve o PDF do documento do relatório na ``position`` (R7).
 
-    Gate por caso (semântica do ``_get_scheduler_processed_case_or_404`` do
-    ats-web) ANTES de resolver o documento: 404 fail-closed quando
-    ``scheduled_by != request.user`` ou status fora do conjunto pós-decisão —
-    inclusive caso reaberto por intercorrência (``scheduled_by`` limpo).
+    Gate por caso (slice 007, D7 — ``_scheduler_can_view_pdf``) ANTES de
+    resolver o documento: 404 fail-closed sem decisão de agendamento
+    registrada ou status fora do conjunto pós-decisão — inclusive caso
+    reaberto por intercorrência e negativa médica direta sem decisão.
     Documento/position inexistente → 404. Entrega via ``FileResponse`` com
     content-type ``application/pdf``, nome original e ``Cache-Control:
     no-store``.
     """
-    user = _require_user(request)
+    _require_user(request)
     case = get_object_or_404(
-        Case.objects.only("case_id", "status", "scheduled_by_id"),
+        Case.objects.only("case_id", "status", "scheduling_decided_at"),
         case_id=case_id,
     )
-    if case.scheduled_by_id != user.pk or case.status not in PDF_ALLOWED_STATUSES:
+    if not _scheduler_can_view_pdf(case):
         # 404 fail-closed (nunca 403): não distingue existência/caso alheio.
         raise Http404("PDF indisponível para este caso.")
     document = get_object_or_404(

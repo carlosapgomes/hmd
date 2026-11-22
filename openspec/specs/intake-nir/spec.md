@@ -164,7 +164,7 @@ O processamento SHALL validar o documento contra o padrão do relatório de regu
 
 ### Requirement: Revisão NIR do gate
 
-O NIR SHALL conseguir revisar casos retidos pelo gate na tela de detalhe. Para retenção de formato, as ações permanecem **liberar** (bypass para `ANONYMIZING` com evento) e **reenviar documento** (substituição por exatamente 1 PDF e reprocessamento da extração). Para divergência de procedimento dos novos envios, a resolução SHALL exigir confirmação explícita do procedimento, não bypass simples nem novo upload. Casos anteriores à implantação não SHALL ser convertidos ao novo fluxo. As ações dependem da retenção correspondente estar vigente e do caso pertencer ao NIR.
+O NIR SHALL conseguir revisar casos retidos pelo gate na tela de detalhe. Para retenção de formato, as ações permanecem **liberar** (bypass para `ANONYMIZING` com evento) e **reenviar documento** (substituição por exatamente 1 PDF e reprocessamento da extração). Para divergência de procedimento dos novos envios, a resolução SHALL exigir confirmação explícita do procedimento, não bypass simples nem novo upload. Casos anteriores à implantação não SHALL ser convertidos ao novo fluxo. As ações dependem da retenção correspondente estar vigente e do usuário ter papel ativo `nir` — o caso pode ser de qualquer criador (equipe).
 
 #### Scenario: Liberar avança com evento de bypass
 - **GIVEN** um caso retido em `PDF_EXTRACTING` com `manual_review_required=True`
@@ -190,30 +190,36 @@ O NIR SHALL conseguir revisar casos retidos pelo gate na tela de detalhe. Para r
 - **GIVEN** caso retido por divergência de procedimento
 - **WHEN** é tentado reenvio pela ação exclusiva de formato
 - **THEN** a tentativa é recusada sem substituir arquivos
+
+#### Scenario: NIR não-criador opera o gate do caso da equipe
+
+- **GIVEN** um caso retido criado por outro usuário NIR
+- **WHEN** um NIR diferente abre o detalhe e aciona liberar ou reenviar
+- **THEN** a ação é executada normalmente, com o NIR operador como ator do evento
 ### Requirement: Meus casos e detalhe do NIR
 
-O NIR SHALL ver, numa lista "meus casos", apenas os casos **ativos** (tudo exceto `CLEANED`) criados por ele, com status, tipos declarados, indicador de retenção pelo gate e a identificação do paciente (nome e idade quando presentes — o NIR é o criador do caso); o detalhe de um caso SHALL exibir a identificação do paciente (nome e idade, padrão da lista) num card «Identificação do paciente» com badge de status no header, além de documentos (com visualização do PDF), comunicações e a **trilha de eventos** em card collapsible «Trilha de eventos» ao final do detalhe — a mesma trilha do painel (paridade total de auditoria): cada evento com rótulo legível, badge por categoria, ator com papel em português e data/hora, card fechado por padrão; caso `FAILED` mantém o badge de erro «Falha no processamento» e o motivo técnico permanece fora da exibição. Acesso a caso criado por outro usuário SHALL ser negado. Os cards NÃO exibem o uid completo do caso — a única exceção é o sufixo curto de desambiguação (`· <8 chars>`), exibido apenas no cenário de nº duplicado descrito abaixo. Toda referência textual a um caso no âmbito do NIR — `<title>`, breadcrumb, cabeçalho do detalhe, mensagens flash e alerta de lote — SHALL usar a **referência humana**: nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel); o uid completo NÃO é exibido em texto visível (permanece apenas como chave das URLs). A linha rotulada «Nº de ocorrência» dos cards mantém `—` quando o nº está ausente (decisão vigente de `queues-remove-uid`: card sem nº fica apenas com a identificação do paciente) — o fallback em `uid <8 chars>` aplica-se a referências (títulos, breadcrumbs, cabeçalho do detalhe, mensagens), não a essa linha rotulada. Onde dois casos compartilham o mesmo nº (reenvio corrigido cria caso novo), a referência SHALL ser desambiguada com sufixo curto (`nº · <8 chars>`): link de «Reenvios corrigidos» no detalhe, página «Reenviar corrigido», flash do novo caso e cards de «meus casos» quando a lista contém nº duplicado. O detalhe exibe TODAS as rows de procedimento do caso com a origem («Declarado» NIR / «Detectado na extração») e o status de detecção após a reconciliação; no card de revisão por divergência, o resumo declarados × detectados acompanha a confirmação explícita nos novos envios e a liberação no contrato histórico.
+O NIR SHALL ver, numa lista «Casos em Processamento» (antiga «Meus Casos»), os casos **ativos** (tudo exceto `CLEANED`) **de qualquer criador — o NIR atua como equipe sobre toda a fila de regulação** —, com status, tipos declarados, indicador de retenção pelo gate e a identificação do paciente (nome e idade quando presentes); o detalhe de um caso SHALL exibir a identificação do paciente (nome e idade, padrão da lista) num card «Identificação do paciente» com badge de status no header, além de documentos (com visualização do PDF), comunicações e a **trilha de eventos** em card collapsible «Trilha de eventos» ao final do detalhe — a mesma trilha do painel (paridade total de auditoria): cada evento com rótulo legível, badge por categoria, ator com papel em português e data/hora, card fechado por padrão; caso `FAILED` mantém o badge de erro «Falha no processamento» e o motivo técnico permanece fora da exibição. Qualquer usuário com papel ativo `nir` acessa o detalhe e as ações de leitura/operação (PDF de relatório e anexos, gate, confirmação de procedimento, ciência) de casos criados por qualquer criador — o guard é de papel; usuários sem papel ativo `nir` continuam barrados. Os cards NÃO exibem o uid completo do caso — a única exceção é o sufixo curto de desambiguação (`· <8 chars>`), exibido apenas no cenário de nº duplicado descrito abaixo. Toda referência textual a um caso no âmbito do NIR — `<title>`, breadcrumb, cabeçalho do detalhe, mensagens flash e alerta de lote — SHALL usar a **referência humana**: nº de ocorrência com fallback `uid <8 primeiros chars>` (padrão do painel); o uid completo NÃO é exibido em texto visível (permanece apenas como chave das URLs). A linha rotulada «Nº de ocorrência» dos cards mantém `—` quando o nº está ausente (decisão vigente de `queues-remove-uid`: card sem nº fica apenas com a identificação do paciente) — o fallback em `uid <8 chars>` aplica-se a referências (títulos, breadcrumbs, cabeçalho do detalhe, mensagens), não a essa linha rotulada. Onde dois casos compartilham o mesmo nº (reenvio corrigido cria caso novo), a referência SHALL ser desambiguada com sufixo curto (`nº · <8 chars>`): link de «Reenvios corrigidos» no detalhe, página «Reenviar corrigido», flash do novo caso e cards da lista quando ela contém nº duplicado. O detalhe exibe TODAS as rows de procedimento do caso com a origem («Declarado» NIR / «Detectado na extração») e o status de detecção após a reconciliação; no card de revisão por divergência, o resumo declarados × detectados acompanha a confirmação explícita nos novos envios e a liberação no contrato histórico.
 
-Meus casos terá página e lista na largura do header, **sem navegação Ativos/Encerrados** (o parâmetro `?tab` legado, incluindo `closed`, cai na default segura de ativos, preservando filtros), filtros server-side preservados, contagem neutra e cards compactos em quatro regiões no desktop (4/3/3/2), sem alerta de espera ou resumo redundante. O partial e os contadores de ativos são preservados.
+A lista terá página e lista na largura do header, **sem navegação Ativos/Encerrados** (o parâmetro `?tab` legado, incluindo `closed`, cai na default segura de ativos, preservando filtros), filtros server-side preservados, contagem neutra e cards compactos em quatro regiões no desktop (4/3/3/2), sem alerta de espera ou resumo redundante. O partial e os contadores de ativos são preservados.
 
 #### Scenario: Lista mostra apenas casos do próprio NIR
-- **GIVEN** dois NIR com casos criados
-- **WHEN** um deles abre meus casos
-- **THEN** vê somente os casos que ele criou, com status, flag de retenção e identificação do paciente visíveis
+- **GIVEN** casos ativos criados por dois usuários NIR diferentes
+- **WHEN** qualquer um deles abre «Casos em Processamento»
+- **THEN** vê todos os casos ativos (de qualquer criador), com status, flag de retenção e identificação do paciente visíveis
 
 #### Scenario: Detalhe de caso alheio é negado
-- **GIVEN** um caso criado por outro NIR
-- **WHEN** o NIR tenta abrir o detalhe diretamente
-- **THEN** o acesso é negado (404) sem vazar informação
+- **GIVEN** um caso criado por qualquer NIR
+- **WHEN** um usuário com papel ativo não NIR tenta abrir o detalhe diretamente
+- **THEN** o acesso é negado pelo guard de papel, sem vazar informação
 
 #### Scenario: Detalhe exibe documentos e trilha
-- **GIVEN** um caso do próprio NIR em processamento
+- **GIVEN** um caso em processamento criado por qualquer NIR
 - **WHEN** abre o detalhe
 - **THEN** vê os PDFs enviados (servidos de forma segura), as comunicações do caso e, ao final, o card «Trilha de eventos» fechado por padrão; ao abrir, cada evento exibe rótulo legível, ator com papel em português e data/hora
 
 #### Scenario: Card de meus casos identifica o paciente
-- **GIVEN** um caso criado pelo NIR com nome, idade, sexo e origem extraídos do cabeçalho
-- **WHEN** o NIR abre meus casos
+- **GIVEN** um caso com nome, idade, sexo e origem extraídos do cabeçalho
+- **WHEN** o NIR abre «Casos em Processamento»
 - **THEN** o card exibe nome, idade (`84 a`), ocorrência e demografia disponível; sem nome exibe `—` e omite idade
 
 #### Scenario: Cards sem o identificador interno do caso
@@ -222,22 +228,22 @@ Meus casos terá página e lista na largura do header, **sem navegação Ativos/
 - **THEN** nenhum card exibe o uid do caso — o nº de ocorrência (com `—` quando ausente) e a identificação do paciente são os identificadores visíveis
 
 #### Scenario: Detalhe retido por divergência lista declarados e detectados
-- **GIVEN** um caso novo do próprio NIR retido em `LLM_EXTRACTING` por divergência (`angio_art_perif` declarada não-detectada e `art_perif` detectada não-declarada)
+- **GIVEN** um caso novo retido em `LLM_EXTRACTING` por divergência (`angio_art_perif` declarada não-detectada e `art_perif` detectada não-declarada)
 - **WHEN** o NIR abre o detalhe
 - **THEN** a seção de procedimentos exibe ambas as rows com rótulos legíveis e badges de origem/detecção e o card resume declarados × detectados junto ao formulário de confirmação, sem bypass simples
 
 #### Scenario: Detalhe do NIR identifica o paciente sem uid completo
-- **GIVEN** um caso do próprio NIR com nome, idade e nº de ocorrência extraídos
+- **GIVEN** um caso com nome, idade e nº de ocorrência extraídos
 - **WHEN** o NIR abre o detalhe
 - **THEN** o card «Identificação do paciente» exibe nome, idade e nº de ocorrência com badge de status no header; `<title>`, breadcrumb e cabeçalho citam a referência humana («Caso <nº>») e o uid completo não aparece em texto visível (apenas em hrefs)
 
 #### Scenario: Detalhe sem nº de ocorrência usa o fallback uid curto
-- **GIVEN** um caso do próprio NIR sem nº de ocorrência (retido no gate)
+- **GIVEN** um caso sem nº de ocorrência (retido no gate)
 - **WHEN** o NIR abre o detalhe
 - **THEN** `<title>`, breadcrumb e cabeçalho exibem `uid <8 primeiros chars>` no lugar do nº, sem o uid completo
 
 #### Scenario: Mensagens do fluxo citam a referência humana
-- **GIVEN** um caso do próprio NIR com nº de ocorrência
+- **GIVEN** um caso com nº de ocorrência
 - **WHEN** o NIR conclui criação, confirmação de recebimento, liberação de gate, confirmação de procedimento ou reenvio de documentos
 - **THEN** a mensagem flash cita a referência humana (nº de ocorrência; fallback `uid <8 chars>` quando ausente), nunca o uid completo
 
@@ -247,49 +253,49 @@ Meus casos terá página e lista na largura do header, **sem navegação Ativos/
 - **THEN** a referência exibida é `N · <8 primeiros chars do uid>` para distinguir original e novo caso
 
 #### Scenario: Meus casos com nº duplicado exibe sufixo curto
-- **GIVEN** dois casos ativos do mesmo NIR compartilhando o nº N (reenvios corrigidos)
-- **WHEN** o NIR abre «meus casos»
+- **GIVEN** dois casos ativos compartilhando o nº N (reenvios corrigidos, qualquer criador)
+- **WHEN** o NIR abre «Casos em Processamento»
 - **THEN** os cards dos casos com nº N exibem o nº acompanhado do sufixo curto (`N · <8 chars>`); cards com nº único permanecem apenas com o nº
 
 #### Scenario: Filtros server-side compõem por AND
-- **GIVEN** casos do NIR com nºs, status e tipos distintos
+- **GIVEN** casos com nºs, status e tipos distintos
 - **WHEN** filtra por nº (≥3 caracteres) + status + tipo de procedimento
 - **THEN** apenas os casos que atendem a todos os critérios são listados, com os filtros preservados entre página cheia e partial
 
 #### Scenario: Caso FAILED exibe badge de erro no detalhe do NIR
-- **GIVEN** um caso do próprio NIR em `FAILED`
+- **GIVEN** um caso em `FAILED`
 - **WHEN** o NIR abre o detalhe
 - **THEN** um badge de erro «Falha no processamento» é exibido; a trilha ao final exibe o evento de falha com rótulo legível e ator, e o motivo técnico permanece fora da exibição
 
 #### Scenario: Trilha do NIR mostra quem fez o quê
-- **GIVEN** um caso do próprio NIR com decisão médica registrada por um médico e agendamento confirmado por um agendador
+- **GIVEN** um caso com decisão médica registrada por um médico e agendamento confirmado por um agendador
 - **WHEN** o NIR abre o detalhe e expande a trilha de eventos
 - **THEN** os eventos exibem o nome do ator com o papel em português e a data/hora de cada ação (decisão médica, agendamento), além dos eventos de sistema com ator «Sistema»
 
 #### Scenario: Abas Ativos e Encerrados com contadores
-- **GIVEN** 2 casos ativos e 1 encerrado (`CLEANED`) do NIR
-- **WHEN** abre meus casos (inclusive com `?tab=closed` legado)
-- **THEN** o header exibe apenas «Meus Casos» com a contagem 2, apenas casos ativos são listados, nenhuma pill Ativos/Encerrados aparece na página e os filtros ativos são preservados
+- **GIVEN** 2 casos ativos e 1 encerrado (`CLEANED`) no universo da equipe
+- **WHEN** abre «Casos em Processamento» (inclusive com `?tab=closed` legado)
+- **THEN** o header exibe apenas «Casos em Processamento» com a contagem 2, apenas casos ativos são listados, nenhuma pill Ativos/Encerrados aparece na página e os filtros ativos são preservados
 
 #### Scenario: Troca de aba pelo header preserva filtros
-- **GIVEN** meus casos com ocorrência, status e tipo filtrados
+- **GIVEN** a lista com ocorrência, status e tipo filtrados
 - **WHEN** a página é aberta com `?tab=closed` legado
 - **THEN** o parâmetro é ignorado (fallback seguro para ativos) e os filtros ativos são preservados na URL e na listagem
 
 #### Scenario: Partial atualiza meus casos sem reload
-- **GIVEN** meus casos abertos e um novo caso criado pelo NIR, compatível com os filtros ativos
+- **GIVEN** a lista aberta e um novo caso criado por qualquer NIR, compatível com os filtros ativos
 - **WHEN** decorre o intervalo de atualização
 - **THEN** o novo card aparece sem recarregar a página, preservando filtros
 
 #### Scenario: Caso fora do filtro não aparece no refresh
-- **GIVEN** meus casos filtrados por um status e um novo caso criado em outro status
+- **GIVEN** a lista filtrada por um status e um novo caso criado em outro status
 - **WHEN** decorre o intervalo de atualização
 - **THEN** nenhum card novo aparece e os filtros seguem aplicados
 
 #### Scenario: Página e lista têm hierarquia neutra
-- **GIVEN** meus casos com resultados
+- **GIVEN** a lista com resultados
 - **WHEN** a página é renderizada
-- **THEN** o título é «Todos os seus encaminhamentos», a quantidade aparece em cabeçalho neutro da lista e não existe alerta amarelo de contagem nem CTA «Enviar relatório» duplicado no topo
+- **THEN** o título é «Casos em processamento», a quantidade aparece em cabeçalho neutro da lista e não existe alerta amarelo de contagem nem CTA «Enviar relatório» duplicado no topo
 
 #### Scenario: Card compacto tem quatro regiões no desktop
 - **GIVEN** um caso com procedimento, recebimento, status e detalhe disponível
@@ -304,16 +310,15 @@ Meus casos terá página e lista na largura do header, **sem navegação Ativos/
 #### Scenario: Estado vazio orienta a próxima ação
 - **GIVEN** uma listagem sem resultados
 - **WHEN** há filtros ativos
-- **THEN** o estado vazio centralizado oferece «Limpar filtros»; sem filtros, informa a ausência de casos ativos e oferece «Novo Encaminhamento»
+- **THEN** o estado vazio centralizado oferece «Limpar filtros»; sem filtros, informa a ausência de casos em processamento e oferece «Novo Encaminhamento»
 
 #### Scenario: Card compacto permanece utilizável no mobile
 - **GIVEN** um card com nome longo, múltiplos procedimentos e ação
 - **WHEN** a lista é exibida em viewport de 390 px
 - **THEN** as regiões empilham, badges quebram linha, «Ver detalhes» ocupa a largura disponível com alvo mínimo de 44 px e não há overflow horizontal
-
 ### Requirement: Confirmação explícita do procedimento pelo NIR
 
-O NIR criador SHALL poder manter ou trocar o procedimento de um caso novo retido por divergência, escolhendo exatamente um dos 13 tipos, inclusive não detectado. A ação SHALL exigir leitura confirmada e justificativa não vazia de até 500 caracteres, além de revisão e fonte vigentes. A confirmação SHALL solicitar nova extração e análise do mesmo caso, sem exigir upload nem aprovar clinicamente o pedido.
+Qualquer usuário com papel ativo `nir` SHALL poder manter ou trocar o procedimento de um caso novo retido por divergência — de qualquer criador (equipe) —, escolhendo exatamente um dos 13 tipos, inclusive não detectado. A ação SHALL exigir leitura confirmada e justificativa não vazia de até 500 caracteres, além de revisão e fonte vigentes. A confirmação SHALL solicitar nova extração e análise do mesmo caso, sem exigir upload nem aprovar clinicamente o pedido.
 
 #### Scenario: Manter procedimento original é permitido
 - **GIVEN** caso novo com A declarado e B detectado
@@ -341,7 +346,7 @@ O NIR criador SHALL poder manter ou trocar o procedimento de um caso novo retido
 - **THEN** a ação é recusada com 400, sem confirmação, job ou mudança de estado; revisão obsoleta com fonte íntegra orienta reabrir, enquanto fonte/texto anonimizado/mapa inconsistente orienta suporte; nome de arquivo igual não autoriza conteúdo diferente
 
 #### Scenario: Apenas criador com papel ativo NIR confirma
-- **GIVEN** usuário alheio ao caso ou com papel ativo não NIR
+- **GIVEN** usuário com papel ativo não NIR
 - **WHEN** tenta o POST direto
 - **THEN** acesso é negado sem confirmação, mutação ou dispatch
 
@@ -355,6 +360,11 @@ O NIR criador SHALL poder manter ou trocar o procedimento de um caso novo retido
 - **WHEN** a página é reexibida
 - **THEN** seleção e justificativa são preservadas e escapadas, os erros ficam visíveis e a leitura não é marcada automaticamente
 
+#### Scenario: NIR não-criador confirma procedimento da equipe
+
+- **GIVEN** um caso novo retido por divergência criado por outro usuário NIR
+- **WHEN** um NIR diferente confirma leitura, seleção e justificativa
+- **THEN** a confirmação é aceita e o reprocessamento é solicitado, com o NIR operador como ator do evento
 ### Requirement: Revisão de procedimento aplica-se apenas a novos envios
 
 O novo contrato de confirmação SHALL ser atribuído apenas aos casos criados por envios após a implantação, inclusive cada caso de lote e novo reenvio corrigido. Casos anteriores não SHALL receber conversão, marcação retroativa ou interpretação de bypass como confirmação. O envio continua com um PDF por caso e tipo único.
@@ -375,7 +385,7 @@ O novo contrato de confirmação SHALL ser atribuído apenas aos casos criados p
 
 ### Requirement: Busca de casos encerrados e detalhe histórico
 
-O sistema SHALL oferecer ao papel ativo `nir` a página **«Casos Encerrados»** (item de navegação do NIR; URL inalterada) com busca server-side por nº de ocorrência OU nome do paciente sobre casos `CLEANED` e casos com intercorrência ativa (qualquer status) — **de qualquer criador** (escopo histórico, guarda própria fail-closed; o escopo por criador de «meus casos» permanece intacto) — com no máximo 50 resultados por consulta, estado vazio sem critério e identificação de elegibilidade para intercorrência pós-encerramento (spec `post-closure-issue`). A busca SHALL usar a referência humana nos resultados (nº de ocorrência com sufixo curto de desambiguação quando duplicado) e o uid completo NÃO aparece em texto visível. O detalhe histórico SHALL ser read-only (trilha de eventos incluída, fechada por padrão), sem ações de edição do caso, com formulário de abertura de intercorrência apenas para casos elegíveis e ação **«Reenviar corrigido»** para casos `CLEANED` de qualquer criador (levando à página de reenvio existente — spec `case-closure`). Rotas de busca e detalhe histórico são regidas pelo guard de intranet do papel `nir` (ADR-0002).
+O sistema SHALL oferecer ao papel ativo `nir` a página **«Casos Encerrados»** (item de navegação do NIR; URL inalterada) com busca server-side por nº de ocorrência OU nome do paciente sobre casos `CLEANED` e casos com intercorrência ativa (qualquer status) — **de qualquer criador** (escopo histórico, guarda própria fail-closed) — com no máximo 50 resultados por consulta, estado vazio sem critério e identificação de elegibilidade para intercorrência pós-encerramento (spec `post-closure-issue`). A busca SHALL usar a referência humana nos resultados (nº de ocorrência com sufixo curto de desambiguação quando duplicado) e o uid completo NÃO aparece em texto visível. O detalhe histórico SHALL ser read-only (trilha de eventos incluída, fechada por padrão), sem ações de edição do caso, com formulário de abertura de intercorrência apenas para casos elegíveis e ação **«Reenviar corrigido»** para casos `CLEANED` de qualquer criador (levando à página de reenvio existente — spec `case-closure`). Rotas de busca e detalhe histórico são regidas pelo guard de intranet do papel `nir` (ADR-0002).
 
 #### Scenario: Busca por nome encontra caso encerrado de outro criador
 
@@ -417,7 +427,7 @@ O sistema SHALL oferecer ao papel ativo `nir` a página **«Casos Encerrados»**
 
 - **GIVEN** o NIR autenticado
 - **WHEN** qualquer página do intake é renderizada
-- **THEN** a navegação exibe «Novo Encaminhamento», «Meus Casos» e «Casos Encerrados» (busca global) — sem item de lista de encerrados por criador; o badge de contagem de ativos aparece onde o contexto o fornece (ex.: my_cases), sem badge de encerrados
+- **THEN** a navegação exibe «Novo Encaminhamento», «Casos em Processamento» e «Casos Encerrados» (busca global) — sem item de lista de encerrados por criador; o badge de contagem de ativos aparece onde o contexto o fornece (ex.: my_cases), sem badge de encerrados
 
 #### Scenario: Papel não NIR recebe 403
 
@@ -430,7 +440,6 @@ O sistema SHALL oferecer ao papel ativo `nir` a página **«Casos Encerrados»**
 - **GIVEN** um identificador de caso em andamento sem intercorrência ativa
 - **WHEN** o NIR acessa o detalhe histórico diretamente pela URL
 - **THEN** recebe HTTP 404, sem expor qualquer conteúdo do caso
-
 ### Requirement: Extração do tipo de transporte do relatório
 
 O processamento no cluster pdf SHALL extrair o tipo de transporte do label estruturado `TRANSPORTE:` (linha iniciada pelo rótulo com valor na mesma linha) sobre o texto do caso — `extracted_text`, concatenado na ordem declarada dos documentos —, persistindo-o no campo do caso com domínio fechado: `Ambulância Básica` (inclusive a forma abreviada `BÁSICA`) → `basic`; `UTI Móvel` → `mobile_icu`; casamento tolerante a acento/caixa. Com múltiplas ocorrências no texto do caso, a última vence. Label ausente, valor vazio ou valor fora do domínio SHALL deixar o campo vazio — nunca inventado; menção narrativa sem o formato de rótulo não é capturada. O valor não vai a eventos e, como metadado administrativo não-identificante, SHALL sobreviver à minimização do `CLEANED` em ambos os modos, no molde dos metadados do cabeçalho.
@@ -503,22 +512,22 @@ O processamento no cluster pdf SHALL extrair o tipo de transporte do label estru
 
 ### Requirement: Badge de transporte nos cards de meus casos
 
-Os cards de «meus casos» do NIR SHALL exibir um badge com o tipo de transporte do caso quando presente: `UTI Móvel` com ênfase visual de gravidade e `Ambulância Básica` em estilo neutro, com rótulos canônicos. Caso sem transporte extraído não exibe badge (ausência não é erro nem placeholder).
+Os cards de «Casos em Processamento» do NIR SHALL exibir um badge com o tipo de transporte do caso quando presente: `UTI Móvel` com ênfase visual de gravidade e `Ambulância Básica` em estilo neutro, com rótulos canônicos. Caso sem transporte extraído não exibe badge (ausência não é erro nem placeholder).
 
 #### Scenario: Card com UTI Móvel exibe badge de ênfase
 
-- **GIVEN** um caso ativo do NIR com tipo de transporte `mobile_icu`
-- **WHEN** o NIR acessa «meus casos»
+- **GIVEN** um caso ativo com tipo de transporte `mobile_icu`
+- **WHEN** o NIR acessa «Casos em Processamento»
 - **THEN** o card exibe o badge «UTI Móvel» em estilo de ênfase de gravidade, distinto do badge neutro
 
 #### Scenario: Card com Ambulância Básica exibe badge neutro
 
-- **GIVEN** um caso ativo do NIR com tipo de transporte `basic`
-- **WHEN** o NIR acessa «meus casos»
+- **GIVEN** um caso ativo com tipo de transporte `basic`
+- **WHEN** o NIR acessa «Casos em Processamento»
 - **THEN** o card exibe o badge «Ambulância Básica» em estilo neutro
 
 #### Scenario: Card sem transporte não exibe badge
 
 - **GIVEN** um caso ativo sem transporte extraído
-- **WHEN** o NIR acessa «meus casos»
+- **WHEN** o NIR acessa «Casos em Processamento»
 - **THEN** o card não exibe badge de transporte e a linha de metadados permanece íntegra

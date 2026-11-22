@@ -90,5 +90,7 @@ aba oculta, mesmo padrão do ats-web).
 - **GIVEN** usuário navegando nas filas do NIR, médico e agendador
 - **WHEN** as abas são exibidas
 - **THEN** os rótulos seguem o vocabulário do ats-web (`Pendentes`,
-  `Decididos`, `Novo Encaminhamento`, `Meus Casos`,
-  `Casos Encerrados`)
+  `Decididos`, `Novo Encaminhamento`, `Casos em Processamento`,
+  `Casos Encerrados`) — sendo `Casos em Processamento` um desvio
+  deliberado do vocabulário ats-web (escopo de equipe NIR, decisão do dono
+  2026-11-22)

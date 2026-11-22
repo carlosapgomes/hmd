@@ -8,7 +8,7 @@ Processar anexos de evidência dos casos com OCR híbrido (local para PDFs com t
 
 ### Requirement: Upload e listagem de anexos pelo NIR
 
-O sistema SHALL permitir ao NIR anexar arquivos (JPEG, PNG ou PDF) no momento da criação do caso e no reenvio corrigido, respeitando limites de contagem e tamanho por arquivo, com rejeição nomeada antes de qualquer gravação; anexos são aceitos SOMENTE quando o envio contém exatamente 1 PDF de relatório (com múltiplos PDFs a vinculação seguro entre relatórios e anexos é impossível) — nesse caso os casos do lote são criados sem anexos e o erro informa a restrição; com exatamente 1 PDF, anexo inválido aborta o envio inteiro. Anexos aceitos ficam listados no detalhe do caso para o criador com nome, status de processamento legível e **visualização do arquivo** (link de abertura + embed/imagem colapsável, padrão `pdf-original-viewer`), servida por rota própria do NIR sob o guard de criador. O caso sem anexos SHALL seguir idêntico ao fluxo atual.
+O sistema SHALL permitir ao NIR anexar arquivos (JPEG, PNG ou PDF) no momento da criação do caso e no reenvio corrigido, respeitando limites de contagem e tamanho por arquivo, com rejeição nomeada antes de qualquer gravação; anexos são aceitos SOMENTE quando o envio contém exatamente 1 PDF de relatório (com múltiplos PDFs a vinculação seguro entre relatórios e anexos é impossível) — nesse caso os casos do lote são criados sem anexos e o erro informa a restrição; com exatamente 1 PDF, anexo inválido aborta o envio inteiro. Anexos aceitos ficam listados no detalhe do caso para o NIR (equipe — qualquer criador, decisão do dono 2026-11-22) com nome, status de processamento legível e **visualização do arquivo** (link de abertura + embed/imagem colapsável, padrão `pdf-original-viewer`), servida por rota própria do NIR sob o guard de papel ativo `nir` (equipe — qualquer criador). O caso sem anexos SHALL seguir idêntico ao fluxo atual.
 
 #### Scenario: Anexos criados junto com o caso
 
@@ -24,8 +24,8 @@ O sistema SHALL permitir ao NIR anexar arquivos (JPEG, PNG ou PDF) no momento da
 
 #### Scenario: NIR vê seus anexos com status
 
-- **GIVEN** um caso do NIR com um anexo já processado e outro pendente
-- **WHEN** ele abre o detalhe do caso
+- **GIVEN** um caso com um anexo já processado e outro pendente
+- **WHEN** o NIR (criador ou não) abre o detalhe do caso
 - **THEN** ambos os anexos são listados com nome e status legível de processamento
 
 #### Scenario: Anexos com múltiplos relatórios são recusados sem bloquear
@@ -36,11 +36,9 @@ O sistema SHALL permitir ao NIR anexar arquivos (JPEG, PNG ou PDF) no momento da
 
 #### Scenario: NIR visualiza o arquivo do anexo
 
-- **GIVEN** um caso do NIR com um anexo PDF e um JPEG
-- **WHEN** ele abre o detalhe do caso
-- **THEN** cada anexo tem link de abertura do arquivo e visualização colapsável (embed lazy para PDF, imagem lazy para JPEG); anexo de caso alheio responde 404
-
-
+- **GIVEN** um caso com um anexo PDF e um JPEG
+- **WHEN** o NIR (criador ou não) abre o detalhe do caso
+- **THEN** cada anexo tem link de abertura do arquivo e visualização colapsável (embed lazy para PDF, imagem lazy para JPEG); anexo de caso de outro criador serve normalmente à equipe `nir`, e usuário sem papel ativo `nir` é negado pelo guard de papel
 ### Requirement: Extração híbrida com auditoria de OCR externo
 
 O sistema SHALL extrair o texto de cada anexo de forma assíncrona após a anonimização do relatório principal: PDFs com camada de texto extraem localmente; fotos, scans e PDFs-imagem usam OCR externo por modelo de visão, com evento de auditoria registrado antes do envio externo. Falha de extração SHALL marcar o anexo como falho com motivo, sem bloquear o andamento do caso.

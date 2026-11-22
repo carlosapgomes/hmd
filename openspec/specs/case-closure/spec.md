@@ -30,7 +30,9 @@ Quando o médico nega todos os procedimentos declarados, o sistema SHALL publica
 
 ### Requirement: Ciência do NIR com encerramento e disposição de dados
 
-O criador do caso SHALL poder confirmar o recebimento da resposta final,
+Qualquer usuário com papel ativo `nir` — criador ou não (equipe NIR) — SHALL poder
+confirmar o recebimento da resposta final, com o operador registrado como ator
+do evento,
 levando o caso de `FINAL_REPLY_POSTED` a `CLEANED` de forma transacional,
 com a disposição dos dados clínicos governada pelo modo operacional
 (`CASE_CLOSURE_MINIMIZATION_ENABLED`):
@@ -52,14 +54,14 @@ reversão opera pelo mesmo flag e pela purga retroativa.
 
 #### Scenario: Ciência encerra e limpa o caso
 
-- **GIVEN** um caso em `FINAL_REPLY_POSTED` criado pelo NIR autenticado, com documentos, artefatos do pipeline e mapa de pseudônimos, e o sistema em modo de minimização
-- **WHEN** ele confirma o recebimento
+- **GIVEN** um caso em `FINAL_REPLY_POSTED`, com documentos, artefatos do pipeline e mapa de pseudônimos, e o sistema em modo de minimização
+- **WHEN** um NIR com papel ativo (criador ou não) confirma o recebimento
 - **THEN** o caso chega a `CLEANED`, os documentos deixam de existir (rows e acesso), e texto extraído/anonimizado, mapa de pseudônimos e artefatos do pipeline estão vazios
 
 #### Scenario: Ciência com retenção preserva tudo
 
 - **GIVEN** o mesmo caso com o sistema em modo de retenção (`CASE_CLOSURE_MINIMIZATION_ENABLED` desativado — default da fase de estabilização)
-- **WHEN** ele confirma o recebimento
+- **WHEN** um NIR com papel ativo (criador ou não) confirma o recebimento
 - **THEN** o caso chega a `CLEANED` mantendo documentos e anexos (rows e arquivos físicos), texto extraído/anonimizado, mapa de pseudônimos e artefatos do pipeline intactos e acessíveis
 
 #### Scenario: Essenciais preservados após a limpeza
@@ -89,54 +91,59 @@ reversão opera pelo mesmo flag e pela purga retroativa.
 #### Scenario: Anexos são removidos na ciência
 
 - **GIVEN** um caso em `FINAL_REPLY_POSTED` com anexos processados (arquivos, textos extraídos/anonimizados e mapas de pseudônimos dos anexos)
-- **WHEN** o criador confirma o recebimento
+- **WHEN** um NIR com papel ativo (criador ou não) confirma o recebimento
 - **THEN** em modo de minimização as rows e os arquivos dos anexos deixam de existir, junto com os documentos e artefatos do caso; em modo de retenção permanecem intactos
 
+#### Scenario: Ciência por NIR não-criador da equipe
+
+- **GIVEN** um caso em `FINAL_REPLY_POSTED` criado por outro usuário NIR
+- **WHEN** um NIR diferente confirma o recebimento
+- **THEN** o caso chega a `CLEANED` normalmente e o evento de ciência registra o NIR operador como ator
 ### Requirement: Resultado e casos encerrados visíveis ao criador
 
 O detalhe do caso para o NIR SHALL exibir, a partir da decisão médica, o
 resultado (decisões por procedimento com motivos, dados de agendamento e a
 resposta final em destaque) e um meio de confirmar o recebimento apenas
-enquanto o caso estiver em `FINAL_REPLY_POSTED` e for de sua autoria. A lista
-"meus casos" SHALL listar **apenas casos ativos** (tudo exceto `CLEANED`) —
-sem navegação Ativos/Encerrados; casos encerrados (do criador ou de qualquer
-NIR) são alcançados pela página «Casos Encerrados» (busca global) e seu
+enquanto o caso estiver em `FINAL_REPLY_POSTED` — **acessível a qualquer
+usuário com papel ativo `nir`, de casos de qualquer criador (equipe)**. A lista
+«Casos em Processamento» SHALL listar **apenas casos ativos** (tudo exceto
+`CLEANED`) de qualquer criador —
+sem navegação Ativos/Encerrados; casos encerrados são alcançados pela página «Casos Encerrados» (busca global) e seu
 detalhe histórico, onde o encerramento ADMINISTRATIVO também aparece com o
 resultado "Encerrado administrativamente" e o motivo registrado.
 
 #### Scenario: Resultado exibido ao criador
 
-- **GIVEN** um caso com resposta final publicada, criado pelo NIR autenticado
-- **WHEN** ele abre o detalhe do caso
+- **GIVEN** um caso com resposta final publicada, criado por qualquer NIR
+- **WHEN** um usuário com papel ativo `nir` (criador ou não) abre o detalhe do caso
 - **THEN** decisões com motivos, dados de agendamento e a resposta final são exibidos, junto ao botão de confirmação de recebimento
 
 #### Scenario: Ciência apenas do criador no estado certo
 
-- **GIVEN** um caso em `FINAL_REPLY_POSTED` criado por outro NIR e um caso do NIR autenticado já encerrado
-- **WHEN** ele tenta confirmar recebimento de qualquer um deles
-- **THEN** recebe 404 no caso alheio e mensagem de erro no caso já encerrado, sem mudança de estado
+- **GIVEN** um caso em `FINAL_REPLY_POSTED` (de qualquer criador) e um caso já encerrado (`CLEANED`)
+- **WHEN** um NIR com papel ativo tenta confirmar recebimento de cada um deles
+- **THEN** a ciência é aceita no caso em `FINAL_REPLY_POSTED` (criador ou não) e recusada com mensagem de erro no caso já encerrado, sem mudança de estado indevida
 
 #### Scenario: Aba de encerrados lista apenas casos CLEANED
 
-- **GIVEN** 2 casos ativos e 1 encerrado (`CLEANED`) do NIR autenticado
-- **WHEN** ele abre "meus casos"
+- **GIVEN** 2 casos ativos e 1 encerrado (`CLEANED`) no universo da equipe
+- **WHEN** o NIR abre «Casos em Processamento»
 - **THEN** apenas os 2 casos ativos são listados (o `CLEANED` não aparece; não existe mais navegação Ativos/Encerrados e o parâmetro legado `?tab=closed` cai na listagem de ativos preservando os filtros) e o caso encerrado é alcançável pela página «Casos Encerrados» (busca), que lista apenas `CLEANED` e intercorrências ativas
 
 #### Scenario: Encerrado do criador alcançável pela busca
 
-- **GIVEN** um caso `CLEANED` criado pelo NIR autenticado
-- **WHEN** ele busca pelo nº na página «Casos Encerrados» e abre o detalhe histórico
-- **THEN** o resultado (decisões, agendamento, resposta final, comunicações e trilha) é exibido em leitura; o redirect pós-ciência segue levando o criador ao detalhe do seu caso
+- **GIVEN** um caso `CLEANED` de qualquer criador
+- **WHEN** o NIR busca pelo nº na página «Casos Encerrados» e abre o detalhe histórico
+- **THEN** o resultado (decisões, agendamento, resposta final, comunicações e trilha) é exibido em leitura; o redirect pós-ciência leva o NIR operador ao detalhe do caso
 
 #### Scenario: Encerramento administrativo visível ao criador
 
-- **GIVEN** um caso do criador encerrado administrativamente
-- **WHEN** o criador o localiza pela página «Casos Encerrados» e abre o detalhe histórico
+- **GIVEN** um caso encerrado administrativamente
+- **WHEN** o NIR o localiza pela página «Casos Encerrados» e abre o detalhe histórico
 - **THEN** o caso aparece com o resultado "Encerrado administrativamente" e o motivo registrado
-
 ### Requirement: Reenvio corrigido cria novo caso vinculado
 
-O sistema SHALL permitir a **qualquer usuário com papel ativo `nir`** (criador ou não) reenviar, de forma corrigida, um caso encerrado: cria um novo caso que percorre o pipeline completo desde o início, vinculado ao original com motivo obrigatório e exatamente 1 PDF de relatório + um único tipo declarado explicitamente (nunca herdado; múltiplos tipos e múltiplos arquivos são rejeitados com erro nomeado, sem criar o caso). O usuário reenviador SHALL ser o criador do novo caso (`created_by`/`correction_created_by`), recebendo suas notificações e o dever de ciência do novo ciclo. O caso original SHALL permanecer inalterado exceto pelo evento de supersedição e pela listagem dos reenvios que o corrigem. A ação «Reenviar corrigido» SHALL estar disponível no detalhe histórico de casos `CLEANED` (qualquer criador) e no detalhe encerrado do criador; recusa para caso fora de `CLEANED`, sem qualquer escrita. A navegação da página de reenvio (breadcrumb, cancelamento e redirects de recusa) SHALL apontar ao detalhe histórico do original — acessível a qualquer papel `nir` —, nunca a rotas restritas ao criador; o redirect de sucesso leva o reenviador ao detalhe do novo caso (seu). Na listagem «Reenvios corrigidos» do caso original, o link para o caso corrigido SHALL respeitar a autorização do visitante: próprio → detalhe do caso; alheio e ativo → referência desambiguada sem link; alheio encerrado → detalhe histórico.
+O sistema SHALL permitir a **qualquer usuário com papel ativo `nir`** (criador ou não) reenviar, de forma corrigida, um caso encerrado: cria um novo caso que percorre o pipeline completo desde o início, vinculado ao original com motivo obrigatório e exatamente 1 PDF de relatório + um único tipo declarado explicitamente (nunca herdado; múltiplos tipos e múltiplos arquivos são rejeitados com erro nomeado, sem criar o caso). O usuário reenviador SHALL ser o criador do novo caso (`created_by`/`correction_created_by`), recebendo as notificações do novo ciclo (a ciência é da equipe NIR — ver requisito «Ciência do NIR com encerramento e disposição de dados» desta change). O caso original SHALL permanecer inalterado exceto pelo evento de supersedição e pela listagem dos reenvios que o corrigem. A ação «Reenviar corrigido» SHALL estar disponível no detalhe histórico de casos `CLEANED` (qualquer criador) e no detalhe encerrado; recusa para caso fora de `CLEANED`, sem qualquer escrita. A navegação da página de reenvio (breadcrumb, cancelamento e redirects de recusa) SHALL apontar ao detalhe histórico do original — acessível a qualquer papel `nir` —, nunca a rotas fora do alcance do papel `nir`; o redirect de sucesso leva o reenviador ao detalhe do novo caso (seu). Na listagem «Reenvios corrigidos» do caso original, o link para o caso corrigido SHALL levar ao detalhe do caso quando ativo ou ao detalhe histórico quando encerrado — ambos acessíveis a qualquer `nir` —, sempre com a referência desambiguada quando o nº é duplicado.
 
 #### Scenario: Reenvio cria novo caso vinculado com motivo
 
@@ -172,14 +179,13 @@ O sistema SHALL permitir a **qualquer usuário com papel ativo `nir`** (criador 
 
 - **GIVEN** um NIR não-criador no formulário de reenvio de um caso `CLEANED` alheio, aberto a partir do detalhe histórico
 - **WHEN** ele usa o breadcrumb ou «Cancelar», ou sofre recusa (estado incorreto / intake desabilitado)
-- **THEN** todos os destinos são o detalhe histórico do original (ou a busca, como fallback do escopo), sem qualquer 404 de rota restrita ao criador; no sucesso, o redirect leva ao detalhe do novo caso, de sua autoria
+- **THEN** todos os destinos são o detalhe histórico do original (detalhe do caso ativo — alcançável por qualquer `nir`), sem qualquer 404 de rota restrita ao criador; no sucesso, o redirect leva ao detalhe do novo caso, de sua autoria
 
 #### Scenario: Link do caso corrigido respeita a autorização do visitante
 
 - **GIVEN** um caso encerrado com reenvio corrigido criado por outro NIR
-- **WHEN** o criador original vê a listagem «Reenvios corrigidos deste caso»
-- **THEN** enquanto o novo caso está ativo, a referência desambiguada aparece SEM link (guard ativo preservado); quando o novo caso encerra (`CLEANED`), a referência passa a apontar ao detalhe histórico — o reenviador, por sua vez, sempre acessa seu próprio caso pelo detalhe
-
+- **WHEN** qualquer NIR vê a listagem «Reenvios corrigidos deste caso»
+- **THEN** enquanto o novo caso está ativo, a referência desambiguada aponta ao detalhe do caso; quando o novo caso encerra (`CLEANED`), a referência passa a apontar ao detalhe histórico — para qualquer visitante `nir`, criador ou não
 ### Requirement: Encerramento administrativo do caso
 
 O sistema SHALL oferecer transição excepcional de qualquer status diferente

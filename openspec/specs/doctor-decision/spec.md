@@ -11,7 +11,7 @@ auditável, fechando o estágio entre a sumarização e o agendamento.
 
 ### Requirement: Fila médica operacional com filtro por estado e subtipo
 
-O sistema SHALL exibir ao papel ativo `doctor`/`admin` as abas `Pendentes` (`AWAITING_DOCTOR`) e `Decididos Hoje` — casos com decisão médica registrada no dia corrente pelo próprio médico, independentemente do status atual do caso (paridade ats-web). Pendentes permanecem ordenadas por `days_on_screen` desc nulls-last e FIFO, com filtro server-side único por subtipo e busca client-side por nome/ocorrência; Decididos Hoje SHALL ser ordenada pela data/hora da decisão, mais recente primeira. Em desktop, cada card SHALL separar conteúdo (8/12) e tempo/ação (4/12). Pendentes exibem espera uma única vez e ações de reserva; decididos exibem disposição e data/hora por procedimento e «Ver detalhes», sem espera. Guards, paginação, partial a cada 20 s e contadores são preservados; uid nunca é exibido. Casos decididos em dias anteriores NÃO aparecem nas abas — paridade ats-web: o médico NÃO possui superfície de histórico própria (perda operacional aprovada pelo dono, registrada no design da change); o caso segue visível ao agendador e ao NIR pelas suas superfícies.
+O sistema SHALL exibir ao papel ativo `doctor`/`admin` as abas `Pendentes` (`AWAITING_DOCTOR`) e `Decididos Hoje` — casos com decisão médica registrada no dia corrente **por qualquer médico (equipe/especialidade), independentemente do status atual do caso e de quem decidiu, respeitando o acesso por subtipo do médico que visualiza**. Pendentes permanecem ordenadas por `days_on_screen` desc nulls-last e FIFO, com filtro server-side único por subtipo e busca client-side por nome/ocorrência; Decididos Hoje SHALL ser ordenada pela data/hora da decisão, mais recente primeira, e exibir o decisor (nome legível) no card. Em desktop, cada card SHALL separar conteúdo (8/12) e tempo/ação (4/12). Pendentes exibem espera uma única vez e ações de reserva; decididos exibem disposição e data/hora por procedimento e «Ver detalhes», sem espera. Guards, paginação, partial a cada 20 s e contadores são preservados; uid nunca é exibido. Casos decididos em dias anteriores NÃO aparecem nas abas — paridade ats-web: o médico NÃO possui superfície de histórico própria (perda operacional aprovada pelo dono, registrada no design da change); o caso segue visível ao agendador e ao NIR pelas suas superfícies.
 
 #### Scenario: Médico de subtipo filtra a fila
 
@@ -47,23 +47,23 @@ O sistema SHALL exibir ao papel ativo `doctor`/`admin` as abas `Pendentes` (`AWA
 
 - **GIVEN** um caso decidido hoje com dois procedimentos, disposições e horários persistidos
 - **WHEN** o médico acessa a aba decididos
-- **THEN** o card exibe nome/idade, ocorrência, disposição e data/hora de cada procedimento e o botão «Ver detalhes», sem «Aguardando há», «Recebido há» ou `waiting-time`
+- **THEN** o card exibe nome/idade, ocorrência, o decisor da decisão, disposição e data/hora de cada procedimento e o botão «Ver detalhes», sem «Aguardando há», «Recebido há» ou `waiting-time`
 
 #### Scenario: Decididos Hoje limita-se às decisões do dia corrente
 
-- **GIVEN** um caso decidido hoje pelo médico autenticado e outro decidido ontem ainda aguardando agendamento
+- **GIVEN** um caso decidido hoje e outro decidido ontem ainda aguardando agendamento
 - **WHEN** o médico acessa a aba decididos
 - **THEN** apenas o caso decidido hoje aparece, ordenado pela data/hora da decisão (mais recente primeiro); o caso de ontem não aparece em nenhuma aba e segue visível ao agendador
 
 #### Scenario: Decididos Hoje inclui apenas as próprias decisões
 
-- **GIVEN** decisões médicas registradas hoje por outro médico
+- **GIVEN** decisões médicas registradas hoje por outro médico, em casos de subtipo acessível ao visualizador
 - **WHEN** o médico autenticado acessa a aba decididos
-- **THEN** nenhuma delas é listada — a aba é escopada ao decisor
+- **THEN** elas são listadas com o decisor visível no card — a aba é da especialidade, não do decisor
 
 #### Scenario: Caso decidido hoje aparece mesmo já encerrado
 
-- **GIVEN** um caso decidido hoje pelo médico que já completou o ciclo no mesmo dia (resposta final publicada, ciência registrada)
+- **GIVEN** um caso decidido hoje que já completou o ciclo no mesmo dia (resposta final publicada, ciência registrada)
 - **WHEN** o médico acessa a aba decididos
 - **THEN** o caso permanece listado — o critério é a decisão do dia, independentemente do status atual
 
@@ -99,9 +99,9 @@ O sistema SHALL exibir ao papel ativo `doctor`/`admin` as abas `Pendentes` (`AWA
 
 #### Scenario: Abas usam Pendentes e Decididos
 
-- **GIVEN** casos aguardando e casos decididos hoje pelo médico
+- **GIVEN** casos aguardando e casos decididos hoje (por qualquer médico)
 - **WHEN** o médico abre a fila
-- **THEN** as abas exibem `Pendentes` e `Decididos Hoje`, e decididos lista as decisões do dia corrente do próprio médico, independentemente do status atual do caso
+- **THEN** as abas exibem `Pendentes` e `Decididos Hoje`, e decididos lista as decisões do dia corrente de qualquer decisor dentro do acesso por subtipo do visualizador, independentemente do status atual do caso
 
 #### Scenario: Título e container acompanham a aba
 
@@ -147,7 +147,7 @@ O sistema SHALL exibir ao papel ativo `doctor`/`admin` as abas `Pendentes` (`AWA
 
 #### Scenario: Badges de contagem nas abas
 
-- **GIVEN** 3 casos aguardando e 5 decisões do dia corrente pelo próprio médico
+- **GIVEN** 3 casos aguardando e 5 decisões do dia corrente (de qualquer médico acessível)
 - **WHEN** a fila é renderizada
 - **THEN** as abas exibem as contagens 3 e 5
 
@@ -163,6 +163,11 @@ O sistema SHALL exibir ao papel ativo `doctor`/`admin` as abas `Pendentes` (`AWA
 - **WHEN** a fila é exibida em viewport de 390 px
 - **THEN** as regiões empilham, badges quebram linha, a ação permanece acessível com alvo mínimo de 44 px e não há overflow horizontal
 
+#### Scenario: Decididos Hoje respeita o acesso por subtipo do visualizador
+
+- **GIVEN** decisão registrada hoje por outro médico em caso de subtipo fora do acesso do visualizador
+- **WHEN** o médico acessa a aba decididos
+- **THEN** o caso não é listado — o alargamento para a equipe não afasta o predicado de acesso por subtipo
 ### Requirement: Access control por subtipo no conjunto declarado
 
 O sistema SHALL restringir médico com subtipos atribuídos a decidir apenas

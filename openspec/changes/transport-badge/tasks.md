@@ -15,7 +15,7 @@ aceitação, escalada); este arquivo apenas indexa a sequência.
   (mapeamento único de classe em `apps/cases/models.py`; badge nos cards de
   meus casos, fila médica e fila do agendador; paridade de rótulo/classe)
 
-- [ ] S3 — Transporte no detalhe do caso médico
+- [x] S3 — Transporte no detalhe do caso médico
   Contract: slices/slice-003-detalhe-medico.md
   (linha «Transporte» no card de identificação; ausente → «—»)
 

@@ -51,6 +51,8 @@ detalhe read-only (`case_detail.html`).
           <dd class="col-sm-9">{{ identification.patient_gender|default:"—" }}</dd>
           <dt class="col-sm-3">Raça/Cor</dt>
           <dd class="col-sm-9">{{ identification.patient_race|default:"—" }}</dd>
+          <dt class="col-sm-3">Transporte</dt>
+          <dd class="col-sm-9">{{ identification.transport_label|default:"—" }}</dd>
         </dl>
         {% if work_page %}
         <p class="small text-muted mb-2">

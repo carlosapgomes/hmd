@@ -4,6 +4,25 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.28] — 2026-11-23
+
+**CRM do médico nas respostas finais ao NIR (exigência SUREM)** — 1
+change (`registro-profissional-resposta-final`), 2 slices TDD com
+revisão independente por slice. Suíte 2411 → **2431** (+20 testes).
+Sem migrations e **sem seeds novos** (passo 5 do runbook roda
+idempotente como segurança; catálogo segue em 14 tipos e os seeds do
+`neurointerv` estão em produção desde a v0.1.26).
+
+- **Provisionamento**: fieldset «Profissional» no `UserAdmin` expondo
+  `professional_council` + `professional_council_number` (molde
+  ats-web) — sem UI self-service; campos já existiam no modelo desde
+o bootstrap.
+- **Linha de crédito médico** como última linha das respostas finais
+  ao NIR: «Médico responsável: nome — CRM N» nas confirmações de
+  agendamento (unidades 1 e 2) e na negativa médica, com degradação
+  graciosa quando o CRM não está preenchido; `linebreaksbr` na thread
+  nas 3 superfícies; manual atualizado.
+
 ## [0.1.27] — 2026-11-22
 
 **Visibilidade por equipe nos 3 papéis + endurecimento de testes** —

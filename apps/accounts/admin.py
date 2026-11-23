@@ -39,6 +39,10 @@ class UserAdmin(BaseUserAdmin):  # type: ignore[type-arg]
             "Acesso institucional",
             {"fields": ("ad_upn", "account_status", "roles", "specialties")},
         ),
+        (
+            "Profissional",
+            {"fields": ("professional_council", "professional_council_number")},
+        ),
     )
     add_fieldsets = (
         (
@@ -57,6 +61,10 @@ class UserAdmin(BaseUserAdmin):  # type: ignore[type-arg]
         (
             "Acesso institucional",
             {"fields": ("account_status", "roles", "specialties")},
+        ),
+        (
+            "Profissional",
+            {"fields": ("professional_council", "professional_council_number")},
         ),
     )
 

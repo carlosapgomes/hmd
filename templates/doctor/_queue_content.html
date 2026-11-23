@@ -82,7 +82,7 @@ escopo server de ``?subtype=``.
           <span class="badge badge-wrap bg-warning text-dark mb-2">Dias em tela: {{ item.days_on_screen }}</span>
           {% endif %}
           <div class="waiting-time">
-            ⏱ Aguardando há {{ item.created_at|timesince }}
+            ⏱ Aguardando há {{ item.waiting_since|timesince }}
           </div>
           {% if item.lock.is_locked_by_current_user %}
           <a href="{{ card_url }}" class="btn btn-sm btn-success stretched-link mt-2">▶ Continuar avaliação</a>

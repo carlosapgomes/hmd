@@ -1,6 +1,6 @@
 # Tasks
 
-Plano produzido com `openspec-vertical-change-writer`, revisado após F-01–F-12 e três decisões do dono. Estado: S1 implementado e aceito com notas P2; S2–S5 pendentes. Executar um slice por vez, em ordem; cada task inclui testes, documentação e gates próprios. Não habilitar produção antes do aceite S1–S5. Antigo S3 foi dividido em S3 (núcleo seguro) e S4 (UI); antiga conferência S4 passa a S5.
+Plano produzido com `openspec-vertical-change-writer`, revisto após F-01–F-12 e, agora, após auditoria integral AUD-01–14 e confirmação explícita do dono das decisões de saneamento (design D10). Estado: S1 e S2 implementados, aceitos com notas P2 adiadas (S2: AUD-12, AUD-13, P2-3 e P2-4, na Review 4 independente, 23/23 PASS, 0 P0/P1) e commitados; S3–S5 não iniciados. Executar um slice por vez, em ordem; cada unidade inclui seus testes, documentação e gates. Não habilitar produção antes do aceite S1–S5. Antigo S3 foi dividido em S3 (núcleo seguro) e S4 (UI); antiga conferência S4 passa a S5. Esta revisão é só de planejamento: não autoriza apply, commit ou novo orçamento de revisão e não reinicia os três rounds consumidos. Preservar base, código e evidências históricos.
 
 ## 1. S1 — Identidade e prior-case
 
@@ -8,7 +8,17 @@ Plano produzido com `openspec-vertical-change-writer`, revisado após F-01–F-1
 
 ## 2. S2 — Substituição médica
 
-- [ ] 2.1 Entregar vínculo de fila exclusivo compatível com contexto histórico, substituição só com novo pronto, cadeia/espera, métricas corrigidas e retry limitado no cluster llm; verificar locks no atomic final, concorrência PG, leases/retomada/esgotamento, histórico, ambos modos de disposição e quality gate. Contract: [slice-002-substituicao-medica.md](slices/slice-002-substituicao-medica.md).
+- [x] 2.1 Aceitar S2 integral somente com TODAS as linhas R1.1–R5.3 do contrato demonstradas no mesmo estado final, zero P0/P1 abertos, revisão independente integral, delta atribuível e gate/PG/runtime completos. Saneamento preserva schema/contexto/FSM/cadeia/espera/métricas/disposição, não só último retry. Contract: [slice-002-substituicao-medica.md](slices/slice-002-substituicao-medica.md).
+
+Unidades sequenciais do MESMO S2, não novos slices, commits ou aceites independentes. 2.2→2.3→2.4→2.5→2.6→2.7 (A–F); 2.8 integra e verifica a entrega inteira. As unidades E/F tornam explícitos os donos das lacunas residuais obrigatórias, conforme precisões P2-1–4 aprovadas após a revisão independente do plano. Nenhuma está concluída por esta revisão do plano. Tracking de trabalho não transforma código parcial em S2 aceito.
+
+- [x] 2.2 A — Seleção conservadora: sanar AUD-02 e anterioridade D3/AUD-08; RED/GREEN forte+fraco/conflito/outra fila e empate de criação, preservando único forte médico. Provar R2.2/R2.3 e documentar a regra, sem implementar efeitos de agendamento/NIR. Contract: [S2 §§4–8](slices/slice-002-substituicao-medica.md).
+- [x] 2.3 B — Aplicação concorrente segura: sanar AUD-01/AUD-07 e chave versionada D4/AUD-14; RED/GREEN de deriva e trace sem apagamento de SQL; PG separado/barreiras para orquestrador×retry, dois novos pelo final real, decisão e leases concorrentes. Provar R4.1–R4.3 sem deadlock/efeito parcial, inclusive limite de três tentativas transacionais totais: erro explícito/FAILED limpo no incoming ainda em processamento, prior/decisões preservados, própria lease e nenhuma repetição LLM; caminhos já prontos preservam estado e sinalizam erro. Completar regressões/documentação da unidade. Contract: [S2 §§4–8](slices/slice-002-substituicao-medica.md).
+- [x] 2.4 C — Retry idempotente e limitado: sanar AUD-04–06 e validar falhas/savepoint fix2; RED/GREEN pending reentrante, revisão/nome/dedupe, orçamento/24h, terminais e job atrasado/duplicado; preservar fix1/fix2 e provar R4.4–R4.9 com gates/documentação próprios. Contract: [S2 §§4–8](slices/slice-002-substituicao-medica.md).
+- [x] 2.5 D — Recuperação observável: sanar AUD-03 conforme decisão D6; evento/trilha→aviso NIR/gerencial SOMENTE do incoming→comando com simulação/execução/recusas/idempotência→agenda real cluster llm. RED/GREEN e manual/runbook na própria unidade; provar R4.10/R4.11, códigos 0/1/2 e distinção simulação/agendado/no-op/recusado, sem duplicar pendência no prior, reset/reativação terminal, nova LLM ou terceiro botão. Contract: [S2 §§4–8](slices/slice-002-substituicao-medica.md).
+- [x] 2.6 E — Histórico e espera: implementar os ajustes/testes residuais de R1.3/R1.4/R3.1/R3.2 (AUD-09/10a/10b/11), com RED/GREEN e documentação próprios: payload não-vácuo/trilha, links exatos/guards/ciclo/re-render 400, cadeia A→B→C em HTTP/HTML, tempo congelado/FIFO/days_on_screen/polling e decididos intactos. Não deixar implementação/testes para integração. Contract: [S2 §§4–8](slices/slice-002-substituicao-medica.md).
+- [x] 2.7 F — Disposição e métricas: implementar ajustes/testes residuais de R5.1/R5.2/R5.3 (AUD-10d e rollback da flag), com RED/GREEN e documentação próprios: arquivos reais/rows/marcadores/pós-commit nos dois modos, worker/purga preservando elos, decisões reais/métricas/tempo médico sem desfecho fictício, flag off sem novos efeitos e leitura mantida. Contract: [S2 §§4–8](slices/slice-002-substituicao-medica.md).
+- [x] 2.8 Integração final S2: somente integrar e consolidar evidência da matriz completa no mesmo estado após A–F; reexecutar regressões, gate AGENTS.md, migrations/histórico isolado, corridas estáveis e verify-hmd oficial no build final, com revisão independente integral. Não implementar aqui débitos/testes/documentação de A–F nem aceitar S2 parcialmente. Contract: [S2 §§4,8–9](slices/slice-002-substituicao-medica.md).
 
 ## 3. S3 — Resolução e documentos no agendamento
 
@@ -24,7 +34,10 @@ Plano produzido com `openspec-vertical-change-writer`, revisado após F-01–F-1
 
 ## Workflow follow-up
 
-- Submeter plano revisado a nova revisão independente antes de autorizar apply; atualização não autoriza implementação.
+- Submeter estes QUATRO artefatos revisados e sua coerência com proposal/demais specs/slices a revisão independente do PLANO, cobrindo o inventário inteiro AUD-01–14 e todos os critérios, antes de autorizar novo apply. Revisão do plano não é revisão/aceite de código nem extensão do orçamento histórico.
+- Preservar os hashes/checkpoints históricos do S2. Uma futura execução autorizada deve registrar a revisão contratual aprovada, relação com base/delta preservados e orçamento concedido explicitamente; não reutilizar GREEN como prova de código corrigido ou sobrescrever o contrato antigo no checkpoint.
+- Reavaliar granularidade e matriz de S3 antes de autorizá-lo; não repartir/renumerar seus slices ou antecipar implementação silenciosamente. S4/S5 continuam pendentes.
+- Dispor notas opcionais AUD-12/AUD-13 explicitamente antes de eventual inclusão no saneamento; não ampliar escopo só pelo rótulo P2. Evidência já exigida por R1–R5 continua obrigatória independentemente da severidade atribuída na auditoria.
 - Rollout controlado com flag explícita e smoke de workers reais; sem resolução retroativa em massa.
 - Ao desligar feature, preservar leitura/métricas/proteção dos vínculos aplicados e lookup legado; documentar reenqueue técnico de pendências ao reabilitar, sem decisões destrutivas.
 - Sincronizar specs e arquivar só após aceite; atualizar PROJECT_CONTEXT.md nesse momento, conforme AGENTS.md.

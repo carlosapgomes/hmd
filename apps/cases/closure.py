@@ -753,3 +753,74 @@ def purge_closed_case_data(case: Case) -> PurgeResult:
         files_failed=files_failed,
         cleaned_fields=counts.cleaned_fields,
     )
+
+
+# ── Encerramento por reapresentação médica (change reapresentacao-casos-filas, D2/D4) ──
+
+
+def close_case_as_reappearance(
+    original: Case,
+    *,
+    user: User | None,
+    role: str,
+) -> None:
+    """Encerra o original substituído na fila médica (R1/R5, slice 002).
+
+    Exige ``AWAITING_DOCTOR`` e ausência de lease VIVA (humana ou worker —
+    ``ValueError`` nomeado sem efeito; o chamador adia com retry em vez de
+    tomar a reserva). No MESMO atomic com ``select_for_update``: transição
+    pública ``close_as_reappearance`` (``AWAITING_DOCTOR → CLEANED``) e a
+    disposição ordinária do D2 (minimização com marcador + remoção física dos
+    arquivos após o commit, ou retenção total). Sem comunicação nova, sem
+    decisão médica fictícia e sem resposta final ao NIR — o representante
+    segue o fluxo normal.
+    """
+    with transaction.atomic():
+        locked = Case.objects.select_for_update().get(pk=original.pk)
+        if locked.status != CaseStatus.AWAITING_DOCTOR:
+            raise ValueError(
+                "encerramento por reapresentação indisponível no estado "
+                f"{locked.status!r} — esperado AWAITING_DOCTOR"
+            )
+        now = timezone.now()
+        if locked.locked_until is not None and locked.locked_until > now:
+            raise ValueError("caso com reserva ativa — encerramento por reapresentação adiado")
+        locked.close_as_reappearance(user=user, role=role)
+        if locked.locked_until is not None and locked.locked_until <= now:
+            # Lease expirada: limpeza silenciosa do resíduo (sem eventos —
+            # paridade com a expiração lazy das filas). Lease viva jamais
+            # chega aqui (recusada acima; o serviço adia com retry).
+            locked.locked_by = None
+            locked.locked_at = None
+            locked.locked_until = None
+            locked.lock_token = None
+            locked.lock_context = ""
+            locked.lock_role = ""
+            locked.save(
+                update_fields=[
+                    "locked_by",
+                    "locked_at",
+                    "locked_until",
+                    "lock_token",
+                    "lock_context",
+                    "lock_role",
+                ]
+            )
+        minimize = _minimization_enabled()
+        file_names: list[str] = []
+        if minimize:
+            file_names = [
+                document.file.name
+                for document in locked.documents.only("file")
+                if document.file.name
+            ]
+            file_names.extend(
+                attachment.file.name
+                for attachment in locked.attachments.only("file")
+                if attachment.file.name
+            )
+            _clean_acknowledged_clinical_data(locked)
+            locked.clinical_data_disposed_at = timezone.now()
+            locked.save(update_fields=["clinical_data_disposed_at"])
+        if minimize:
+            transaction.on_commit(lambda: _delete_files_best_effort(file_names))

@@ -62,6 +62,7 @@ from apps.cases.events import CaseEventType
 from apps.cases.models import Case, CaseDocument, CaseEvent, CaseStatus, SchedulingUnit
 from apps.cases.navigation import resolve_safe_next_url
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
+from apps.cases.reappearance import recovery_status_for_case
 from apps.cases.units import unit_label
 
 from .case_labels import CASE_NEXT_STEP_LABELS, CASE_RESULT_LABELS, PROCEDURE_TYPE_OPTIONS
@@ -493,6 +494,10 @@ def _case_detail_context(case: Case, *, filters: Mapping[str, str]) -> dict[str,
         "procedure_labels": _procedure_labels(declared_types),
         "can_close": case.status != CaseStatus.CLEANED,
         "event_trail": build_event_trail_context(case),
+        # Pendência atual de recuperação (slice 002 unidade D, R4.10):
+        # somente leitura, somente do incoming — regularizada após agenda/
+        # aplicação, sem apagar o histórico da trilha.
+        "reappearance_recovery": recovery_status_for_case(case),
         "filter_qs": urlencode(_filter_params(filters)),
         "back_url": _dashboard_url(filters),
     }

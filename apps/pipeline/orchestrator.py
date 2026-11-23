@@ -36,15 +36,15 @@ import uuid
 from django.conf import settings
 from django.db import transaction
 
-from apps.cases.locks import CaseLock, CaseLockConflictError, claim_case_lock, release_case_lock
+from apps.cases.locks import (
+    CaseLock,
+    CaseLockConflictError,
+    assert_case_lock,
+    claim_case_lock,
+    release_case_lock,
+)
 from apps.cases.models import Case, CaseStatus
 from apps.cases.procedure_review import (
-    REASON_ANONYMIZATION_MISSING,
-    REASON_ANONYMIZED_MISMATCH,
-    REASON_DECLARATION_CHANGED,
-    REASON_MAP_MISMATCH,
-    REASON_SOURCE_CHANGED,
-    REASON_SOURCE_UNAVAILABLE,
     anonymized_text_digest_for_case,
     has_procedure_review_marker,
     is_gate_reason,
@@ -56,6 +56,7 @@ from apps.cases.procedure_review import (
     source_fingerprint_for_case,
 )
 from apps.cases.procedures import get_declared_procedure_types
+from apps.cases.reappearance import ReappearanceDriftError, finalize_summarization
 from apps.pipeline.llm import LlmPipelineError
 from apps.pipeline.llm1_service import run_llm1_extraction
 from apps.pipeline.llm2_service import run_llm2_summarization
@@ -106,6 +107,30 @@ def _failure_reason(exc: Exception) -> str:
 
 def _is_pipeline_state(status: CaseStatus) -> bool:
     return status in (CaseStatus.LLM_EXTRACTING, CaseStatus.LLM_SUMMARIZING)
+
+
+def _fail_processing_if_still_own_pipeline_case(case_pk: uuid.UUID, lock_token: uuid.UUID) -> str:
+    """FAILED guardado sob UM row lock (B-guard, R4.2).
+
+    Checagem de estado+posse e a mutação ``fail_processing`` ocorrem no
+    mesmo ``atomic`` com ``select_for_update`` na linha do incoming: um
+    concorrente não pode trocar estado/lease entre a guarda e a escrita
+    (o ``save`` full de ``_run_transition`` sobre a linha travada fresca
+    nunca ressuscita estado/lease obsoletos). Sem mutex advisory após o
+    row lock e sem tocar outro caso. Retorna ``"applied"``,
+    ``"not-pipeline"`` (pronto/decidido/encerrado — preservado) ou
+    ``"no-lease"`` (lease alheia/expirada — preservada, sem efeito).
+    """
+    with transaction.atomic():
+        locked = Case.objects.select_for_update().get(pk=case_pk)
+        if not _is_pipeline_state(locked.status):
+            return "not-pipeline"
+        try:
+            assert_case_lock(locked, lock_token)
+        except CaseLockConflictError:
+            return "no-lease"
+        locked.fail_processing(reason=ReappearanceDriftError.reason, user=None, role=SYSTEM_ROLE)
+        return "applied"
 
 
 def _assert_confirmation_for_dispatch(case: Case) -> None:
@@ -172,22 +197,6 @@ def _capture_execution_digests(case: Case) -> dict[str, str | None]:
         "anonymized_text_digest": anonymized_text_digest_for_case(case),
         "pseudonym_map_digest": pseudonym_map_digest_for_case(case),
     }
-
-
-def _execution_digest_failure(snapshot: dict[str, str | None], case: Case) -> str | None:
-    """Motivo de integridade se a linha travada diverge do snapshot da execução."""
-    current_source = source_fingerprint_for_case(case)
-    if snapshot["source_fingerprint"] is not None and current_source is None:
-        return REASON_SOURCE_UNAVAILABLE
-    if current_source != snapshot["source_fingerprint"]:
-        return REASON_SOURCE_CHANGED
-    if anonymized_text_digest_for_case(case) != snapshot["anonymized_text_digest"]:
-        if not (case.anonymized_text or ""):
-            return REASON_ANONYMIZATION_MISSING
-        return REASON_ANONYMIZED_MISMATCH
-    if pseudonym_map_digest_for_case(case) != snapshot["pseudonym_map_digest"]:
-        return REASON_MAP_MISMATCH
-    return None
 
 
 def _reconcile_stale_authority(case: Case) -> str:
@@ -398,63 +407,59 @@ def process_case_pipeline(
             execution_declared = get_declared_procedure_types(case)
             _assert_confirmation_for_dispatch(case)
             _assert_processing_complete(case)
-            final_failure: str | None = None
-            final_stale_gate = False
-            with transaction.atomic():
-                current = Case.objects.select_for_update().get(pk=case.pk)
-                if current.status == CaseStatus.CLEANED:
-                    return
-                if marked_execution and execution_digests is not None:
-                    digest_failure = _execution_digest_failure(execution_digests, current)
-                    fresh_authority = _authority_snapshot(current)
-                    _fresh_event, fresh_validity = latest_confirmation_validity(current)
-                    if digest_failure is not None:
-                        final_failure = digest_failure
-                    elif (
-                        fresh_authority != execution_authority
-                        and fresh_validity is not None
-                        and not fresh_validity.valid
-                    ):
-                        if is_gate_reason(fresh_validity.reason):
-                            final_stale_gate = True
-                        else:
-                            final_failure = fresh_validity.reason
-                    elif get_declared_procedure_types(current) != execution_declared:
-                        final_stale_gate = True
-                    if final_failure is not None or final_stale_gate:
-                        if _fresh_event is not None:
-                            record_reason = final_failure
-                            if record_reason is None:
-                                record_reason = (
-                                    fresh_validity.reason
-                                    if fresh_validity is not None and not fresh_validity.valid
-                                    else REASON_DECLARATION_CHANGED
-                                )
-                            record_review_invalidated(current, _fresh_event, record_reason)
-                if final_failure is None and not final_stale_gate:
-                    _assert_processing_complete(current)
-                    current.complete_llm_summarization(user=None, role=SYSTEM_ROLE)
-                    try:
-                        release_case_lock(current, lock.token)
-                        released = True
-                    except CaseLockConflictError:
-                        logger.warning(
-                            "process_case_pipeline: lease do caso %s expirou no atomic final",
-                            case_id,
-                            exc_info=True,
-                        )
-            if final_failure is not None:
+            # Atomic final reestruturado (slice 002, D4 FINAL): mutex da série
+            # antes do primeiro row lock, grupo ordenado por case_id,
+            # revalidação, conclusão da sumarização, tentativa de substituição
+            # médica e liberação da própria lease na MESMA transação — sem
+            # chamar resolução depois de lock incoming prévio.
+            finalization = finalize_summarization(
+                case_pk=case.pk,
+                lock_token=lock.token,
+                marked_execution=marked_execution,
+                execution_digests=execution_digests,
+                execution_authority=execution_authority,
+                execution_declared=execution_declared,
+                user=None,
+                role=SYSTEM_ROLE,
+            )
+            if finalization.status == "aborted":
+                return
+            if finalization.status == "failed":
                 raise LlmPipelineError(
-                    final_failure,
+                    finalization.failure_reason or "procedure_review_incomplete",
                     "execução estagnada (integridade) antes da transição final — "
                     "sem encaminhamento.",
                 )
-            if final_stale_gate:
+            if finalization.status == "stale":
                 outcome = _reconcile_stale_authority(case)
                 if outcome in ("cleaned", "retain"):
                     return
                 continue
+            released = finalization.lease_released
             break
+    except ReappearanceDriftError:
+        # D4/AUD-01: deriva persistente após 3 tentativas — erro técnico
+        # explícito, sem repetir LLM nem agendar recuperação. O rollback do
+        # atomic final preservou prior/decisões; só a própria lease é liberada
+        # (finally) e o incoming ainda em processamento vai ao FAILED guardado.
+        logger.exception(
+            "process_case_pipeline: deriva de reapresentação persistente no caso %s — "
+            "encaminhando ao FAILED sem reprocessamento",
+            case_id,
+        )
+        # D4/R4.2 (B-guard): FAILED só p/ incoming AINDA em processamento e
+        # sob a PRÓPRIA lease, com checagem+efeito sob um row lock — caso
+        # pronto/decidido/encerrado ou sob lease de outro ator é preservado:
+        # nunca TransitionNotAllowed, nunca sobrescrever a execução alheia
+        # com instância obsoleta. O finally libera só a própria lease.
+        outcome = _fail_processing_if_still_own_pipeline_case(case.pk, lock.token)
+        if outcome != "applied":
+            logger.info(
+                "process_case_pipeline: caso %s preservado após deriva (%s) — sem fail_processing",
+                case_id,
+                outcome,
+            )
+            return
     except Exception as exc:
         logger.exception("process_case_pipeline: pipeline falhou para o caso %s", case_id)
         # O rollback do atomic final desfez transição/eventos; a releitura

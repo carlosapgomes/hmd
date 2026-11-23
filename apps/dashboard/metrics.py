@@ -138,6 +138,21 @@ def _post_final_population(population: QuerySet[Case]) -> QuerySet[Case]:
     return population.filter(status__in=_POST_FINAL_STATUSES)
 
 
+def _technical_reappearance_case_ids() -> set[uuid.UUID]:
+    """Casos encerrados por reapresentação (evento canônico da slice 002, R5).
+
+    Encerramentos técnicos (original substituído na fila médica) saem de
+    Em andamento e de TODAS as contagens por procedimento — sem criar
+    desfecho clínico. A identificação é pelo evento (não por flag mutável) e
+    vale mesmo com a feature desligada: vínculos aplicados seguem excluídos.
+    """
+    return set(
+        CaseEvent.objects.filter(event_type=CaseEventType.CASE_REAPPEARANCE_SUPERSEDED).values_list(
+            "case_id", flat=True
+        )
+    )
+
+
 def outcome_by_case(population: QuerySet[Case]) -> dict[uuid.UUID, str]:
     """``payload["source"]`` do ÚLTIMO evento final por caso (só status pós-final).
 
@@ -192,13 +207,16 @@ def compute_summary(period: str) -> dict[str, int]:
 
     ``em_andamento`` é derivado da POPULAÇÃO (``created_at`` na janela) por
     conjuntos de ids: ``|population − agendados − negados − (admin_fechados ∩
-    population sem desfecho)|``. Admin-fechado FORA da população não subtrai
-    (total 0 com card 1 sem em andamento negativo) e admin-fechado COM desfecho
-    já está em ``agendados``/``negados`` (sem dupla subtração). ``encerrados``
-    segue contando os ``CLEANED`` da população — INCLUI os encerrados
-    administrativamente; ``administratively_closed`` conta os eventos do
-    período. Os conjuntos subtraídos são subconjuntos da população, então o
-    saldo de ``em_andamento`` nunca é negativo por construção.
+    population sem desfecho) − (técnicos ∩ population)|``. Admin-fechado FORA
+    da população não subtrai (total 0 com card 1 sem em andamento negativo) e
+    admin-fechado COM desfecho já está em ``agendados``/``negados`` (sem dupla
+    subtração). ``encerrados`` segue contando os ``CLEANED`` da população —
+    INCLUI os encerrados administrativos e os técnicos; ``total`` conta os
+    envios recebidos; ``administratively_closed`` conta os eventos do período.
+    Encerramentos técnicos de reapresentação (slice 002, R5) nunca ficam em
+    andamento, mesmo com a feature desligada. Os conjuntos subtraídos são
+    subconjuntos da população, então o saldo de ``em_andamento`` nunca é
+    negativo por construção.
     """
     start, end = _period_bounds(period)
     population = _window(start, end)
@@ -208,11 +226,14 @@ def compute_summary(period: str) -> dict[str, int]:
     negated_ids = _outcome_ids(outcome, _NEGATED_SOURCES)
     admin_closed_ids = _administratively_closed_case_ids(start, end)
     admin_without_outcome = (admin_closed_ids & population_ids) - scheduled_ids - negated_ids
+    technical_ids = _technical_reappearance_case_ids() & population_ids
     return {
         "total": len(population_ids),
         "agendados": len(scheduled_ids),
         "negados": len(negated_ids),
-        "em_andamento": len(population_ids - scheduled_ids - negated_ids - admin_without_outcome),
+        "em_andamento": len(
+            population_ids - scheduled_ids - negated_ids - admin_without_outcome - technical_ids
+        ),
         "encerrados": population.filter(status=CaseStatus.CLEANED).count(),
         "administratively_closed": len(admin_closed_ids),
     }
@@ -224,12 +245,16 @@ def compute_by_procedure_type(period: str) -> list[dict[str, Any]]:
     Cada linha traz ``procedure_type``/``label`` e as contagens de rows
     (``total``/``approved``/``denied``/``pending`` por ``doctor_disposition``).
     A tabela conta rows de procedimento — o somatório das linhas difere do
-    total do resumo (esperado; notado no template).
+    total do resumo (esperado; notado no template). Encerramentos técnicos de
+    reapresentação (slice 002, R5) são excluídos de TODAS as contagens
+    (inclusive ``total`` e ``pending``); os resultados reais do representante
+    mantido seguem contados.
     """
     start, end = _period_bounds(period)
     population = _window(start, end)
     aggregated = (
         CaseProcedure.objects.filter(case__in=population)
+        .exclude(case__events__event_type=CaseEventType.CASE_REAPPEARANCE_SUPERSEDED)
         .values("procedure_type")
         .annotate(
             total=Count("pk"),

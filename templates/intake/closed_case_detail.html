@@ -44,6 +44,32 @@
       </div>
     </div>
 
+    {% include "cases/_reappearance_recovery.html" %}
+
+    {% if reappearance_link %}
+    <!-- Substituição por reapresentação (slice 002, R1): elo imediato (B) e
+         representante atual da cadeia (C) com links autorizados — elos
+         antigos nunca são reescritos e não há conclusão clínica aqui. -->
+    <div class="card shadow-sm mb-4 report-card">
+      <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
+        <h2 class="h5 mb-0">Reapresentação do mesmo pedido</h2>
+        <span class="badge rounded-pill text-bg-info ms-auto">Substituído</span>
+      </div>
+      <div class="card-body report-block-body">
+        <p class="mb-2">
+          Este caso foi substituído por reapresentação do mesmo pedido
+          {% if reappearance_link.evidence_label %}({{ reappearance_link.evidence_label }}){% endif %}.
+        </p>
+        <dl class="row mb-0">
+          <dt class="col-sm-3">Substituído por</dt>
+          <dd class="col-sm-9"><a href="{{ reappearance_link.immediate_url }}">Caso {{ reappearance_link.immediate_ref }}</a></dd>
+          <dt class="col-sm-3">Representante atual</dt>
+          <dd class="col-sm-9"><a href="{{ reappearance_link.representative_url }}">Caso {{ reappearance_link.representative_ref }}</a></dd>
+        </dl>
+      </div>
+    </div>
+    {% endif %}
+
     {% if has_outcome or admin_closure_result %}
     <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">

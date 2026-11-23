@@ -563,6 +563,25 @@ def event_detail_lines(event: CaseEvent) -> list[str]:
         return ["Caso sob o contrato de revisão de procedimento do NIR."]
     if event_type == CaseEventType.CASE_PROCEDURE_REPROCESSING_REQUESTED:
         return ["Reprocessamento do mesmo caso solicitado após confirmação."]
+    if event_type == CaseEventType.CASE_REAPPEARANCE_SCHEDULE_FAILED:
+        return [
+            "Falha ao agendar a recuperação automática; a pendência segue "
+            "sem agenda e depende de suporte técnico."
+        ]
+    if event_type == CaseEventType.CASE_REAPPEARANCE_RETRY_EXHAUSTED:
+        reason = payload.get("reason_code")
+        labels = {
+            "retry_exhausted": "limite de tentativas atingido",
+            "window_exceeded": "janela de 24 horas atingida",
+            "state_ineligible": "par/revisão deixou de ser elegível",
+        }
+        label = labels.get(str(reason), "limite técnico atingido")
+        return [
+            f"Recuperação automática esgotada ({label}); a pendência "
+            "permanece auditada e depende de suporte técnico."
+        ]
+    if event_type == CaseEventType.CASE_REAPPEARANCE_REENQUEUED:
+        return ["Recuperação técnica reenfileirada; nova tentativa agendada."]
     if event_type == CaseEventType.CASE_PROCEDURE_REPROCESS_ENQUEUE_FAILED:
         scheduled = payload.get("recovery_scheduled") is True
         if scheduled:

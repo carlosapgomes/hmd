@@ -202,6 +202,35 @@ class CaseEventType(models.TextChoices):
         "Falha ao enfileirar reprocessamento",
     )
 
+    # Substituição médica por reapresentação (change
+    # reapresentacao-casos-filas, slice 002, D2/D6): vínculo aplicado e
+    # superado correlatos (payload com ids do vínculo/par, código de
+    # evidência e resolução — sem nome/CNS/texto clínico) mais o esgotamento
+    # técnico da recuperação (payload com tentativas + motivo).
+    CASE_REAPPEARANCE_APPLIED = (
+        "CASE_REAPPEARANCE_APPLIED",
+        "Reapresentação aplicada",
+    )
+    CASE_REAPPEARANCE_SUPERSEDED = (
+        "CASE_REAPPEARANCE_SUPERSEDED",
+        "Caso substituído por reapresentação",
+    )
+    CASE_REAPPEARANCE_RETRY_EXHAUSTED = (
+        "CASE_REAPPEARANCE_RETRY_EXHAUSTED",
+        "Recuperação de reapresentação esgotada",
+    )
+    # Ciclo de recuperação observável (slice 002 unidade D, D6/AUD-03):
+    # falha de agenda sem Schedule durável e reenqueue técnico explícito —
+    # ambos SOMENTE na trilha do incoming, com payload sanitizado.
+    CASE_REAPPEARANCE_SCHEDULE_FAILED = (
+        "CASE_REAPPEARANCE_SCHEDULE_FAILED",
+        "Falha ao agendar recuperação de reapresentação",
+    )
+    CASE_REAPPEARANCE_REENQUEUED = (
+        "CASE_REAPPEARANCE_REENQUEUED",
+        "Recuperação de reapresentação reenfileirada",
+    )
+
 
 def case_status_event_type(state: str) -> str:
     """Resolve o tipo canônico do evento de transição para o estado-alvo.

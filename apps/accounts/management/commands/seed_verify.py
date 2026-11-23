@@ -16,6 +16,13 @@ vazia) e ``990104`` (falha tipada da LLM2 após confirmação). Idempotente na
 mesma run (não duplica nem reseta confirmação/decisão/progresso/prompts);
 caso existente com o identificador mas incompatível gera erro explícito.
 
+Opção ``--reapresentacao-s2`` (change reapresentacao-casos-filas, slice 002):
+par 880101 (mesmo nome + mesmo nº, ``angio_art_perif`` — concordância exata
+no ``config.llm_verify``) criado pela primitiva e pelo pipeline reais: o
+original é envelhecido 6 dias após concluir e o reenvio é processado pelo
+orquestrador real, aplicando a substituição médica pelo serviço S2 (sem
+toque direto no vínculo). Idempotente: cadeia aplicada é preservada.
+
 Uso (só pelo harness, sob ``config.settings.verify``):
     uv run python manage.py seed_verify --settings=config.settings.verify
     uv run python manage.py seed_verify --procedure-review --settings=config.settings.verify
@@ -145,12 +152,24 @@ class Command(BaseCommand):
                 "pela primitiva/pipeline reais após o seed_prompts."
             ),
         )
+        parser.add_argument(
+            "--reapresentacao-s2",
+            action="store_true",
+            default=False,
+            help=(
+                "Semeia o par de reapresentação médica (880101) pela "
+                "primitiva/pipeline reais após o seed_prompts."
+            ),
+        )
 
     def handle(self, *args: object, **options: object) -> None:
         _assert_verify_context()
         self._ensure_roles_and_users()
         if options.get("procedure_review"):
             self._seed_procedure_review()
+            return
+        if options.get("reapresentacao_s2"):
+            self._seed_reappearance_s2()
             return
         creator = User.objects.get(username="verify-nir")
         for record_number, patient_name, patient_age, days_on_screen in _VERIFY_CASES:
@@ -273,6 +292,114 @@ class Command(BaseCommand):
                 )
             self.stdout.write(f"  Created case {record_number}")
         self.stdout.write(self.style.SUCCESS("seed_verify --procedure-review concluído"))
+
+    def _seed_reappearance_s2(self) -> None:
+        """Par de reapresentação médica 880101 (slice 002 — setup, não prova).
+
+        Original e reenvio (mesmo nome + mesmo nº, ``angio_art_perif`` com
+        concordância exata no ``config.llm_verify``) criados pela primitiva e
+        pelo pipeline REAIS: o original é envelhecido 6 dias após concluir e
+        o reenvio aplica a substituição pelo serviço S2 dentro do atomic
+        final do orquestrador — sem tocar no vínculo, na espera ou no status
+        por aqui. Idempotente: cadeia aplicada é preservada; estado parcial
+        incompatível aborta com erro explícito.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.cases.models import CaseStatus
+        from apps.cases.reappearance import current_representative
+
+        call_command("seed_prompts")
+        import pymupdf
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        from apps.intake.services import create_case_with_documents
+
+        number = "880101"
+        name = "Paciente Sintetico Reapresentado"
+        declared = "angio_art_perif"
+        creator = User.objects.get(username="verify-nir")
+        existing = list(Case.objects.filter(agency_record_number=number).order_by("created_at"))
+        for case in existing:
+            if case.status == CaseStatus.CLEANED:
+                representative = current_representative(case)
+                if (
+                    representative.pk != case.pk
+                    and representative.status == CaseStatus.AWAITING_DOCTOR
+                    and representative.agency_record_number == number
+                ):
+                    self.stdout.write("  Kept reappearance chain 880101")
+                    self.stdout.write(
+                        self.style.SUCCESS("seed_verify --reapresentacao-s2 concluído")
+                    )
+                    return
+        if existing and any(case.status != CaseStatus.AWAITING_DOCTOR for case in existing):
+            raise CommandError(
+                "seed_verify --reapresentacao-s2: casos 880101 em estado "
+                "incompatível sem cadeia aplicada; nada foi sobrescrito."
+            )
+        original = existing[0] if existing else None
+        if original is None:
+            document = pymupdf.open()  # type: ignore[no-untyped-call]
+            try:
+                document.new_page().insert_text(
+                    (72, 72),
+                    "\n".join(_review_report_lines(number, name, 60, 3)),
+                )
+                pdf_bytes = bytes(document.tobytes())  # type: ignore[no-untyped-call]
+            finally:
+                document.close()  # type: ignore[no-untyped-call]
+            original = create_case_with_documents(
+                user=creator,
+                role="nir",
+                file=SimpleUploadedFile(
+                    f"relatorio-{number}-original.pdf",
+                    pdf_bytes,
+                    content_type="application/pdf",
+                ),
+                procedure_type=declared,
+            )
+            original.refresh_from_db()
+            if original.status != CaseStatus.AWAITING_DOCTOR:
+                raise CommandError(
+                    "seed_verify --reapresentacao-s2: original 880101 não "
+                    f"concluiu (status={original.status}); setup abortado."
+                )
+            Case.objects.filter(pk=original.pk).update(
+                created_at=timezone.now() - timedelta(days=6)
+            )
+            original.refresh_from_db()
+            self.stdout.write("  Created original 880101")
+        if not Case.objects.filter(agency_record_number=number).exclude(pk=original.pk).exists():
+            document = pymupdf.open()  # type: ignore[no-untyped-call]
+            try:
+                document.new_page().insert_text(
+                    (72, 72),
+                    "\n".join(_review_report_lines(number, name, 60, 4)),
+                )
+                pdf_bytes = bytes(document.tobytes())  # type: ignore[no-untyped-call]
+            finally:
+                document.close()  # type: ignore[no-untyped-call]
+            incoming = create_case_with_documents(
+                user=creator,
+                role="nir",
+                file=SimpleUploadedFile(
+                    f"relatorio-{number}-reenvio.pdf",
+                    pdf_bytes,
+                    content_type="application/pdf",
+                ),
+                procedure_type=declared,
+            )
+            incoming.refresh_from_db()
+            if incoming.status != CaseStatus.AWAITING_DOCTOR:
+                raise CommandError(
+                    "seed_verify --reapresentacao-s2: reenvio 880101 não "
+                    f"concluiu (status={incoming.status}); setup abortado."
+                )
+            self.stdout.write("  Created incoming 880101")
+        self.stdout.write(self.style.SUCCESS("seed_verify --reapresentacao-s2 concluído"))
 
     @staticmethod
     def _fixture_compatible(case: Case, declared: str) -> bool:

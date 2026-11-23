@@ -5,7 +5,7 @@
 // Exit: 0 PASS · 1 falha observada da aplicação · 2 bloqueador infra/driver.
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { chromium } from 'playwright';
@@ -18,6 +18,11 @@ if (runArg < 0 || !process.argv[runArg + 1]) {
 const runDir = path.resolve(process.argv[runArg + 1]);
 const manifest = JSON.parse(readFileSync(path.join(runDir, 'manifest.json'), 'utf8'));
 const base = manifest.url;
+// Jornada S2 (slice 002) roteada pelo entrypoint oficial: --journey s2 (ou --s2)
+// preserva a jornada default e todos os guards; S2 usa a mesma posse/Chromium/assets.
+const journeyArg = process.argv.indexOf('--journey');
+const journeyName = journeyArg >= 0 ? process.argv[journeyArg + 1] : 'default';
+const isS2 = journeyName === 's2' || process.argv.includes('--s2');
 const artifacts = path.join(runDir, 'artifacts');
 const PASSWORD = manifest.seedPassword;
 
@@ -178,6 +183,250 @@ try {
 }
 
 const observed = { runId: manifest.runId, base, database: manifest.database, steps: [] };
+// Jornada S2 (slice 002) via entrypoint oficial drive.mjs --journey s2.
+// Mesma posse/Chromium/assets do default (assertOwnedInstance acima); seed é
+// setup, navegador prova fila/histórico/espera. Artefatos s2-* sem sobrescrever default.
+if (isS2) {
+  const s2checks = [];
+  const s2failures = [];
+  const s2failedAssets = [];
+  const s2observed = { runId: manifest.runId, base, database: manifest.database, steps: [] };
+  function s2check(id, ok, detail) {
+    s2checks.push({ id, ok: !!ok, detail: String(detail ?? '') });
+    if (!ok) s2failures.push(id);
+    console.log(`${ok ? 'PASS' : 'FAIL'} ${id} ${detail ?? ''}`);
+  }
+  async function s2snap(page, name) {
+    const file = path.join(artifacts, `${name}.txt`);
+    let text;
+    try {
+      text = await page.locator('body').ariaSnapshot();
+    } catch {
+      text = await page.locator('body').innerText();
+    }
+    writeFileSync(file, `${page.url()}\n${text}\n`);
+    await page.screenshot({ path: path.join(artifacts, `${name}.png`), fullPage: true });
+  }
+  async function s2loginAs(viewport, username) {
+    const context = await browser.newContext(viewport ? { viewport } : {});
+    const page = await context.newPage();
+    page.on('response', (res) => {
+      if (res.url().includes('/static/') && res.status() >= 400) {
+        s2failedAssets.push(`${res.status()} ${res.url()}`);
+      }
+    });
+    await page.goto(`${base}/login/`, { waitUntil: 'domcontentloaded' });
+    await page.getByLabel('Usuário').fill(username);
+    await page.getByLabel('Senha', { exact: true }).fill(PASSWORD);
+    await page.getByRole('button', { name: 'Entrar' }).click();
+    await page.waitForURL((url) => !url.pathname.endsWith('/login/'), { timeout: 15000 });
+    return { context, page };
+  }
+  // Unidade D (recuperação observável): fixture pendente via runVerifyPy
+  // (setup pelo serviço real, nunca prova) + comando oficial em subprocesso.
+  const MEDIA_ROOT = manifest.mediaRoot;
+  function s2MediaUnderRun(candidate) {
+    if (!candidate) return false;
+    let runReal; let candidateReal;
+    try { runReal = realpathSync(runDir); candidateReal = realpathSync(candidate); } catch { return false; }
+    return candidateReal !== runReal && candidateReal.startsWith(runReal + path.sep);
+  }
+  const s2py = (process.env.UV_PROJECT_ENVIRONMENT && existsSync(`${process.env.UV_PROJECT_ENVIRONMENT}/bin/python`))
+    ? `${process.env.UV_PROJECT_ENVIRONMENT}/bin/python`
+    : (existsSync('.venv/bin/python') ? '.venv/bin/python' : 'uv run --no-sync python');
+  function s2runVerifyPy(code) {
+    if (!s2MediaUnderRun(MEDIA_ROOT)) throw new Error('infra: mediaRoot fora da run, recuso executar');
+    return execSync(`${s2py} manage.py shell --settings=config.settings.verify -c "${code.replace(/"/g, '\\"')}"`, {
+      env: { ...process.env, DJANGO_SETTINGS_MODULE: 'config.settings.verify', VERIFY_DB_HOST: manifest.dbHost || '127.0.0.1', VERIFY_DB_PORT: String(manifest.dbPort || process.env.TEST_DB_PORT || '55435'), VERIFY_DB_NAME: manifest.database, VERIFY_DB_USER: process.env.VERIFY_DB_USER || 'hmd', VERIFY_DB_PASSWORD: process.env.VERIFY_DB_PASSWORD || 'hmd_dev', HMD_VERIFY_MEDIA_ROOT: MEDIA_ROOT },
+      stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8',
+    });
+  }
+  function s2runCommand(args) {
+    if (!s2MediaUnderRun(MEDIA_ROOT)) throw new Error('infra: mediaRoot fora da run, recuso executar');
+    return execSync(`${s2py} manage.py ${args} --settings=config.settings.verify`, {
+      env: { ...process.env, DJANGO_SETTINGS_MODULE: 'config.settings.verify', VERIFY_DB_HOST: manifest.dbHost || '127.0.0.1', VERIFY_DB_PORT: String(manifest.dbPort || process.env.TEST_DB_PORT || '55435'), VERIFY_DB_NAME: manifest.database, VERIFY_DB_USER: process.env.VERIFY_DB_USER || 'hmd', VERIFY_DB_PASSWORD: process.env.VERIFY_DB_PASSWORD || 'hmd_dev', HMD_VERIFY_MEDIA_ROOT: MEDIA_ROOT },
+      stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8',
+    });
+  }
+  const VIEWPORTS = { desktop: { width: 1280, height: 800 }, mobile: { width: 390, height: 844 } };
+  try {
+    for (const [label, viewport] of Object.entries(VIEWPORTS)) {
+      const { context, page } = await s2loginAs(viewport, 'verify-doctor');
+      s2check(`s2-doctor-home-${label}`, page.url().includes('/doctor/'), page.url());
+      const cards = page.locator('[data-doctor-queue-card][data-agency-record-number="880101"]');
+      s2check(`s2-single-new-card-${label}`, (await cards.count()) === 1, `${await cards.count()} card(s) 880101`);
+      const waiting = await cards.first().locator('.waiting-time').innerText();
+      s2check(`s2-inherited-wait-${label}`, /6\s*dias/.test(waiting), waiting.trim());
+      await s2snap(page, `s2-doctor-queue-${label}`);
+      s2observed.steps.push({ step: `s2-doctor-queue-${label}`, url: page.url(), waiting: waiting.trim() });
+      for (const asset of REQUIRED_ASSETS) {
+        const status = await page.evaluate(async (u) => (await fetch(u, { cache: 'no-store' })).status, asset);
+        s2check(`s2-static-asset-${label}-${asset.split('/').pop()}`, status === 200, `${asset} HTTP ${status}`);
+      }
+      const decideHref = await cards.first().locator('a.stretched-link').getAttribute('href');
+      const m = decideHref && decideHref.match(/\/doctor\/case\/([0-9a-f-]{36})\//);
+      s2check(`s2-card-href-${label}`, !!m, decideHref);
+      if (m) {
+        await page.goto(`${base}/doctor/case/${m[1]}/`, { waitUntil: 'domcontentloaded' });
+        const detailBody = await page.locator('body').innerText();
+        s2check(`s2-representative-detail-${label}`, detailBody.includes('880101'), page.url());
+        await s2snap(page, `s2-doctor-detail-${label}`);
+        s2observed.steps.push({ step: `s2-doctor-detail-${label}`, url: page.url() });
+      }
+      await context.close();
+    }
+    {
+      const { context, page } = await s2loginAs(null, 'verify-nir');
+      await page.goto(`${base}/intake/closed-cases/?q=880101`, { waitUntil: 'domcontentloaded' });
+      const searchBody = await page.locator('body').innerText();
+      s2check('s2-history-search-finds-original', searchBody.includes('880101'), 'nº 880101 na busca');
+      await s2snap(page, 's2-nir-search');
+      s2observed.steps.push({ step: 's2-nir-search', url: page.url() });
+      const closedLink = page.locator('a.btn[href*="/intake/closed-cases/"]:has-text("Ver detalhes")').first();
+      s2check('s2-history-link', (await closedLink.count()) >= 1);
+      await closedLink.click();
+      await page.waitForURL(/\/intake\/closed-cases\//);
+      const historyBody = await page.locator('body').innerText();
+      s2check('s2-history-substitution-card', historyBody.includes('Reapresentação do mesmo pedido'), 'card de vínculo');
+      const immediateHref = await page.locator('dt:has-text("Substituído por") + dd a').getAttribute('href');
+      const representativeHref = await page.locator('dt:has-text("Representante atual") + dd a').getAttribute('href');
+      s2check('s2-immediate-link', !!immediateHref, immediateHref);
+      s2check('s2-representative-link', !!representativeHref, representativeHref);
+      s2check('s2-single-hop-chain', !!immediateHref && immediateHref === representativeHref, `${immediateHref} vs ${representativeHref}`);
+      await s2snap(page, 's2-nir-history');
+      s2observed.steps.push({ step: 's2-nir-history', url: page.url(), immediateHref, representativeHref });
+      if (representativeHref) {
+        await page.goto(`${base}${representativeHref}`, { waitUntil: 'domcontentloaded' });
+        const repBody = await page.locator('body').innerText();
+        s2check('s2-representative-active', page.url().includes('/intake/cases/') && repBody.includes('880101'), page.url());
+        await s2snap(page, 's2-nir-representative');
+        s2observed.steps.push({ step: 's2-nir-representative', url: page.url() });
+      }
+      await context.close();
+    }
+    // 3) Unidade D: recuperação observável (R4.10/R4.11). Setup pendente
+    // 880102 pelo serviço real (lease viva → PENDING com agenda); navegador
+    // prova os avisos NIR/gerencial do incoming, ausência no prior, falha
+    // sem agenda, regularização pelo comando oficial e histórico na trilha.
+    const s2fixture = s2runVerifyPy([
+      'from apps.accounts.models import User',
+      'from apps.cases.models import Case, CaseProcedure',
+      'from apps.cases.locks import claim_case_lock',
+      'from apps.cases import reappearance as R',
+      'from django.utils import timezone',
+      'from datetime import timedelta',
+      'owner = User.objects.get(username="verify-nir")',
+      'doctor = User.objects.get(username="verify-doctor")',
+      'def awaiting(c):',
+      '    c.start_pdf_extraction(user=None, role="system"); c.complete_pdf_extraction(user=None, role="system"); c.complete_anonymization(user=None, role="system"); c.complete_llm_extraction(user=None, role="system"); c.complete_llm_summarization(user=None, role="system")',
+      'def make(number):',
+      '    c = Case.objects.create(created_by=owner)',
+      '    CaseProcedure.objects.create(case=c, procedure_type="angio_art_perif", declared_by_nir=True)',
+      '    c.patient_name = "Paciente Sintetico Pendente"; c.agency_record_number = number; c.save(update_fields=["patient_name", "agency_record_number"])',
+      '    awaiting(c); return c',
+      'existing = list(Case.objects.filter(agency_record_number="880102").order_by("created_at"))',
+      'assert not existing, "880102 já semeado nesta run"',
+      'prior = make("880102")',
+      'Case.objects.filter(pk=prior.pk).update(created_at=timezone.now() - timedelta(days=6)); prior.refresh_from_db()',
+      // Lease ANTES do incoming: no verify as tasks rodam inline e o atomic
+      // final do incoming adia (PENDING com agenda) em vez de aplicar.
+      'claim_case_lock(prior, user=doctor, context="doctor_decision", role="doctor")',
+      'incoming = make("880102")',
+      'from apps.cases.models import CaseReappearance',
+      'link = CaseReappearance.objects.get(incoming_case=incoming, state="pending")',
+      'assert link.attempt_count == 1, link.attempt_count',
+      'print("S2D_LINK", link.pk)',
+      'print("S2D_INCOMING", incoming.case_id)',
+      'print("S2D_PRIOR", prior.case_id)',
+    ].join('\n'));
+    const s2link = s2fixture.match(/S2D_LINK ([0-9a-f-]{36})/)?.[1];
+    const s2incoming = s2fixture.match(/S2D_INCOMING ([0-9a-f-]{36})/)?.[1];
+    const s2prior = s2fixture.match(/S2D_PRIOR ([0-9a-f-]{36})/)?.[1];
+    s2check('s2-d-pending-fixture', !!(s2link && s2incoming && s2prior), `${s2link || 'sem link'}`);
+    const WARNINGS = ['Recuperação de reapresentação agendada', 'Falha ao agendar a recuperação de reapresentação', 'Recuperação de reapresentação esgotada'];
+    if (s2link && s2incoming && s2prior) {
+      {
+        const { context, page } = await s2loginAs(VIEWPORTS.desktop, 'verify-nir');
+        await page.goto(`${base}/intake/cases/${s2incoming}/`, { waitUntil: 'domcontentloaded' });
+        const body = await page.locator('body').innerText();
+        s2check('s2-d-nir-incoming-scheduled', body.includes(WARNINGS[0]) && !body.includes(WARNINGS[1]), 'agendada no incoming (NIR)');
+        s2check('s2-d-no-reenqueue-button', !body.includes('Reenfileirar') && !body.includes('reenqueue_pending'), 'sem botão/ação no detalhe');
+        await s2snap(page, 's2-d-nir-scheduled');
+        s2observed.steps.push({ step: 's2-d-nir-scheduled', url: page.url() });
+        await page.goto(`${base}/intake/cases/${s2prior}/`, { waitUntil: 'domcontentloaded' });
+        const priorBody = await page.locator('body').innerText();
+        s2check('s2-d-nir-prior-no-warning', WARNINGS.every((w) => !priorBody.includes(w)), 'prior sem aviso (NIR)');
+        await s2snap(page, 's2-d-nir-prior');
+        await context.close();
+      }
+      {
+        const { context, page } = await s2loginAs(VIEWPORTS.desktop, 'verify-manager');
+        await page.goto(`${base}/dashboard/case/${s2incoming}/`, { waitUntil: 'domcontentloaded' });
+        const body = await page.locator('body').innerText();
+        s2check('s2-d-manager-incoming-scheduled', body.includes(WARNINGS[0]), 'agendada no incoming (gerencial)');
+        await s2snap(page, 's2-d-manager-scheduled');
+        s2observed.steps.push({ step: 's2-d-manager-scheduled', url: page.url() });
+        await page.goto(`${base}/dashboard/case/${s2prior}/`, { waitUntil: 'domcontentloaded' });
+        const priorBody = await page.locator('body').innerText();
+        s2check('s2-d-manager-prior-no-warning', WARNINGS.every((w) => !priorBody.includes(w)), 'prior sem aviso (gerencial)');
+        await context.close();
+      }
+      // Falha sem agenda (setup honesto do estado pós-falha) → aviso de falha.
+      s2runVerifyPy([
+        'from django_q.models import Schedule',
+        'from django.utils import timezone',
+        'from apps.cases.models import CaseReappearance',
+        'from apps.cases import reappearance as R',
+        `Schedule.objects.filter(name__startswith="reappearance-retry:${s2link}:").delete()`,
+        `CaseReappearance.objects.filter(pk="${s2link}").update(last_reason_code="schedule_failed")`,
+        // Evento de falha pelo MESMO helper do caminho real (setup honesto:
+        // a trilha precisa conter a falha, não só o campo técnico).
+        `link = CaseReappearance.objects.get(pk="${s2link}"); link.next_attempt_at = link.next_attempt_at or timezone.now(); R._record_schedule_failed_event(link, attempts=int(link.attempt_count))`,
+        'print("S2D_FAILED_OK")',
+      ].join('\n'));
+      {
+        const { context, page } = await s2loginAs(VIEWPORTS.desktop, 'verify-nir');
+        await page.goto(`${base}/intake/cases/${s2incoming}/`, { waitUntil: 'domcontentloaded' });
+        const body = await page.locator('body').innerText();
+        s2check('s2-d-nir-incoming-failed', body.includes(WARNINGS[1]) && body.toLowerCase().includes('suporte') && !body.includes(WARNINGS[0]), 'falha sem agenda + suporte');
+        await s2snap(page, 's2-d-nir-failed');
+        s2observed.steps.push({ step: 's2-d-nir-failed', url: page.url() });
+        await context.close();
+      }
+      // Comando oficial: simulação zero-escritas, --apply agenda, repetir NO-OP.
+      const simOut = s2runCommand(`reenqueue_pending_reappearances ${s2link}`);
+      s2check('s2-d-command-simulation', simOut.includes('SIMULAÇÃO'), simOut.trim().split('\n').pop());
+      const applyOut = s2runCommand(`reenqueue_pending_reappearances ${s2link} --apply`);
+      s2check('s2-d-command-applied', applyOut.includes('AGENDADO'), applyOut.trim().split('\n').pop());
+      const noopOut = s2runCommand(`reenqueue_pending_reappearances ${s2link} --apply`);
+      s2check('s2-d-command-noop', noopOut.includes('NO-OP'), noopOut.trim().split('\n').pop());
+      {
+        const { context, page } = await s2loginAs(VIEWPORTS.desktop, 'verify-nir');
+        await page.goto(`${base}/intake/cases/${s2incoming}/`, { waitUntil: 'domcontentloaded' });
+        const body = await page.locator('body').innerText();
+        s2check('s2-d-regularized-scheduled', body.includes(WARNINGS[0]) && !body.includes(WARNINGS[1]), 'regularizada após reenqueue');
+        const trailBtn = page.getByRole('button', { name: 'Mostrar trilha' });
+        if ((await trailBtn.count()) > 0) await trailBtn.first().click();
+        const trailBody = await page.locator('body').innerText();
+        s2check('s2-d-history-preserved', trailBody.includes('Falha ao agendar recuperação de reapresentação') && trailBody.includes('Recuperação de reapresentação reenfileirada'), 'histórico do ciclo na trilha');
+        await s2snap(page, 's2-d-nir-regularized');
+        s2observed.steps.push({ step: 's2-d-nir-regularized', url: page.url() });
+        await context.close();
+      }
+    }
+  } catch (err) {
+    console.error(`infra/driver: ${err.message}`);
+    writeFileSync(path.join(artifacts, 'observed-state-s2.json'), JSON.stringify(s2observed, null, 2));
+    await browser.close();
+    process.exit(2);
+  }
+  s2check('s2-no-failed-static-assets', s2failedAssets.length === 0, s2failedAssets.join('; ') || 'nenhum /static/* >= 400');
+  writeFileSync(path.join(artifacts, 'report-s2.json'), JSON.stringify({ runId: manifest.runId, checks: s2checks, failures: s2failures, pass: s2failures.length === 0 }, null, 2));
+  writeFileSync(path.join(artifacts, 'observed-state-s2.json'), JSON.stringify(s2observed, null, 2));
+  await browser.close();
+  console.log(s2failures.length === 0 ? 'DRIVE S2 PASS' : `DRIVE S2 FAIL: ${s2failures.join(', ')}`);
+  process.exit(s2failures.length === 0 ? 0 : 1);
+}
 try {
   // 1) Médico: fila médica em leitura.
   {

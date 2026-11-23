@@ -139,6 +139,24 @@
         <code>FAILED</code>, sem nova tentativa automática.
       </li>
       <li>
+        <strong>Substituição por reapresentação e recuperação</strong>: quando
+        um reenvio do mesmo pedido substitui o caso anterior na fila médica, o
+        detalhe do caso novo mostra a espera herdada e, enquanto a substituição
+        aguarda a liberação da reserva do caso anterior, um aviso de
+        recuperação — <em>agendada</em> (com a data da próxima tentativa),
+        <em>falha ao agendar</em> (sem agenda; informe à equipe de suporte) ou
+        <em>esgotada</em> (limite técnico; depende do suporte). O aviso aparece
+        somente no detalhe do caso novo, nunca no substituído, e desaparece
+        quando a recuperação é agendada ou a substituição é aplicada — o
+        histórico permanece na trilha de eventos do caso novo. Não há botão
+        de repetição nem nova resposta a enviar: a recuperação é técnica e é
+        retomada pela equipe de suporte com o comando
+        <code>reenqueue_pending_reappearances &lt;id-do-vínculo&gt;</code>
+        (simulação, sem escrita) e <code>--apply</code> para agendar de fato;
+        a repetição com agenda válida é NO-OP e casos terminais/aplicados são
+        recusados sem reiniciar limites.
+      </li>
+      <li>
         <strong>Casos em Processamento</strong> (<em>Casos em Processamento</em>):
         a lista mostra os casos <em>ativos</em> (em andamento) de <strong>qualquer
         criador</strong> — tudo exceto <code>CLEANED</code> — com a contagem no
@@ -197,6 +215,12 @@
         caso prévio — mesmo paciente (nome + nº de ocorrência ou CNS) com
         decisão nos últimos 15 dias — um card mostra data, desfecho, origem do
         vínculo e o motivo real da decisão anterior.
+      </li>
+      <li>
+        <strong>Espera herdada (reapresentação)</strong>: quando um reenvio do
+        mesmo pedido substitui o caso anterior na fila, o novo card exibe a
+        espera acumulada desde o pedido original (a criação e o tempo de tela
+        do relatório novo permanecem intactos).
       </li>
       <li>
         <strong>Cards de anexos com verificação de paciente</strong>: quando o

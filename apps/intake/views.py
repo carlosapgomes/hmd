@@ -85,6 +85,7 @@ from apps.cases.procedure_review import (
     source_fingerprint_for_case,
 )
 from apps.cases.procedures import get_declared_procedure_types
+from apps.cases.reappearance import historical_reappearance_links, recovery_status_for_case
 from apps.cases.units import unit_label
 from apps.pipeline.tasks import ProcedureReviewEnqueueAfterCommitError
 
@@ -515,6 +516,38 @@ def my_cases_partial(request: HttpRequest) -> HttpResponse:
 _CLOSED_CASES_SEARCH_CAP = 50
 
 
+def _historical_reappearance_link_context(case: Case) -> dict[str, object] | None:
+    """Contexto do card de reapresentação do detalhe histórico (slice 002, R1).
+
+    Elo imediato (B) + representante atual da cadeia (C) com URLs autorizadas
+    (encerrado → detalhe histórico; ativo → detalhe da equipe) e rótulo de
+    evidência — sem reescrever elos antigos nem alegar conclusão clínica.
+    ``None`` quando o caso não foi substituído por reapresentação.
+    """
+    links = historical_reappearance_links(case)
+    immediate = links["immediate"]
+    if immediate is None or not isinstance(immediate, Case):
+        return None
+    representative = links["representative"]
+    assert isinstance(representative, Case)
+
+    def _detail_url(linked: Case) -> str:
+        route = (
+            "intake:closed_case_detail"
+            if linked.status == CaseStatus.CLEANED
+            else "intake:case_detail"
+        )
+        return reverse(route, args=[linked.case_id])
+
+    return {
+        "immediate_url": _detail_url(immediate),
+        "immediate_ref": immediate.disambiguated_reference,
+        "representative_url": _detail_url(representative),
+        "representative_ref": representative.disambiguated_reference,
+        "evidence_label": str(links.get("evidence_label") or ""),
+    }
+
+
 def _in_historical_scope(case: Case) -> bool:
     """O caso está no escopo histórico do NIR? (D6, guarda própria fail-closed).
 
@@ -633,6 +666,7 @@ def closed_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse
                     "eligible": False,
                     "ineligibility_reason": ineligibility_reason,
                     "issue_form": None,
+                    "reappearance_link": _historical_reappearance_link_context(case),
                     **admin_closure_context,
                 }
             )
@@ -673,6 +707,7 @@ def closed_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse
             "eligible": eligible,
             "ineligibility_reason": ineligibility_reason,
             "issue_form": issue_form,
+            "reappearance_link": _historical_reappearance_link_context(case),
             **admin_closure_context,
         }
     )
@@ -776,6 +811,10 @@ def _assemble_case_detail_context(
         # Trilha de eventos (trilha-eventos-todos-perfis, slice 002, R1):
         # a mesma trilha do painel, em card collapsible ao final do detalhe.
         "event_trail": build_event_trail_context(case),
+        # Pendência atual de recuperação (slice 002 unidade D, R4.10):
+        # somente leitura, somente do incoming — regularizada após agenda/
+        # aplicação, sem apagar o histórico da trilha.
+        "reappearance_recovery": recovery_status_for_case(case),
         "procedure_rows": procedure_rows,
         "declared_procedure_rows": [row for row in procedure_rows if row["is_declared"]],
         "detected_extra_procedure_rows": [

@@ -7,5 +7,5 @@
 
 ## Gate do change
 
-- [ ] G — Quality gate completo (`AGENTS.md` §2) + `openspec validate
+- [x] G — Quality gate completo (`AGENTS.md` §2) + `openspec validate
   --strict` com as 3 deltas reconciliadas, executado após S1 e S2 verdes.

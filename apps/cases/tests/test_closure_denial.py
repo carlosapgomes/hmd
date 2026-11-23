@@ -120,8 +120,11 @@ def test_denial_reply_publishes_motives(nir_user: User, doctor_user: User) -> No
     message = messages[0]
     assert message.author == doctor_user
     assert message.author_role == DOCTOR_ROLE
-    assert message.body == DENIAL_REPLY_TEMPLATE.format(
-        denied_items=(f"- {ANGIO_LABEL}: {ANGIO_REASON}\n- {RADIO_LABEL}: {RADIO_REASON}")
+    assert message.body == (
+        DENIAL_REPLY_TEMPLATE.format(
+            denied_items=(f"- {ANGIO_LABEL}: {ANGIO_REASON}\n- {RADIO_LABEL}: {RADIO_REASON}")
+        )
+        + f"\nMédico responsável: {doctor_user.display_name}"
     )
 
 

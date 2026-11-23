@@ -34,6 +34,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.cases.communications import post_user_communication
+from apps.cases.doctor_credit import doctor_credit_line
 from apps.cases.models import Case, CaseStatus, SchedulingUnit
 from apps.cases.units import unit_label
 
@@ -215,6 +216,11 @@ def confirm_case_scheduling(
             )
         else:
             body = reply_unit_2_text()
+        # Linha de crédito do médico (registro-profissional, D2/D3): última
+        # linha do corpo, lida do decisor já carimbado; omitida sem decisor.
+        credit_line = doctor_credit_line(locked)
+        if credit_line:
+            body = f"{body}\n{credit_line}"
         post_user_communication(locked, user=user, role=role, body=body)
 
 

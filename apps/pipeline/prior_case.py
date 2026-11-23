@@ -1,5 +1,5 @@
 """Prior-case: casos prévios do mesmo paciente por procedimento (slice 005,
-R4–R6, design D7).
+R4–R6, design D7; identidade nova no slice 001 de reapresentacao-casos-filas).
 
 ``lookup_prior_case_context(case, procedure_type) -> PriorCaseSummary | None``:
 candidatas = outros casos com ``CaseProcedure`` do MESMO tipo e decisão
@@ -20,25 +20,34 @@ alimenta o LLM2 usa o motivo **anonimizado pelo núcleo do change 05**
 ``None``. Até o change 07 não há decisões no banco — lookup vazio em produção
 inicial (esperado; coberto com fixtures).
 
+Modo novo (``CASE_REAPPEARANCE_ENABLED=True``, default dev/test): o lookup usa
+SOMENTE a janela única ``CASE_REAPPEARANCE_WINDOW_DAYS`` (default 15) e a
+identidade de ``apps.cases.reappearance`` — nome normalizado exigido +
+conjunto efetivo declarado igual + (regulação igual OU CNS válido igual), sem
+nascimento; idades como evidência auxiliar; conflito de CNS ou par fraco
+(nome+origem) nunca vira contexto factual antes da confirmação NIR (S5).
+Origens: ``occurrence_number | patient_cns | nir_confirmed | none``
+(``nir_confirmed`` reservado à S5; ``name_birthdate_fallback`` só no legado e
+em eventos históricos).
+
 ``record_prior_case_lookups(case, *, user, role)`` grava por procedimento
-declarado o evento ``PRIOR_CASE_LOOKUP`` com origem
-``occurrence_number | name_birthdate_fallback | none`` e resumo enxuto (sem
-PII além do que já está no caso — o motivo anonimizado nem entra no evento;
-quem consome é o resumo retornado ao orquestrador 006).
+declarado o evento ``PRIOR_CASE_LOOKUP`` com a origem do modo vigente e
+resumo enxuto (sem PII além do que já está no caso — o motivo anonimizado nem
+entra no evento; quem consome é o resumo retornado ao orquestrador 006).
 """
 
 from __future__ import annotations
 
 import logging
-import re
-import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
+from uuid import UUID
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Func, Q, TextField
 
 from apps.anonymization.services import anonymize_text
 from apps.cases.events import CaseEventType
@@ -51,14 +60,31 @@ from apps.cases.models import (
     DoctorDisposition,
 )
 from apps.cases.procedures import get_declared_procedure_types
+from apps.cases.reappearance import (
+    IdentitySignals,
+    PriorCaseOrigin,
+    classify_pair,
+    normalize_person_name,
+)
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
 
 logger = logging.getLogger(__name__)
 
-# Origens canônicas do match (design D7 / R5).
-PriorCaseOrigin = Literal["occurrence_number", "name_birthdate_fallback"]
+# Normalização de nome do linkage (paridade com o classificador de S1 —
+# alias do ``normalize_person_name`` canônico de ``apps.cases.reappearance``).
+normalize_name = normalize_person_name
+
+
+def is_reappearance_enabled() -> bool:
+    """Identidade nova ativa? (S1, R5 — default true; prod força false)."""
+    return bool(settings.CASE_REAPPEARANCE_ENABLED)
+
+
+def reappearance_window_days() -> int:
+    """Janela única do modo novo, em dias (S1, R5 — default 15)."""
+    return int(settings.CASE_REAPPEARANCE_WINDOW_DAYS)
 
 
 @dataclass(frozen=True)
@@ -77,18 +103,6 @@ class PriorCaseSummary:
     reason_anonymized: str
     prior_denial_count: int
     origin: PriorCaseOrigin
-
-
-def normalize_name(name: str) -> str:
-    """Nome normalizado para o fallback: sem acentos, maiúsculas, sem espaços.
-
-    Implementação pura em Python (NFKD → ASCII + upper + remoção de
-    whitespace) — mesmo resultado do ``unaccent``/``upper`` do Postgres para
-    os nomes do linkage, sem depender de ORM (R4).
-    """
-    decomposed = unicodedata.normalize("NFKD", name)
-    ascii_text = decomposed.encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"\s+", "", ascii_text).upper()
 
 
 def _decided_rows(case: Case, procedure_type: str) -> list[CaseProcedure]:
@@ -188,13 +202,121 @@ def _build_summary(
     )
 
 
+def _identity_signals(case: Case, declared: frozenset[str]) -> IdentitySignals:
+    """Sinais de identidade do caso para o classificador de S1 (R2)."""
+    return IdentitySignals(
+        name=case.patient_name or "",
+        record_number=case.agency_record_number or "",
+        patient_cns=case.patient_cns or "",
+        origin_unit=case.origin_unit or "",
+        patient_age=case.patient_age,
+        procedures=tuple(sorted(declared)),
+    )
+
+
+class _StripWhitespace(Func):
+    """Normalização de identificador no banco (fix-2 P1-03).
+
+    Espelha ``str.strip`` nos dois lados da comparação (o classificador
+    ``classify_pair`` normaliza ambos os valores em Python): remove os runs
+    de whitespace inicial/final — espaços, tabulação e quebras de linha —
+    via ``REGEXP_REPLACE`` do PostgreSQL. Só os identificadores fortes
+    (regulação/CNS) usam a expressão, sempre combinada com a janela
+    fechada; sem virada de índice, migração ou campo novo.
+    """
+
+    function = "REGEXP_REPLACE"
+    template = "%(function)s(%(expressions)s, '^\\s+|\\s+$', '', 'g')"
+    output_field = TextField()
+
+
+def _lookup_new_mode(case: Case, procedure_type: str) -> PriorCaseSummary | None:
+    """Lookup do modo novo (S1, R3; fix-1 P1-02/P1-03; fix-2 P1-03): janela única + identidade ampliada.
+
+    Exige nome normalizado + conjunto efetivo declarado igual + (regulação
+    igual OU CNS válido igual); idades como evidência auxiliar; conflito de
+    CNS ou par fraco (nome+origem) nunca vira contexto factual. A precedência
+    forte regulação-antes-de-CNS vive DENTRO do par (``classify_pair``) — os
+    pools fortes de AMBAS as origens são combinados, a decisão mais recente
+    do pool válido governa o resumo e a contagem soma todas as negações do
+    pool, conservando a origem da row selecionada. Futuro/próprio excluídos;
+    sem pool → ``None``.
+
+    A consulta é limitada no banco pela janela fechada e pelos sinais fortes
+    (regulação ou CNS do caso atual — D2) com a MESMA normalização do
+    classificador nos dois lados (fix-2 P1-03): populações fora da janela
+    ou sem identidade nunca são materializadas nem alcançam o classificador
+    ou a busca de declarações.
+    """
+    window_days = reappearance_window_days()
+    window_start = case.created_at - timedelta(days=window_days)
+    window_end = case.created_at
+    current_number = case.agency_record_number.strip()
+    current_cns = (case.patient_cns or "").strip()
+    if not current_number and not current_cns:
+        return None
+    identity_filter = Q()
+    if current_number:
+        identity_filter |= Q(_norm_number=current_number)
+    if current_cns:
+        identity_filter |= Q(_norm_cns=current_cns)
+    rows = list(
+        CaseProcedure.objects.annotate(
+            _norm_number=_StripWhitespace("case__agency_record_number"),
+            _norm_cns=_StripWhitespace("case__patient_cns"),
+        )
+        .filter(
+            procedure_type=procedure_type,
+            doctor_disposition__in=(
+                DoctorDisposition.APPROVED.value,
+                DoctorDisposition.DENIED.value,
+            ),
+            doctor_decided_at__isnull=False,
+            doctor_decided_at__gte=window_start,
+            doctor_decided_at__lte=window_end,
+        )
+        .filter(identity_filter)
+        .exclude(case=case)
+        .select_related("case")
+        .order_by("doctor_decided_at")
+    )
+    candidate_ids = {row.case_id for row in rows} | {case.pk}
+    declared: dict[UUID, set[str]] = {}
+    for case_id, procedure in CaseProcedure.objects.filter(
+        case_id__in=candidate_ids, declared_by_nir=True
+    ).values_list("case_id", "procedure_type"):
+        declared.setdefault(case_id, set()).add(procedure)
+    declared_sets: dict[UUID, frozenset[str]] = {
+        case_id: frozenset(types) for case_id, types in declared.items()
+    }
+    current_signals = _identity_signals(case, declared_sets.get(case.pk, frozenset()))
+    strong: list[tuple[CaseProcedure, PriorCaseOrigin]] = []
+    for row in rows:
+        assert row.doctor_decided_at is not None
+        prior_signals = _identity_signals(row.case, declared_sets.get(row.case_id, frozenset()))
+        classification = classify_pair(current_signals, prior_signals)
+        if classification.verdict != "strong" or classification.origin is None:
+            continue
+        strong.append((row, classification.origin))
+    if not strong:
+        return None
+    selected_row, selected_origin = strong[-1]
+    pool = [row for row, _ in strong]
+    return _build_summary(selected_row, pool=pool, origin=selected_origin)
+
+
 def lookup_prior_case_context(case: Case, procedure_type: str) -> PriorCaseSummary | None:
     """Busca o caso prévio mais relevante do mesmo procedimento (R4).
 
-    Prioridade: match por nº de ocorrência (7 dias) > fallback por
-    nome+nascimento (15 dias); dentro do pool vencedor, decisão mais recente.
-    Exclui o próprio caso e casos sem decisão. Sem candidatos → ``None``.
+    Modo novo (flag ligada): janela única de 15 dias + identidade ampliada
+    (nome + regulação/CNS, sem nascimento) via ``_lookup_new_mode``.
+    Modo legado (flag desligada): match por nº de ocorrência (7 dias) >
+    fallback por nome+nascimento (15 dias); dentro do pool vencedor, decisão
+    mais recente. Nos dois modos exclui o próprio caso e casos sem decisão.
+    Sem candidatos → ``None``.
     """
+    if is_reappearance_enabled():
+        return _lookup_new_mode(case, procedure_type)
     rows = _decided_rows(case, procedure_type)
     number_matches = _number_rows(case, rows, int(settings.PRIOR_CASE_WINDOW_DAYS))
     if number_matches:
@@ -216,8 +338,10 @@ def record_prior_case_lookups(
     """Registra os lookups por procedimento declarado com origem (R5).
 
     Grava um evento ``PRIOR_CASE_LOOKUP`` por procedimento declarado com a
-    origem do match (``occurrence_number | name_birthdate_fallback | none``)
-    e resumo enxuto — sem o motivo (o resumo anonimizado é consumido pelo
+    origem do match no modo vigente (novo:
+    ``occurrence_number | patient_cns | none``; legado:
+    ``occurrence_number | name_birthdate_fallback | none``) e resumo enxuto —
+    sem o motivo e sem identificadores (o resumo anonimizado é consumido pelo
     orquestrador 006 pelo retorno de ``lookup_prior_case_context``, não pelo
     evento). Sem procedimentos declarados → ``ValueError``.
     """

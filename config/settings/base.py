@@ -407,8 +407,26 @@ LLM_CLIENT_FACTORY = "apps.pipeline.llm.create_openrouter_client"
 # (default 7) e fallback por nome normalizado + nascimento (default 15). O
 # intervalo é fechado: ``decisão_prévia <= case.created_at <= decisão_prévia +
 # janela`` (decisão "futura" nunca casa — correção do review).
+# DEPRECIADAS pela change reapresentacao-casos-filas (slice 001, R5): usadas
+# SOMENTE no modo legado (``CASE_REAPPEARANCE_ENABLED=false``) enquanto o
+# rollback for suportado; no modo novo só vale ``CASE_REAPPEARANCE_WINDOW_DAYS``
+# abaixo — nunca combinar as janelas como concorrentes.
 PRIOR_CASE_WINDOW_DAYS = int(os.environ.get("PRIOR_CASE_WINDOW_DAYS", "7"))
 PRIOR_CASE_FALLBACK_WINDOW_DAYS = int(os.environ.get("PRIOR_CASE_FALLBACK_WINDOW_DAYS", "15"))
+
+# Reapresentação de casos (change reapresentacao-casos-filas, slice 001,
+# R5/D1–D3): ``CASE_REAPPEARANCE_ENABLED`` liga a identidade nova (nome
+# normalizado + regulação/CNS válido, sem nascimento) e a janela única
+# ``CASE_REAPPEARANCE_WINDOW_DAYS`` (default 15) no prior-case; desligada,
+# o lookup legado (7/15 + nome/nascimento) é preservado e nenhum candidato
+# novo é persistido/confirmado/resolvido. Default true (dev/test); produção
+# força false (``config.settings.prod``).
+CASE_REAPPEARANCE_ENABLED = os.environ.get("CASE_REAPPEARANCE_ENABLED", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+CASE_REAPPEARANCE_WINDOW_DAYS = int(os.environ.get("CASE_REAPPEARANCE_WINDOW_DAYS", "15"))
 
 # Modo de execução da task do pipeline LLM (change llm-pipeline-per-type,
 # slice 006, design D9/R4): ``True`` (default em dev/teste) executa o pipeline

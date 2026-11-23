@@ -62,6 +62,11 @@ def fake_anonymizer(monkeypatch: pytest.MonkeyPatch) -> _FakeAnonymizer:
     return fake
 
 
+# Intenção legada: estes testes pinam o lookup 7/15 + nome/nascimento
+# (modo vigente quando foram escritos); o modo novo é coberto no bloco S1.
+_LEGACY_MODE = override_settings(CASE_REAPPEARANCE_ENABLED=False)
+
+
 @pytest.fixture
 def owner_user() -> User:
     """Dono dos casos dos testes (a FSM não exige papel)."""
@@ -114,6 +119,7 @@ def _decided_at(days_before: float, *, reference: datetime | None = None) -> dat
 # ── R4: match por nº de ocorrência (7 dias) ────────────────────────────────
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_match_by_number_7d(owner_user: User, fake_anonymizer: _FakeAnonymizer) -> None:
     """R4/R7: nº de ocorrência igual e decisão dentro de 7 dias → resumo com
@@ -158,6 +164,7 @@ def test_match_by_number_7d(owner_user: User, fake_anonymizer: _FakeAnonymizer) 
 # ── R2/D3: motivo anonimizado no espaço de tokens do caso (seed) ───────────
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_reason_reuses_case_tokens_without_label(owner_user: User) -> None:
     """R2/D3: motivo do prévio citando o nome SEM rótulo SESAB → token do CASO.
@@ -202,6 +209,7 @@ def test_reason_reuses_case_tokens_without_label(owner_user: User) -> None:
     assert "Maria da Silva" not in summary.reason_anonymized
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_match_by_number_approved_and_count(owner_user: User) -> None:
     """R4: pool por nº com decisões múltiplas → escolhe a mais recente e conta
@@ -239,6 +247,7 @@ def test_match_by_number_approved_and_count(owner_user: User) -> None:
     assert summary.prior_denial_count == 1  # apenas a negativa entra na contagem
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_no_match_outside_7d(owner_user: User) -> None:
     """R7: nº igual mas decisão fora de 7 dias → sem match (e sem fallback
@@ -269,6 +278,7 @@ def test_no_match_outside_7d(owner_user: User) -> None:
 # ── R4: fallback nome normalizado + nascimento (15 dias) ───────────────────
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_fallback_name_birthdate_15d(owner_user: User) -> None:
     """R7: nº diferente/ausente + nome normalizado e nascimento iguais dentro
@@ -306,6 +316,7 @@ def test_fallback_name_birthdate_15d(owner_user: User) -> None:
     assert summary.decision == DoctorDisposition.DENIED
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_fallback_normalizes_accents_and_whitespace(owner_user: User) -> None:
     """R4: nome com acentos/espaços é normalizado (unaccent/upper/sem espaços)."""
@@ -336,6 +347,7 @@ def test_fallback_normalizes_accents_and_whitespace(owner_user: User) -> None:
     assert summary.origin == "name_birthdate_fallback"
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_fallback_outside_15d(owner_user: User) -> None:
     """R7: fallback com decisão há mais de 15 dias → sem match."""
@@ -362,6 +374,7 @@ def test_fallback_outside_15d(owner_user: User) -> None:
     assert lookup_prior_case_context(current, "art_perif") is None
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_fallback_rejects_future_decision(owner_user: User) -> None:
     """R4 (correção do review): intervalo FECHADO — decisão após o ``created_at``
@@ -390,6 +403,7 @@ def test_fallback_rejects_future_decision(owner_user: User) -> None:
     assert lookup_prior_case_context(current, "art_perif") is None
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_priority_number_over_fallback(owner_user: User) -> None:
     """R4: nº de ocorrência tem prioridade sobre o fallback por nome+nascimento."""
@@ -432,6 +446,7 @@ def test_priority_number_over_fallback(owner_user: User) -> None:
     assert summary.decision == DoctorDisposition.DENIED
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_excludes_self_and_undecided(owner_user: User) -> None:
     """R7: o próprio caso (mesmo já decidido) e casos sem decisão são excluídos."""
@@ -455,6 +470,7 @@ def test_excludes_self_and_undecided(owner_user: User) -> None:
     assert lookup_prior_case_context(current, "art_perif") is None
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_only_same_procedure_type_matches(owner_user: User) -> None:
     """R4: o lookup é por procedimento — decisão de outro tipo não casa."""
@@ -477,6 +493,7 @@ def test_only_same_procedure_type_matches(owner_user: User) -> None:
     assert lookup_prior_case_context(current, "art_perif") is None
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_undecided_only_case_in_window_returns_none(owner_user: User) -> None:
     """Sem nenhum candidato decidido → ``None`` (produção inicial, sem decisões)."""
@@ -499,6 +516,7 @@ def _declare(case: Case, procedure_type: str) -> None:
     CaseProcedure.objects.create(case=case, procedure_type=procedure_type, declared_by_nir=True)
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_lookup_events_with_origin(owner_user: User, fake_anonymizer: _FakeAnonymizer) -> None:
     """R5/R7: eventos ``PRIOR_CASE_LOOKUP`` com origem correta por procedimento
@@ -551,6 +569,7 @@ def test_lookup_events_with_origin(owner_user: User, fake_anonymizer: _FakeAnony
     assert by_type["permicath"].payload["matched"] is False
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_lookup_event_fallback_origin(owner_user: User) -> None:
     """R5: fallback por nome+nascimento grava origem ``name_birthdate_fallback``."""
@@ -585,6 +604,7 @@ def test_lookup_event_fallback_origin(owner_user: User) -> None:
     assert event.payload["decision"] == DoctorDisposition.DENIED
 
 
+@_LEGACY_MODE
 @pytest.mark.django_db
 def test_lookup_wrapper_requires_declared(owner_user: User) -> None:
     """R5: sem procedimentos declarados o wrapper falha nomeando a exigência."""
@@ -592,3 +612,275 @@ def test_lookup_wrapper_requires_declared(owner_user: User) -> None:
 
     with pytest.raises(ValueError, match="sem procedimentos declarados"):
         record_prior_case_lookups(current, user=None, role="system")
+
+
+# ── S1 (RED): identidade nova sem nascimento — CNS e regulação em 14 dias ──
+# Com a flag ligada, o lookup usa SOMENTE a janela única de 15 dias e a
+# identidade ampliada (nome normalizado + regulação/CNS, sem nascimento).
+# Antes da implementação o comportamento legado responde (7/15 + nome/
+# nascimento) e estes cenários novos retornam ``None`` — RED de comportamento.
+
+_S1_CNS_A = "207139200176053"
+_S1_CNS_B = "605932160152243"
+
+_NEW_MODE = override_settings(CASE_REAPPEARANCE_ENABLED=True, CASE_REAPPEARANCE_WINDOW_DAYS=15)
+
+
+def _decide(
+    case: Case,
+    procedure_type: str,
+    *,
+    disposition: str = "denied",
+    reason: str = "negado",
+    decided_at: datetime | None = None,
+) -> None:
+    """Marca a row declarada como decidida (modo novo exige declared_by_nir)."""
+    CaseProcedure.objects.filter(case=case, procedure_type=procedure_type).update(
+        doctor_disposition=disposition,
+        doctor_reason=reason,
+        doctor_decided_at=decided_at,
+    )
+
+
+def _supports_patient_cns() -> bool:
+    """O campo ``Case.patient_cns`` já existe? (RED honesto pré-migration)."""
+    return any(field.name == "patient_cns" for field in Case._meta.get_fields())
+
+
+def _make_s1_case(
+    owner: User,
+    *,
+    created_at: datetime,
+    agency_record_number: str = "",
+    patient_name: str = "",
+    patient_cns: str = "",
+) -> Case:
+    """Caso S1 com CNS estrutural.
+
+    Antes da migration o campo não existe: o CNS é ignorado de propósito e
+    os testes de CNS falham por comportamento (lookup legado sem CNS), não
+    por erro de setup. Depois da migration o CNS passa a persistir.
+    """
+    case = _make_case(
+        owner,
+        created_at=created_at,
+        agency_record_number=agency_record_number,
+        patient_name=patient_name,
+    )
+    if patient_cns and _supports_patient_cns():
+        Case.objects.filter(pk=case.pk).update(patient_cns=patient_cns)
+        case.refresh_from_db()
+    return case
+
+
+@_NEW_MODE
+@pytest.mark.django_db
+def test_new_mode_match_by_cns_without_birthdate_14d(owner_user: User) -> None:
+    """S1/R3: nome + CNS válido iguais, sem nascimento, decisão há 14 dias →
+    resumo com origem ``patient_cns`` (legado retornaria ``None``)."""
+    current = _make_s1_case(
+        owner_user,
+        created_at=_decided_at(0.0),
+        patient_name="Maria da Silva",
+        patient_cns=_S1_CNS_A,
+    )
+    decided_at = _decided_at(14.0, reference=current.created_at)
+    prior = _make_s1_case(
+        owner_user,
+        created_at=decided_at,
+        patient_name="MARIA DA SILVA",
+        patient_cns=_S1_CNS_A,
+    )
+    _declare(
+        prior,
+        "art_perif",
+    )
+    _decide(
+        prior,
+        "art_perif",
+        disposition=DoctorDisposition.DENIED,
+        reason="negado",
+        decided_at=decided_at,
+    )
+    _declare(current, "art_perif")
+
+    summary = lookup_prior_case_context(current, "art_perif")
+
+    assert summary is not None
+    assert summary.origin == "patient_cns"
+    assert summary.prior_case_id == str(prior.case_id)
+    assert summary.decision == DoctorDisposition.DENIED
+
+
+@_NEW_MODE
+@pytest.mark.django_db
+def test_new_mode_match_by_number_14d_beyond_legacy_window(owner_user: User) -> None:
+    """S1/R3: nome + regulação iguais, decisão há 14 dias → origem
+    ``occurrence_number`` na janela única (legado de 7 dias retornaria None)."""
+    current = _make_s1_case(
+        owner_user,
+        created_at=_decided_at(0.0),
+        agency_record_number="77701",
+        patient_name="Maria da Silva",
+    )
+    decided_at = _decided_at(14.0, reference=current.created_at)
+    prior = _make_s1_case(
+        owner_user,
+        created_at=decided_at,
+        agency_record_number="77701",
+        patient_name="maria da silva",
+    )
+    _declare(
+        prior,
+        "art_perif",
+    )
+    _decide(
+        prior,
+        "art_perif",
+        disposition=DoctorDisposition.DENIED,
+        reason="negado",
+        decided_at=decided_at,
+    )
+    _declare(current, "art_perif")
+
+    summary = lookup_prior_case_context(current, "art_perif")
+
+    assert summary is not None
+    assert summary.origin == "occurrence_number"
+
+
+@_NEW_MODE
+@pytest.mark.django_db
+def test_new_mode_requires_name_even_with_number(owner_user: User) -> None:
+    """S1/R2: regulação igual mas nome diferente → sem candidato (o legado
+    casava só pelo número)."""
+    current = _make_s1_case(
+        owner_user,
+        created_at=_decided_at(0.0),
+        agency_record_number="77702",
+        patient_name="Maria da Silva",
+    )
+    decided_at = _decided_at(3.0, reference=current.created_at)
+    prior = _make_s1_case(
+        owner_user,
+        created_at=decided_at,
+        agency_record_number="77702",
+        patient_name="Joana Pereira",
+    )
+    _declare(
+        prior,
+        "art_perif",
+    )
+    _decide(
+        prior,
+        "art_perif",
+        disposition=DoctorDisposition.DENIED,
+        decided_at=decided_at,
+    )
+    _declare(current, "art_perif")
+
+    assert lookup_prior_case_context(current, "art_perif") is None
+
+
+@_NEW_MODE
+@pytest.mark.django_db
+def test_new_mode_distinct_cns_blocks_automation(owner_user: User) -> None:
+    """S1/R2: CNS válidos divergentes, mesmo com regulação igual → sem match
+    automático (conflito exige conferência NIR, S5)."""
+    current = _make_s1_case(
+        owner_user,
+        created_at=_decided_at(0.0),
+        agency_record_number="77703",
+        patient_name="Maria da Silva",
+        patient_cns=_S1_CNS_A,
+    )
+    decided_at = _decided_at(3.0, reference=current.created_at)
+    prior = _make_s1_case(
+        owner_user,
+        created_at=decided_at,
+        agency_record_number="77703",
+        patient_name="Maria da Silva",
+        patient_cns=_S1_CNS_B,
+    )
+    _declare(
+        prior,
+        "art_perif",
+    )
+    _decide(
+        prior,
+        "art_perif",
+        disposition=DoctorDisposition.DENIED,
+        decided_at=decided_at,
+    )
+    _declare(current, "art_perif")
+
+    assert lookup_prior_case_context(current, "art_perif") is None
+
+
+@_NEW_MODE
+@pytest.mark.django_db
+def test_new_mode_weak_origin_only_is_not_context(owner_user: User) -> None:
+    """S1/R3: somente nome + origem, sem CNS/regulação → sem contexto factual
+    antes da confirmação NIR (nunca vira prior-case sozinho)."""
+    current = _make_s1_case(owner_user, created_at=_decided_at(0.0))
+    current.patient_name = "Maria da Silva"
+    current.origin_unit = "Hospital Geral do Estado"
+    current.save(update_fields=["patient_name", "origin_unit"])
+    decided_at = _decided_at(3.0, reference=current.created_at)
+    prior = _make_s1_case(owner_user, created_at=decided_at)
+    prior.patient_name = "Maria da Silva"
+    prior.origin_unit = "Hospital Geral do Estado"
+    prior.save(update_fields=["patient_name", "origin_unit"])
+    _declare(
+        prior,
+        "art_perif",
+    )
+    _decide(
+        prior,
+        "art_perif",
+        disposition=DoctorDisposition.DENIED,
+        decided_at=decided_at,
+    )
+    _declare(current, "art_perif")
+
+    assert lookup_prior_case_context(current, "art_perif") is None
+
+
+@_NEW_MODE
+@pytest.mark.django_db
+def test_new_mode_lookup_event_uses_cns_origin(owner_user: User) -> None:
+    """S1/R4: evento do wrapper no modo novo usa ``patient_cns`` (sem PII)."""
+    from apps.cases.events import CaseEventType
+
+    current = _make_s1_case(
+        owner_user,
+        created_at=_decided_at(0.0),
+        patient_name="Maria da Silva",
+        patient_cns=_S1_CNS_A,
+    )
+    _declare(current, "art_perif")
+    decided_at = _decided_at(5.0, reference=current.created_at)
+    prior = _make_s1_case(
+        owner_user,
+        created_at=decided_at,
+        patient_name="Maria da Silva",
+        patient_cns=_S1_CNS_A,
+    )
+    _declare(
+        prior,
+        "art_perif",
+    )
+    _decide(
+        prior,
+        "art_perif",
+        disposition=DoctorDisposition.DENIED,
+        reason="motivo confidencial",
+        decided_at=decided_at,
+    )
+
+    record_prior_case_lookups(current, user=None, role="system")
+
+    event = current.events.get(event_type=CaseEventType.PRIOR_CASE_LOOKUP)
+    assert event.payload["origin"] == "patient_cns"
+    assert event.payload["matched"] is True
+    assert _S1_CNS_A not in str(event.payload)

@@ -183,6 +183,14 @@ class Case(FSMModelMixin, models.Model):
     patient_race = models.CharField(max_length=32, blank=True)
     days_on_screen = models.PositiveSmallIntegerField(null=True, blank=True)
 
+    # CNS estrutural do paciente (change reapresentacao-casos-filas, slice
+    # 001, R1/D1): 15 dígitos validados do rótulo ``CNS:`` do cabeçalho SESAB
+    # (extração em ``deterministic.extract_patient_cns`` + persistência no
+    # wrapper de anonimização). Vazio (``""``) = identidade CNS ausente/
+    # inválida/ambígua; preservado pelo CLEANED (identificação, como
+    # ``agency_record_number``) e zerado no reenvio de documentos.
+    patient_cns = models.CharField(max_length=15, blank=True, default="", db_index=True)
+
     # Unidade de origem do cabeçalho SESAB (change painel-ats-parity, slice
     # 001, R2/D1): dado ADMINISTRATIVO/institucional (não é PHI demográfico),
     # mesmo ciclo dos metadados acima — persistido pelo worker pdf no write

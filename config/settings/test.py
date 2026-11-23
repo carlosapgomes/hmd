@@ -110,3 +110,10 @@ LLM_RUN_TASKS_INLINE = True
 # task sincronamente — determinístico independente de um .env local com
 # ATTACHMENTS_RUN_TASKS_INLINE=false (mesmo padrão dos três flags acima).
 ATTACHMENTS_RUN_TASKS_INLINE = True
+
+# Reapresentação de casos (change reapresentacao-casos-filas, slice 001, R5):
+# identidade nova LIGADA na suíte (default dev/test) + janela única pinada —
+# determinístico independente de um .env local. Os testes do comportamento
+# legado fixam ``CASE_REAPPEARANCE_ENABLED=False`` por override explícito.
+CASE_REAPPEARANCE_ENABLED = True
+CASE_REAPPEARANCE_WINDOW_DAYS = 15

@@ -643,6 +643,9 @@ def test_ack_other_case_files_untouched(
 # ── R5: caso limpo (CLEANED) segue retornado pelo prior-case ──────────────
 
 
+# Intenção legada: CLEANED consultivo por nº+nome+nascimento no lookup 7/15
+# (o modo novo exige conjunto efetivo igual — o prévio declara 2 tipos).
+@override_settings(CASE_REAPPEARANCE_ENABLED=False)
 @pytest.mark.django_db
 def test_cleaned_case_still_prior_case(
     nir_user: User,

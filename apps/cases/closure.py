@@ -25,6 +25,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.cases.communications import post_user_communication
+from apps.cases.doctor_credit import doctor_credit_line
 from apps.cases.events import CaseEventType
 from apps.cases.locks import case_has_lock, force_release_case_lock
 from apps.cases.models import (
@@ -271,6 +272,11 @@ def post_doctor_denial_reply(case: Case, *, user: User, role: str) -> None:
             )
         locked.post_final_reply(user=user, role=role)
         body = DENIAL_REPLY_TEMPLATE.format(denied_items=_denial_items(denied_rows))
+        # Linha de crédito do médico (registro-profissional, D2): última linha,
+        # após os itens negados, lida do decisor já carimbado; omitida se nulo.
+        credit_line = doctor_credit_line(locked)
+        if credit_line:
+            body = f"{body}\n{credit_line}"
         post_user_communication(locked, user=user, role=role, body=body)
 
 

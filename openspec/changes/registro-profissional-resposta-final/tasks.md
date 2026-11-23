@@ -2,7 +2,7 @@
 
 - [x] S1 — Provisionamento do par de conselho no Django admin
   Contract: slices/slice-001-admin-conselho-profissional.md
-- [ ] S2 — Linha de crédito do médico nas respostas finais ao NIR
+- [x] S2 — Linha de crédito do médico nas respostas finais ao NIR
   Contract: slices/slice-002-linha-credito-respostas-finais.md
 
 ## Gate do change

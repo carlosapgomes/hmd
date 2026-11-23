@@ -331,7 +331,7 @@
             </div>
             <span class="small text-muted text-nowrap">{{ communication.created_at|date:"d/m/Y H:i" }}</span>
           </div>
-          <p class="mb-0 mt-1">{{ communication.body }}</p>
+          <p class="mb-0 mt-1">{{ communication.body|linebreaksbr }}</p>
         </li>
         {% empty %}
         <li class="list-group-item text-muted">Sem comunicações registradas.</li>

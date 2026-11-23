@@ -1473,9 +1473,10 @@ def test_confirm_unit_2_exact_reply(
     assert detail.status_code == 200
     body = detail.content.decode()
     assert reply_unit_2_text() in body
-    # A resposta exata é a única user message da thread.
+    # A resposta exata é a única user message da thread (texto-base + linha
+    # de crédito do médico decisor).
     messages_body = [m.body for m in _user_messages(case)]
-    assert messages_body == [reply_unit_2_text()]
+    assert messages_body == [f"{reply_unit_2_text()}\nMédico responsável: {doctor.display_name}"]
 
 
 @pytest.mark.django_db

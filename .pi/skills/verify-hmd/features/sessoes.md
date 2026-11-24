@@ -13,10 +13,12 @@ do skill: login real pelo form, Chromium pinado, evidência em
   transitório visível e **nenhum** link de reset/esqueci-senha na página →
   `/static/js/password_toggle.js` servido (HTTP 200).
 - `doctor-profile-manual`: `verify-doctor` logado pelo form →
-  `/profile/` com `h1` *Meu perfil*, cards de dados/alteração de senha e
-  link *← Voltar* → `/manual/` com `h1` *Manual de uso*, seções por papel
-  em cards e CSS `@media print` (texto instrucional preservado — diff de
-  texto extraído no relatório do slice).
+  `/profile/` com `h1` *Meu perfil*, card de dados em largura total,
+  orientação visível de que a troca de senha é feita pessoalmente na TI
+  do hospital e nenhum campo/rótulo de senha, e link *← Voltar* →
+  `/manual/` com `h1` *Manual de uso*, seções por papel em cards e CSS
+  `@media print` (texto instrucional preservado — diff de texto extraído
+  no relatório do slice).
 
 ## Como dirigir (Playwright)
 

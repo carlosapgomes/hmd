@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 
 from django.contrib import messages
-from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
+from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.http import HttpRequest, HttpResponse, JsonResponse
@@ -29,7 +29,7 @@ from apps.accounts.notifications import (
     resolve_notification_redirect_url,
 )
 
-from .forms import HospitalPasswordChangeForm, LoginForm
+from .forms import LoginForm
 from .ratelimit import clear_login_failures, is_login_locked, register_failed_login
 
 # Mensagens genéricas de login (change ad-kerberos, slice 003/R4/D5): o usuário
@@ -120,29 +120,19 @@ def logout_view(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
+@require_GET
 def profile_view(request: HttpRequest) -> HttpResponse:
-    """Perfil do usuário com troca de senha local (R2).
+    """Perfil do usuário, só leitura (R1/R2).
 
-    Exibe nome, display name, papéis e conselho profissional; o POST processa
-    ``HospitalPasswordChangeForm`` enquanto a autenticação local existir.
+    Exibe nome, display name, papéis e conselho profissional; escrita (POST)
+    responde 405 por ``@require_GET``, sem alterar credenciais nem a sessão.
     """
     user = _require_user(request)
-
-    if request.method == "POST":
-        form = HospitalPasswordChangeForm(user, request.POST)
-        if form.is_valid():
-            form.save()
-            update_session_auth_hash(request, user)
-            messages.success(request, "Senha alterada com sucesso.")
-            return redirect(reverse("profile"))
-    else:
-        form = HospitalPasswordChangeForm(user)
-
     user_roles = list(user.roles.order_by("name").values_list("name", flat=True))
     return render(
         request,
         "accounts/profile.html",
-        {"form": form, "user_roles": user_roles},
+        {"user_roles": user_roles},
     )
 
 

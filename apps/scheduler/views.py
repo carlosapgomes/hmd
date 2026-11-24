@@ -66,6 +66,7 @@ from django_fsm import TransitionNotAllowed
 
 from apps.accounts.decorators import role_required
 from apps.accounts.models import User
+from apps.attachments.models import CaseAttachment
 from apps.cases.day_bounds import local_day_bounds
 from apps.cases.locks import (
     CaseLockConflictError,
@@ -80,8 +81,11 @@ from apps.cases.models import (
     TRANSPORT_BADGE_CLASSES,
     Case,
     CaseDocument,
+    CaseReappearance,
     CaseStatus,
     DoctorDisposition,
+    ReappearanceState,
+    ResolutionKind,
 )
 from apps.cases.navigation import resolve_safe_next_url
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
@@ -916,3 +920,208 @@ def case_pdf(
     )
     response["Cache-Control"] = "no-store"
     return cast(HttpResponse, response)
+
+
+# ── R3.1–R3.4: Documentos e anexos recebidos por reapresentação aplicada ────
+
+
+def _scheduler_can_view_reappearance_original(case: Case) -> bool:
+    """Elegibilidade do caso original para servir recebidos de reapresentação."""
+    if case.status in (CaseStatus.SCHEDULER_REQUESTED, CaseStatus.AWAITING_SCHEDULING):
+        return True
+    if case.scheduling_decided_at is not None and (
+        case.status in PDF_ALLOWED_STATUSES or case.status == CaseStatus.CLEANED
+    ):
+        return True
+    return False
+
+
+def _authorize_reappearance_file(
+    case_id: uuid.UUID,
+    reappearance_id: uuid.UUID,
+    *,
+    document_id: int | None = None,
+    attachment_id: int | None = None,
+    viewer_pdf_only: bool = False,
+) -> tuple[Case, CaseReappearance, CaseDocument | CaseAttachment]:
+    """Autoriza serve/viewer de arquivo recebido via ``scheduling_repeat`` (D8).
+
+    Fail-closed com 404 sem distinguir motivo nem vazar caminho de storage.
+    """
+    original = get_object_or_404(
+        Case.objects.only("case_id", "status", "scheduling_decided_at"),
+        case_id=case_id,
+    )
+    if not _scheduler_can_view_reappearance_original(original):
+        raise Http404
+
+    link = get_object_or_404(
+        CaseReappearance.objects.select_related("incoming_case").only(
+            "id",
+            "incoming_case_id",
+            "prior_case_id",
+            "canonical_case_id",
+            "resolution_kind",
+            "state",
+            "incoming_case__case_id",
+            "incoming_case__clinical_data_disposed_at",
+        ),
+        pk=reappearance_id,
+        canonical_case_id=original.pk,
+        prior_case_id=original.pk,
+        resolution_kind=ResolutionKind.SCHEDULING_REPEAT,
+        state=ReappearanceState.APPLIED,
+    )
+    if link.incoming_case.clinical_data_disposed_at is not None:
+        raise Http404
+
+    file_obj: CaseDocument | CaseAttachment
+    if document_id is not None:
+        file_obj = get_object_or_404(
+            CaseDocument.objects.only("pk", "case_id", "file", "original_filename"),
+            pk=document_id,
+            case_id=link.incoming_case_id,
+        )
+    elif attachment_id is not None:
+        file_obj = get_object_or_404(
+            CaseAttachment.objects.only(
+                "pk", "case_id", "file", "original_filename", "content_type"
+            ),
+            pk=attachment_id,
+            case_id=link.incoming_case_id,
+        )
+        if viewer_pdf_only and file_obj.content_type != PDF_CONTENT_TYPE:
+            raise Http404
+    else:
+        raise Http404
+
+    if not file_obj.file or not file_obj.file.name:
+        raise Http404
+    try:
+        exists = file_obj.file.storage.exists(file_obj.file.name)
+    except (FileNotFoundError, OSError) as exc:
+        raise Http404 from exc
+    if not exists:
+        raise Http404
+
+    return original, link, file_obj
+
+
+def _reappearance_back_url(request: HttpRequest, original: Case) -> str:
+    """Resolve ``?next=`` seguro com fallback para o detalhe autorizado do original."""
+    if original.status == CaseStatus.CLEANED:
+        default_detail_url = reverse("scheduler:historical_case_detail", args=[original.case_id])
+    else:
+        default_detail_url = reverse("scheduler:case_detail", args=[original.case_id])
+    return resolve_safe_next_url(request, default_detail_url)
+
+
+@role_required("scheduler", "admin")
+@xframe_options_sameorigin
+def reappearance_document_serve(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    reappearance_id: uuid.UUID,
+    document_id: int,
+) -> HttpResponse:
+    """Serve o PDF do relatório recebido vinculado por ``scheduling_repeat``."""
+    _require_user(request)
+    _, _, file_obj = _authorize_reappearance_file(case_id, reappearance_id, document_id=document_id)
+    document = cast(CaseDocument, file_obj)
+    try:
+        handle = document.file.open("rb")
+    except (FileNotFoundError, OSError) as exc:
+        raise Http404 from exc
+    response = FileResponse(
+        handle,
+        content_type=PDF_CONTENT_TYPE,
+        filename=document.original_filename or "documento.pdf",
+    )
+    response["Cache-Control"] = "no-store"
+    return cast(HttpResponse, response)
+
+
+@role_required("scheduler", "admin")
+def reappearance_document_viewer(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    reappearance_id: uuid.UUID,
+    document_id: int,
+) -> HttpResponse:
+    """Viewer mobile do PDF do relatório recebido vinculado por ``scheduling_repeat``."""
+    _require_user(request)
+    original, link, _ = _authorize_reappearance_file(
+        case_id, reappearance_id, document_id=document_id
+    )
+    serve_url = reverse(
+        "scheduler:reappearance_document_serve",
+        args=[original.case_id, link.id, document_id],
+    )
+    return render(
+        request,
+        "pdf_viewer/mobile_pdf_viewer.html",
+        {
+            "viewer_title": "PDF Recebido",
+            "pdf_url": serve_url,
+            "fallback_pdf_url": serve_url,
+            "back_url": _reappearance_back_url(request, original),
+        },
+    )
+
+
+@role_required("scheduler", "admin")
+@xframe_options_sameorigin
+def reappearance_attachment_serve(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    reappearance_id: uuid.UUID,
+    attachment_id: int,
+) -> HttpResponse:
+    """Serve o anexo (PDF ou imagem) recebido vinculado por ``scheduling_repeat``."""
+    _require_user(request)
+    _, _, file_obj = _authorize_reappearance_file(
+        case_id, reappearance_id, attachment_id=attachment_id
+    )
+    attachment = cast(CaseAttachment, file_obj)
+    try:
+        handle = attachment.file.open("rb")
+    except (FileNotFoundError, OSError) as exc:
+        raise Http404 from exc
+    response = FileResponse(
+        handle,
+        content_type=attachment.content_type or "application/octet-stream",
+        filename=attachment.original_filename or "anexo",
+    )
+    response["Cache-Control"] = "no-store"
+    return cast(HttpResponse, response)
+
+
+@role_required("scheduler", "admin")
+def reappearance_attachment_viewer(
+    request: HttpRequest,
+    case_id: uuid.UUID,
+    reappearance_id: uuid.UUID,
+    attachment_id: int,
+) -> HttpResponse:
+    """Viewer mobile do anexo PDF recebido vinculado por ``scheduling_repeat``."""
+    _require_user(request)
+    original, link, _ = _authorize_reappearance_file(
+        case_id,
+        reappearance_id,
+        attachment_id=attachment_id,
+        viewer_pdf_only=True,
+    )
+    serve_url = reverse(
+        "scheduler:reappearance_attachment_serve",
+        args=[original.case_id, link.id, attachment_id],
+    )
+    return render(
+        request,
+        "pdf_viewer/mobile_pdf_viewer.html",
+        {
+            "viewer_title": "Anexo Recebido",
+            "pdf_url": serve_url,
+            "fallback_pdf_url": serve_url,
+            "back_url": _reappearance_back_url(request, original),
+        },
+    )

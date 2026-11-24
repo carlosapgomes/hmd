@@ -139,15 +139,13 @@ def test_close_as_reappearance_from_awaiting_doctor(nir_user: User) -> None:
     "status",
     [
         CaseStatus.NEW,
-        CaseStatus.LLM_EXTRACTING,
-        CaseStatus.LLM_SUMMARIZING,
         CaseStatus.DOCTOR_DENIED,
         CaseStatus.FINAL_REPLY_POSTED,
         CaseStatus.CLEANED,
     ],
 )
 def test_close_as_reappearance_refuses_other_sources(nir_user: User, status: CaseStatus) -> None:
-    """R1: transição sistêmica só parte de AWAITING_DOCTOR (sem estados novos)."""
+    """R1/S3: transição sistêmica recusa estados fora do conjunto autorizado."""
     from django_fsm import TransitionNotAllowed
 
     case = Case.objects.create(created_by=nir_user)

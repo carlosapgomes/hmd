@@ -15,7 +15,8 @@ posta como user message autoral na thread — nunca notice system.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+import uuid
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -26,14 +27,17 @@ from django.utils import timezone
 
 from apps.cases.communications import post_user_communication
 from apps.cases.events import CaseEventType
-from apps.cases.locks import case_has_lock, force_release_case_lock
+from apps.cases.locks import case_has_lock, force_release_case_lock, release_case_lock
 from apps.cases.models import (
     ActorType,
     Case,
     CaseEvent,
     CaseProcedure,
+    CaseReappearance,
     CaseStatus,
     DoctorDisposition,
+    ReappearanceState,
+    ResolutionKind,
     SchedulingUnit,
 )
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES, get_procedure_profile
@@ -173,28 +177,101 @@ def _clean_acknowledged_clinical_data(case: Case) -> None:
     case.save(update_fields=[*_CLEANED_EMPTY_VALUES])
 
 
-def acknowledge_case_receipt(case: Case, *, user: User, role: str) -> None:
-    """Confirma o recebimento da resposta final e limpa o caso (R1–R3, D1/D2).
+_CLOSURE_GROUP_MAX_ATTEMPTS = 3
 
-    Escopo de equipe (visibilidade-por-equipe, slice 004): qualquer ``nir``
-    com vínculo real — criador ou não — confirma; o OPERADOR é o ator das
-    transições/eventos. Exige ``FINAL_REPLY_POSTED`` (``ValueError`` nomeado,
-    antes de qualquer escrita) e re-check de papel ``nir`` DENTRO da
-    transação (``PermissionError`` sem efeito — defesa em profundidade, mesmo
-    padrão do ``_assert_nir_role`` dos serviços do gate). No MESMO ``atomic``
-    com ``select_for_update``:
-    coleta os nomes dos arquivos das rows ``CaseDocument`` e ``CaseAttachment``
-    ANTES do delete → encadeia as transições públicas ``nir_acknowledge`` →
-    ``start_cleaning`` → a limpeza (D2: rows de documento + anexos + campos
-    clínicos/LLM) → ``complete_cleaning`` — 3 eventos ``CASE_STATUS_*``
-    (``AWAITING_NIR_ACK``, ``CLEANING`` e ``CLEANED``, transitórios no mesmo
-    atomic). Os arquivos físicos (documentos E anexos) são removidos
-    best-effort apenas APÓS o commit (``transaction.on_commit``; log em
-    falha); arquivos de outros casos nunca são tocados. Quem chama (a view do
-    intake, slice 003) traduz os erros em mensagem + redirect, nunca 500.
-    """
-    with transaction.atomic():
-        locked = Case.objects.select_for_update().get(pk=case.pk)
+
+class ClosureGroupDriftError(Exception):
+    """Erro explícito quando a composição do grupo deriva após 3 tentativas."""
+
+
+class _GroupDriftError(Exception):
+    """Sentinela interna para rollback e nova tentativa fora do atomic."""
+
+
+def _discover_scheduling_group(case_id: uuid.UUID) -> tuple[uuid.UUID, set[uuid.UUID]]:
+    """Descobre raiz canônica e todos os incomings ``scheduling_repeat`` aplicados."""
+    canonical_id = (
+        CaseReappearance.objects.filter(
+            incoming_case_id=case_id,
+            resolution_kind=ResolutionKind.SCHEDULING_REPEAT,
+            state=ReappearanceState.APPLIED,
+        )
+        .values_list("canonical_case_id", flat=True)
+        .first()
+    )
+    root_id = canonical_id if canonical_id is not None else case_id
+    incoming_ids = list(
+        CaseReappearance.objects.filter(
+            canonical_case_id=root_id,
+            resolution_kind=ResolutionKind.SCHEDULING_REPEAT,
+            state=ReappearanceState.APPLIED,
+        ).values_list("incoming_case_id", flat=True)
+    )
+    return root_id, {root_id, *incoming_ids}
+
+
+def _lock_closure_group(member_ids: Iterable[uuid.UUID]) -> dict[uuid.UUID, Case]:
+    """Trava todos os membros do grupo em uma única query ordenada por PK."""
+    ordered = sorted(set(member_ids))
+    rows = list(Case.objects.select_for_update().filter(pk__in=ordered).order_by("case_id"))
+    return {row.case_id: row for row in rows}
+
+
+def _execute_in_group_lock[T](
+    case_id: uuid.UUID,
+    fn: Callable[[uuid.UUID, dict[uuid.UUID, Case]], T],
+    *,
+    durable: bool = False,
+) -> T:
+    """Executa ``fn`` sob lock de grupo ordenado por PK com revalidação pós-lock."""
+    for _attempt in range(_CLOSURE_GROUP_MAX_ATTEMPTS):
+        canonical_id, member_ids = _discover_scheduling_group(case_id)
+        try:
+            with transaction.atomic(durable=durable):
+                locked_by_id = _lock_closure_group(member_ids)
+                if case_id not in locked_by_id:
+                    raise Case.DoesNotExist(f"Case {case_id} não encontrado")
+                fresh_canonical_id, fresh_member_ids = _discover_scheduling_group(case_id)
+                if fresh_canonical_id != canonical_id or fresh_member_ids != member_ids:
+                    raise _GroupDriftError()
+                return fn(canonical_id, locked_by_id)
+        except _GroupDriftError:
+            continue
+    raise ClosureGroupDriftError(
+        f"deriva persistente do grupo de disposição após {_CLOSURE_GROUP_MAX_ATTEMPTS} "
+        f"tentativas (case_id={case_id})"
+    )
+
+
+def _collect_group_file_names(cases: Iterable[Case]) -> list[str]:
+    """Coleta nomes de storage de documentos e anexos antes de remover rows."""
+    file_names: list[str] = []
+    for member in cases:
+        file_names.extend(
+            document.file.name for document in member.documents.only("file") if document.file.name
+        )
+        file_names.extend(
+            attachment.file.name
+            for attachment in member.attachments.only("file")
+            if attachment.file.name
+        )
+    return file_names
+
+
+def _dispose_linked_incomings(incomings: Iterable[Case], *, disposed_at: object) -> None:
+    """Limpa dados clínicos/rows e grava marcador nos incomings sem transição FSM."""
+    for incoming in incomings:
+        _clean_acknowledged_clinical_data(incoming)
+        incoming.clinical_data_disposed_at = disposed_at  # type: ignore[assignment]
+        incoming.save(update_fields=["clinical_data_disposed_at"])
+
+
+def acknowledge_case_receipt(case: Case, *, user: User, role: str) -> None:
+    """Confirma o recebimento da resposta final e limpa o caso e seu grupo (R1–R3, R4.1)."""
+
+    def _do_ack(canonical_id: uuid.UUID, locked_by_id: dict[uuid.UUID, Case]) -> None:
+        del canonical_id
+        locked = locked_by_id[case.pk]
         if locked.status != CaseStatus.FINAL_REPLY_POSTED:
             raise ValueError(
                 f"ciência do NIR indisponível no estado {locked.status!r} — "
@@ -204,39 +281,30 @@ def acknowledge_case_receipt(case: Case, *, user: User, role: str) -> None:
             raise PermissionError("Confirmação de recebimento restrita ao papel nir.")
         if user is None or not user.roles.filter(name="nir").exists():
             raise PermissionError("Confirmação de recebimento restrita ao papel nir.")
-        # D2/ADR-0010: retenção ativa pula a limpeza E a coleta/deleção de
-        # arquivos; minimização ativa segue o caminho original byte-a-byte.
-        # O estado transitório CLEANING percorre o fluxo sem efeito sobre
-        # dados em retenção — aceito porque o conjunto de estados é contrato.
+
+        linked_incomings = [
+            locked_by_id[cid] for cid in sorted(locked_by_id) if cid != locked.case_id
+        ]
         minimize = _minimization_enabled()
         file_names: list[str] = []
         if minimize:
-            file_names = [
-                document.file.name
-                for document in locked.documents.only("file")
-                if document.file.name
-            ]
-            file_names.extend(
-                attachment.file.name
-                for attachment in locked.attachments.only("file")
-                if attachment.file.name
-            )
+            file_names = _collect_group_file_names([locked, *linked_incomings])
         locked.nir_acknowledge(user=user, role=role)
         locked.start_cleaning(user=user, role=role)
         if minimize:
+            disposed_at = timezone.now()
             _clean_acknowledged_clinical_data(locked)
-            # D2 (slice 002): o marcador de disposição é gravado no MESMO
-            # atomic da minimização — a elegibilidade lê só esta coluna.
-            locked.clinical_data_disposed_at = timezone.now()
+            locked.clinical_data_disposed_at = disposed_at
             locked.save(update_fields=["clinical_data_disposed_at"])
-        # R3/D9 (slice 002): QUALQUER chegada a CLEANED zera a issue ativa no
-        # mesmo atomic, com evento de auditoria próprio quando havia issue.
+            _dispose_linked_incomings(linked_incomings, disposed_at=disposed_at)
         _close_post_closure_issue(
             case=locked, user=user, role=role, via=_POST_CLOSURE_CLOSE_VIA_ACK
         )
         locked.complete_cleaning(user=user, role=role)
         if minimize:
             transaction.on_commit(lambda: _delete_files_best_effort(file_names))
+
+    _execute_in_group_lock(case.pk, _do_ack, durable=False)
 
 
 def post_doctor_denial_reply(case: Case, *, user: User, role: str) -> None:
@@ -506,8 +574,9 @@ def administratively_close_case(
             f"papel ativo {active_role!r}"
         )
 
-    with transaction.atomic():
-        locked = Case.objects.select_for_update().get(pk=case.pk)
+    def _do_admin_close(canonical_id: uuid.UUID, locked_by_id: dict[uuid.UUID, Case]) -> None:
+        del canonical_id
+        locked = locked_by_id[case.pk]
         if locked.status == CaseStatus.CLEANED:
             raise ValueError("caso já encerrado — encerramento administrativo indisponível")
         now = timezone.now()
@@ -521,25 +590,18 @@ def administratively_close_case(
             )
         lock_snapshot = _lock_snapshot(locked)
         force_release_case_lock(locked, reason=FORCED_RELEASE_REASON, user=user, role=active_role)
-        # D2/ADR-0010: retenção ativa pula a limpeza E a coleta/deleção de
-        # arquivos; minimização ativa segue o caminho original byte-a-byte.
+        linked_incomings = [
+            locked_by_id[cid] for cid in sorted(locked_by_id) if cid != locked.case_id
+        ]
         minimize = _minimization_enabled()
         file_names: list[str] = []
         if minimize:
-            file_names = [
-                document.file.name
-                for document in locked.documents.only("file")
-                if document.file.name
-            ]
-            file_names.extend(
-                attachment.file.name
-                for attachment in locked.attachments.only("file")
-                if attachment.file.name
-            )
+            file_names = _collect_group_file_names([locked, *linked_incomings])
+            disposed_at = timezone.now()
             _clean_acknowledged_clinical_data(locked)
-            # D2 (slice 002): marcador de disposição no MESMO atomic.
-            locked.clinical_data_disposed_at = timezone.now()
+            locked.clinical_data_disposed_at = disposed_at
             locked.save(update_fields=["clinical_data_disposed_at"])
+            _dispose_linked_incomings(linked_incomings, disposed_at=disposed_at)
         locked.administratively_close(
             user=user,
             role=active_role,
@@ -547,10 +609,6 @@ def administratively_close_case(
             reason_text=reason_text,
             lock_snapshot=lock_snapshot,
         )
-        # R3/D9 (slice 002): QUALQUER chegada a CLEANED zera a issue ativa no
-        # mesmo atomic, com evento de auditoria próprio registrando quem a
-        # fechou. A corrida abertura×encerramento é resolvida pelo
-        # ``select_for_update`` + revalidação do ``open_post_closure_issue``.
         _close_post_closure_issue(
             case=locked,
             user=user,
@@ -559,6 +617,8 @@ def administratively_close_case(
         )
         if minimize:
             transaction.on_commit(lambda: _delete_files_best_effort(file_names))
+
+    _execute_in_group_lock(case.pk, _do_admin_close, durable=False)
 
     case.refresh_from_db()
     return case
@@ -585,11 +645,12 @@ class RetainedDataCounts:
 
 @dataclass(frozen=True)
 class PurgeResult:
-    """Resultado da purga de um caso — contagens para o comando reportar.
+    """Resultado da purga de um caso ou grupo — contagens para o comando reportar.
 
     ``files_attempted/files_deleted/files_failed`` distinguem a purga completa
     da incompleta (``files_failed > 0`` = órfão com PHI a tratar). ``cleaned_fields``
     são os nomes dos 7 campos zerados, na ordem de ``_CLEANED_EMPTY_VALUES``.
+    ``protected`` indica incoming vinculado a canônico não-``CLEANED`` (R4.2).
     """
 
     documents_deleted: int
@@ -598,6 +659,7 @@ class PurgeResult:
     files_deleted: int
     files_failed: int
     cleaned_fields: tuple[str, ...]
+    protected: bool = False
 
 
 def _retained_field_names(case: Case) -> list[str]:
@@ -646,112 +708,150 @@ def case_has_retained_data(case: Case) -> bool:
 
 
 def purge_closed_case_data(case: Case) -> PurgeResult:
-    """Reaplica a minimização a um caso ``CLEANED`` retido (D4, slice 003).
+    """Reaplica a minimização a um caso ``CLEANED`` retido ou seu grupo (R4.2–R4.4, R5.1)."""
 
-    Serviço puro do módulo (uma fonte de semântica, sem duplicação contra
-    ``_CLEANED_EMPTY_VALUES``): no MESMO atomic por caso do closure
-    (``select_for_update`` + coleta pré-delete + ``_clean_acknowledged_clinical_data``)
-    — falha no meio não deixa meia-purga do banco. Caso fora de ``CLEANED`` é
-    recusado com ``ValueError`` nomeado; caso sem dados retidos é no-op
-    (idempotência: devolve zeros, sem evento).
-
-    **Commit real obrigatório** (D4): o atomic é ``durable=True`` — chamada
-    dentro de transação externa levanta ``RuntimeError`` nomeado, porque a
-    deleção física só pode ocorrer após commit real, nunca sob savepoint.
-    O comando roda em autocommit; testes usam ``TransactionTestCase``.
-
-    **Trilha em duas fases** (D4, ator Sistema: ``actor=None`` → trilha exibe
-    "Sistema", ``actor_role="system"`` como os workers):
-
-    1. evento de purga DENTRO do atomic durável, junto com a limpeza — payload
-       NOMES dos campos zerados + ``documents_deleted``/``attachments_deleted``
-       + ``files_attempted`` (nomes já coletados pré-delete); prova a destruição
-       do banco atomicamente com ela (crash entre commit e evento é impossível);
-    2. após a deleção física síncrona (ordem banco → arquivos), evento
-       complementar de TIPO PRÓPRIO (``CASE_RETAINED_DATA_PURGE_OUTCOME``)
-       SOMENTE quando ``files_attempted > 0`` — payload ``files_deleted``/``files_failed``. Crash antes dele deixa a
-       destruição provada com desfecho desconhecido (aceito e documentado na D4).
-       O ``on_commit`` não serve aqui: impede conhecer ``files_deleted``/
-       ``files_failed`` no retorno e no payload. ``OSError`` vira falha
-       contada + log sem PHI (referência + contagem + tipo da exceção, sem
-       caminho/mensagem/traceback), nunca propaga.
-
-    Payloads NUNCA carregam conteúdo clínico nem nomes de arquivo.
-    """
-    with transaction.atomic(durable=True):
-        locked = Case.objects.select_for_update().get(pk=case.pk)
-        if locked.status != CaseStatus.CLEANED:
+    def _do_purge(
+        canonical_id: uuid.UUID, locked_by_id: dict[uuid.UUID, Case]
+    ) -> tuple[PurgeResult, list[tuple[uuid.UUID, str, list[str]]]]:
+        target = locked_by_id[case.pk]
+        canonical = locked_by_id[canonical_id]
+        if target.status != CaseStatus.CLEANED:
             raise ValueError(
-                f"purga retroativa restrita a casos CLEANED — estado {locked.status!r}"
+                f"purga retroativa restrita a casos CLEANED — estado {target.status!r}"
             )
-        counts = retained_data_counts(locked)
-        if not counts.cleaned_fields and counts.documents == 0 and counts.attachments == 0:
-            return PurgeResult(
-                documents_deleted=0,
-                attachments_deleted=0,
-                files_attempted=0,
-                files_deleted=0,
-                files_failed=0,
-                cleaned_fields=(),
+        if canonical.status != CaseStatus.CLEANED:
+            return (
+                PurgeResult(
+                    documents_deleted=0,
+                    attachments_deleted=0,
+                    files_attempted=0,
+                    files_deleted=0,
+                    files_failed=0,
+                    cleaned_fields=(),
+                    protected=True,
+                ),
+                [],
             )
-        file_names = _retained_file_names(locked)
-        _clean_acknowledged_clinical_data(locked)
-        # D2 (slice 002): a purga dispõe dados — grava o marcador no MESMO
-        # atomic da limpeza; a elegibilidade lê só esta coluna.
-        locked.clinical_data_disposed_at = timezone.now()
-        locked.save(update_fields=["clinical_data_disposed_at"])
+
+        ordered_incomings = [
+            locked_by_id[cid] for cid in sorted(locked_by_id) if cid != canonical_id
+        ]
+        members = [canonical, *ordered_incomings]
+        per_member_counts = [(member, retained_data_counts(member)) for member in members]
+        any_retained = any(
+            counts.cleaned_fields or counts.documents > 0 or counts.attachments > 0
+            for _, counts in per_member_counts
+        )
+        if not any_retained:
+            return (
+                PurgeResult(
+                    documents_deleted=0,
+                    attachments_deleted=0,
+                    files_attempted=0,
+                    files_deleted=0,
+                    files_failed=0,
+                    cleaned_fields=(),
+                ),
+                [],
+            )
+
+        disposed_at = timezone.now()
+        total_docs = 0
+        total_atts = 0
+        total_files = 0
+        cleaned_set: set[str] = set()
+        per_case_files: list[tuple[uuid.UUID, str, list[str]]] = []
+
+        for member, counts in per_member_counts:
+            has_member_data = bool(
+                counts.cleaned_fields or counts.documents > 0 or counts.attachments > 0
+            )
+            if has_member_data:
+                file_names = _retained_file_names(member)
+                _clean_acknowledged_clinical_data(member)
+                member.clinical_data_disposed_at = disposed_at
+                member.save(update_fields=["clinical_data_disposed_at"])
+                files_attempted = len(file_names)
+                CaseEvent.objects.create(
+                    case_id=member.case_id,
+                    event_type=CaseEventType.CASE_RETAINED_DATA_PURGED,
+                    actor_type=ActorType.SYSTEM,
+                    actor=None,
+                    actor_role="system",
+                    payload={
+                        "cleaned_fields": list(counts.cleaned_fields),
+                        "documents_deleted": counts.documents,
+                        "attachments_deleted": counts.attachments,
+                        "files_attempted": files_attempted,
+                    },
+                )
+                total_docs += counts.documents
+                total_atts += counts.attachments
+                total_files += files_attempted
+                cleaned_set.update(counts.cleaned_fields)
+                per_case_files.append((member.case_id, member.display_reference, file_names))
+            elif member.clinical_data_disposed_at is None:
+                # Canônico reabrível sem dados próprios precisa receber o marcador no mesmo atomic.
+                member.clinical_data_disposed_at = disposed_at
+                member.save(update_fields=["clinical_data_disposed_at"])
+
+        ordered_cleaned = tuple(name for name in _CLEANED_EMPTY_VALUES if name in cleaned_set)
+        pre_result = PurgeResult(
+            documents_deleted=total_docs,
+            attachments_deleted=total_atts,
+            files_attempted=total_files,
+            files_deleted=0,
+            files_failed=0,
+            cleaned_fields=ordered_cleaned,
+        )
+        return pre_result, per_case_files
+
+    pre_result, per_case_files = _execute_in_group_lock(case.pk, _do_purge, durable=True)
+    if pre_result.protected or not per_case_files:
+        return pre_result
+
+    total_deleted = 0
+    total_failed = 0
+    for member_case_id, reference, file_names in per_case_files:
         files_attempted = len(file_names)
-        CaseEvent.objects.create(
-            case_id=locked.case_id,
-            event_type=CaseEventType.CASE_RETAINED_DATA_PURGED,
-            actor_type=ActorType.SYSTEM,
-            actor=None,
-            actor_role="system",
-            payload={
-                "cleaned_fields": list(counts.cleaned_fields),
-                "documents_deleted": counts.documents,
-                "attachments_deleted": counts.attachments,
-                "files_attempted": files_attempted,
-            },
-        )
-
-    files_deleted = 0
-    files_failed = 0
-    reference = locked.display_reference
-    for name in file_names:
-        try:
-            default_storage.delete(name)
-        except OSError as file_error:
-            files_failed += 1
-            logger.warning(
-                "falha ao remover arquivo físico da purga do caso %s (contagem %d/%d, tipo %s)",
-                reference,
-                files_failed,
-                files_attempted,
-                type(file_error).__name__,
+        files_deleted = 0
+        files_failed = 0
+        for name in file_names:
+            try:
+                default_storage.delete(name)
+            except OSError as file_error:
+                files_failed += 1
+                logger.warning(
+                    "falha ao remover arquivo físico da purga do caso %s (contagem %d/%d, tipo %s)",
+                    reference,
+                    files_failed,
+                    files_attempted,
+                    type(file_error).__name__,
+                )
+            else:
+                files_deleted += 1
+        total_deleted += files_deleted
+        total_failed += files_failed
+        if files_attempted > 0:
+            CaseEvent.objects.create(
+                case_id=member_case_id,
+                event_type=CaseEventType.CASE_RETAINED_DATA_PURGE_OUTCOME,
+                actor_type=ActorType.SYSTEM,
+                actor=None,
+                actor_role="system",
+                payload={
+                    "files_deleted": files_deleted,
+                    "files_failed": files_failed,
+                },
             )
-        else:
-            files_deleted += 1
 
-    if files_attempted > 0:
-        CaseEvent.objects.create(
-            case_id=locked.case_id,
-            event_type=CaseEventType.CASE_RETAINED_DATA_PURGE_OUTCOME,
-            actor_type=ActorType.SYSTEM,
-            actor=None,
-            actor_role="system",
-            payload={
-                "files_deleted": files_deleted,
-                "files_failed": files_failed,
-            },
-        )
     return PurgeResult(
-        documents_deleted=counts.documents,
-        attachments_deleted=counts.attachments,
-        files_attempted=files_attempted,
-        files_deleted=files_deleted,
-        files_failed=files_failed,
-        cleaned_fields=counts.cleaned_fields,
+        documents_deleted=pre_result.documents_deleted,
+        attachments_deleted=pre_result.attachments_deleted,
+        files_attempted=pre_result.files_attempted,
+        files_deleted=total_deleted,
+        files_failed=total_failed,
+        cleaned_fields=pre_result.cleaned_fields,
     )
 
 
@@ -824,3 +924,65 @@ def close_case_as_reappearance(
             locked.save(update_fields=["clinical_data_disposed_at"])
         if minimize:
             transaction.on_commit(lambda: _delete_files_best_effort(file_names))
+
+
+_SCHEDULING_REPEAT_SOURCES: tuple[CaseStatus, ...] = (
+    CaseStatus.AWAITING_DOCTOR,
+    CaseStatus.LLM_EXTRACTING,
+    CaseStatus.LLM_SUMMARIZING,
+)
+
+
+def close_incoming_as_scheduling_repeat(
+    incoming: Case,
+    *,
+    user: User | None,
+    role: str,
+    own_lock_token: object = None,
+) -> None:
+    """Encerra o incoming arquivado por reapresentação no agendamento (S3, D5/D8).
+
+    Distinto de ``close_case_as_reappearance`` (substituição médica): aceita
+    ``AWAITING_DOCTOR``, ``LLM_EXTRACTING`` e ``LLM_SUMMARIZING``, jamais toma
+    lease viva de outro ator (libera apenas a própria ``own_lock_token`` no
+    mesmo atomic; resíduo expirado é limpo silenciosamente) e SEMPRE retém
+    campos clínicos, rows ``CaseDocument``/``CaseAttachment`` e arquivos físicos,
+    mantendo ``clinical_data_disposed_at = None``, mesmo quando
+    ``CASE_CLOSURE_MINIMIZATION_ENABLED=True``.
+    """
+    import uuid as _uuid
+
+    with transaction.atomic():
+        locked = Case.objects.select_for_update().get(pk=incoming.pk)
+        if locked.status not in _SCHEDULING_REPEAT_SOURCES:
+            raise ValueError(
+                "encerramento por reapresentação no agendamento indisponível no estado "
+                f"{locked.status!r}"
+            )
+        now = timezone.now()
+        if locked.locked_until is not None and locked.locked_until > now:
+            if isinstance(own_lock_token, _uuid.UUID) and locked.lock_token == own_lock_token:
+                release_case_lock(locked, own_lock_token)
+                locked.refresh_from_db()
+            else:
+                raise ValueError(
+                    "caso com reserva ativa de outro ator — encerramento por reapresentação adiado"
+                )
+        elif locked.locked_until is not None and locked.locked_until <= now:
+            locked.locked_by = None
+            locked.locked_at = None
+            locked.locked_until = None
+            locked.lock_token = None
+            locked.lock_context = ""
+            locked.lock_role = ""
+            locked.save(
+                update_fields=[
+                    "locked_by",
+                    "locked_at",
+                    "locked_until",
+                    "lock_token",
+                    "lock_context",
+                    "lock_role",
+                ]
+            )
+        locked.close_as_reappearance(user=user, role=role)

@@ -1,6 +1,6 @@
 # Tasks
 
-Plano produzido com `openspec-vertical-change-writer`, revisto após F-01–F-12 e, agora, após auditoria integral AUD-01–14 e confirmação explícita do dono das decisões de saneamento (design D10). Estado: S1 e S2 implementados, aceitos com notas P2 adiadas (S2: AUD-12, AUD-13, P2-3 e P2-4, na Review 4 independente, 23/23 PASS, 0 P0/P1) e commitados; S3–S5 não iniciados. Executar um slice por vez, em ordem; cada unidade inclui seus testes, documentação e gates. Não habilitar produção antes do aceite S1–S5. Antigo S3 foi dividido em S3 (núcleo seguro) e S4 (UI); antiga conferência S4 passa a S5. Esta revisão é só de planejamento: não autoriza apply, commit ou novo orçamento de revisão e não reinicia os três rounds consumidos. Preservar base, código e evidências históricos.
+Plano produzido com `openspec-vertical-change-writer`, revisto após F-01–F-12 e, agora, após auditoria integral AUD-01–14 e confirmação explícita do dono das decisões de saneamento (design D10). Estado: S1, S2 e S3 implementados, aceitos com notas P2 adiadas (S2: AUD-12, AUD-13, P2-3 e P2-4, na Review 4 independente, 23/23 PASS, 0 P0/P1; S3: P2-1 docstring desatualizada em `Case.close_as_reappearance`, P2-2 nota de log RED da Unidade 3C, na Review 1/2 independente, 18/18 PASS, 0 P0/P1) e commitados; S4–S5 não iniciados. Executar um slice por vez, em ordem; cada unidade inclui seus testes, documentação e gates. Não habilitar produção antes do aceite S1–S5. Antigo S3 foi dividido em S3 (núcleo seguro) e S4 (UI); antiga conferência S4 passa a S5. Esta revisão é só de planejamento: não autoriza apply, commit ou novo orçamento de revisão e não reinicia os três rounds consumidos. Preservar base, código e evidências históricos.
 
 ## 1. S1 — Identidade e prior-case
 
@@ -22,7 +22,14 @@ Unidades sequenciais do MESMO S2, não novos slices, commits ou aceites independ
 
 ## 3. S3 — Resolução e documentos no agendamento
 
-- [ ] 3.1 Entregar scheduling_repeat SOMENTE pós-LLM1/reconciliação, preservando original, com rotas serve/viewer recebidos (inclusive CLEANED retido), retenção e purga de grupo; verificar HTTP/IDs/flags, ausência de LLM2/triagem clínica indevidas, corridas purga×reabertura/resolução, marcadores, erros físicos e quality gate. Contract: [slice-003-reapresentacoes-agendamento.md](slices/slice-003-reapresentacoes-agendamento.md).
+- [x] 3.1 Aceitar S3 integral somente com TODAS as linhas R1.1–R5.3 (18) do contrato demonstradas no mesmo estado final: scheduling_repeat SOMENTE pós-LLM1/reconciliação, preservando original (lease humana do agendador preservada, D5), com rotas serve/viewer recebidos (inclusive CLEANED retido), retenção e purga de grupo; verificar HTTP/IDs/flags, ausência de LLM2/triagem clínica indevidas, corridas purga×reabertura/resolução, marcadores, erros físicos, zero P0/P1, revisão independente integral e quality gate. Contract: [slice-003-reapresentacoes-agendamento.md](slices/slice-003-reapresentacoes-agendamento.md).
+
+Unidades sequenciais do MESMO S3, não novos slices, commits ou aceites independentes. 3.2→3.3→3.4 (3A–3C); 3.5 integra e verifica a entrega inteira. Nenhuma está concluída por esta revisão do plano. Tracking de trabalho não transforma código parcial em S3 aceito.
+
+- [x] 3.2 3A — scheduling_repeat pós-LLM1: R1.1–R1.4 e R2.1–R2.3; FSM `close_as_reappearance` expandida, atomic pós-LLM1 e entrypoint pronto com D4, pending/retry/reenqueue, retenção do incoming e métricas; RED/GREEN, testes e documentação próprios. Contract: [S3 §§4–8](slices/slice-003-reapresentacoes-agendamento.md).
+- [x] 3.3 3B — Proteção/disposição de grupo: R4.1–R4.4 e R5.1–R5.3; ciência/admin/purga de grupo deduplicada, ordem global de locks por PK, durable atomic/outcome e corridas PG estáveis; RED/GREEN, testes e documentação próprios. Contract: [S3 §§4–8](slices/slice-003-reapresentacoes-agendamento.md).
+- [x] 3.4 3C — Rotas HTTP estreitas: R3.1–R3.4; serve/viewer de relatório e anexo recebidos no scheduler sob helper único, integração HTTP real e original ainda 404; RED/GREEN, testes e documentação próprios. Contract: [S3 §§4–8](slices/slice-003-reapresentacoes-agendamento.md).
+- [x] 3.5 Integração final S3: somente integrar e consolidar evidência da matriz completa R1.1–R5.3 no mesmo estado após 3A–3C; reexecutar regressões, gate AGENTS.md, corridas estáveis e evidência HTTP no build final, com revisão independente integral. Não implementar aqui débitos de 3A–3C nem aceitar S3 parcialmente. Contract: [S3 §§4,8–9](slices/slice-003-reapresentacoes-agendamento.md).
 
 ## 4. S4 — UI do agendador
 

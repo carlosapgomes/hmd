@@ -56,7 +56,11 @@ from apps.cases.procedure_review import (
     source_fingerprint_for_case,
 )
 from apps.cases.procedures import get_declared_procedure_types
-from apps.cases.reappearance import ReappearanceDriftError, finalize_summarization
+from apps.cases.reappearance import (
+    ReappearanceDriftError,
+    archive_scheduling_repeat_after_llm1,
+    finalize_summarization,
+)
 from apps.pipeline.llm import LlmPipelineError
 from apps.pipeline.llm1_service import run_llm1_extraction
 from apps.pipeline.llm2_service import run_llm2_summarization
@@ -199,11 +203,13 @@ def _capture_execution_digests(case: Case) -> dict[str, str | None]:
     }
 
 
-def _reconcile_stale_authority(case: Case) -> str:
+def _reconcile_stale_authority(case: Case, *, lock_token: uuid.UUID) -> str:
     """HD-001: descarta a resposta estagnada e refaz a reconciliação automática.
 
-    Devolve ``"cleaned"`` (abortar), ``"retain"`` (divergência vigente) ou
-    ``"continue"`` (extração completa, seguir para sumarização).
+    Devolve ``"cleaned"`` (abortar), ``"archived"`` (reapresentação de
+    agendamento arquivada com própria lease liberada), ``"retain"``
+    (divergência vigente) ou ``"continue"`` (extração completa, seguir para
+    sumarização).
     """
     _event, _validity = latest_confirmation_validity(case)
     if _event is not None and _validity is not None and not _validity.valid:
@@ -221,6 +227,15 @@ def _reconcile_stale_authority(case: Case) -> str:
             case.case_id,
         )
         return "retain"
+    sched = archive_scheduling_repeat_after_llm1(
+        case_pk=case.pk,
+        lock_token=lock_token,
+        reconciled=True,
+        user=None,
+        role=SYSTEM_ROLE,
+    )
+    if sched.status in ("archived", "aborted"):
+        return "archived" if sched.lease_released else "cleaned"
     case.complete_llm_extraction(user=None, role=SYSTEM_ROLE)
     return "continue"
 
@@ -352,7 +367,28 @@ def process_case_pipeline(
                     case_id,
                 )
                 return
+            sched = archive_scheduling_repeat_after_llm1(
+                case_pk=case.pk,
+                lock_token=lock.token,
+                reconciled=True,
+                user=None,
+                role=SYSTEM_ROLE,
+            )
+            if sched.status in ("archived", "aborted"):
+                released = sched.lease_released
+                return
             case.complete_llm_extraction(user=None, role=SYSTEM_ROLE)
+        elif case.status == CaseStatus.LLM_SUMMARIZING:
+            sched = archive_scheduling_repeat_after_llm1(
+                case_pk=case.pk,
+                lock_token=lock.token,
+                reconciled=False,
+                user=None,
+                role=SYSTEM_ROLE,
+            )
+            if sched.status in ("archived", "aborted"):
+                released = sched.lease_released
+                return
 
         # Sumarização (continuação da extração ou retomada pós-bypass), com
         # reconciliação HD-001: autoridade estagnada durante a LLM2 com
@@ -394,7 +430,10 @@ def process_case_pipeline(
                 # HD-001: resposta estagnada já descartada pela LLM2 (nunca
                 # persistida). Audita uma vez, retorna via operação nomeada e
                 # refaz a extração/reconciliação automática vigente.
-                outcome = _reconcile_stale_authority(case)
+                outcome = _reconcile_stale_authority(case, lock_token=lock.token)
+                if outcome == "archived":
+                    released = True
+                    return
                 if outcome in ("cleaned", "retain"):
                     return
                 continue
@@ -431,7 +470,10 @@ def process_case_pipeline(
                     "sem encaminhamento.",
                 )
             if finalization.status == "stale":
-                outcome = _reconcile_stale_authority(case)
+                outcome = _reconcile_stale_authority(case, lock_token=lock.token)
+                if outcome == "archived":
+                    released = True
+                    return
                 if outcome in ("cleaned", "retain"):
                     return
                 continue

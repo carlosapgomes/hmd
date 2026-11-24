@@ -46,15 +46,21 @@ from django.db.models import Q as _Q
 from django.utils import timezone as _timezone
 
 from apps.cases.closure import close_case_as_reappearance as _close_original
+from apps.cases.closure import (
+    close_incoming_as_scheduling_repeat as _close_scheduling_incoming,
+)
 from apps.cases.events import CaseEventType as _CaseEventType
 from apps.cases.models import ActorType as _ActorType
 from apps.cases.models import Case as _Case
 from apps.cases.models import CaseEvent as _CaseEvent
+from apps.cases.models import CaseProcedure as _CaseProcedure
 from apps.cases.models import CaseReappearance as _CaseReappearance
 from apps.cases.models import CaseStatus as _CaseStatus
+from apps.cases.models import DoctorDisposition as _DoctorDisposition
 from apps.cases.models import ReappearanceState as _ReappearanceState
 from apps.cases.models import ResolutionKind as _ResolutionKind
 from apps.cases.procedure_review import is_failed_reason as _is_failed_reason
+from apps.cases.procedure_review import is_gate_reason as _is_gate_reason
 from apps.cases.procedure_review import (
     latest_confirmation_validity as _latest_confirmation_validity,
 )
@@ -481,6 +487,31 @@ def _single_strong_medical(incoming: _Case, rows: list[_Case]) -> _Case | None:
     return prior
 
 
+_SCHEDULING_QUEUE_STATUSES: tuple[_CaseStatus, ...] = (
+    _CaseStatus.SCHEDULER_REQUESTED,
+    _CaseStatus.AWAITING_SCHEDULING,
+)
+
+_SCHEDULING_REPEAT_INCOMING_STATUSES: tuple[_CaseStatus, ...] = (
+    _CaseStatus.AWAITING_DOCTOR,
+    _CaseStatus.LLM_EXTRACTING,
+    _CaseStatus.LLM_SUMMARIZING,
+)
+
+
+def _single_strong_scheduling(incoming: _Case, rows: list[_Case]) -> _Case | None:
+    """Único plausível, forte e na fila de agendamento — ou ``None`` (S3, R1.3)."""
+    plausible = _plausible_candidates(incoming, rows)
+    if len(plausible) != 1:
+        return None
+    prior, classification = plausible[0]
+    if classification.verdict != "strong":
+        return None
+    if prior.status not in _SCHEDULING_QUEUE_STATUSES:
+        return None
+    return prior
+
+
 def _candidate_queryset(incoming: _Case) -> list[_Case]:
     """Plausíveis D3 anteriores ao incoming (descoberta conservadora, R2.2/R2.3).
 
@@ -535,6 +566,76 @@ def find_medical_replacement_candidate(incoming: _Case) -> _Case | None:
 def _has_live_lease(case: _Case, now: _datetime) -> bool:
     """Lease viva (humana ou worker) — jamais tomada à força (D4)."""
     return case.locked_until is not None and case.locked_until > now
+
+
+def _has_other_worker_live_lease(
+    case: _Case, now: _datetime, *, own_lock_token: _uuid.UUID | None = None
+) -> bool:
+    """Lease viva de OUTRO worker (``worker_*`` != ``own_lock_token``) — D5.
+
+    A lease humana do agendador no original NUNCA bloqueia nem adia
+    ``scheduling_repeat`` (D5); somente lease viva de outro worker adia.
+    """
+    if case.locked_until is None or case.locked_until <= now:
+        return False
+    if own_lock_token is not None and case.lock_token == own_lock_token:
+        return False
+    return (case.lock_context or "").startswith("worker_")
+
+
+def _has_other_actor_live_lease(
+    case: _Case, now: _datetime, *, own_lock_token: _uuid.UUID | None = None
+) -> bool:
+    """Lease viva no incoming por ator diferente de ``own_lock_token``."""
+    if case.locked_until is None or case.locked_until <= now:
+        return False
+    if own_lock_token is not None and case.lock_token == own_lock_token:
+        return False
+    return True
+
+
+def _incoming_has_medical_decision(case: _Case) -> bool:
+    """Há decisão médica já registrada no incoming? (R1/D4: não arquivar)."""
+    return (
+        _CaseProcedure.objects.filter(case=case)
+        .exclude(doctor_disposition=_DoctorDisposition.PENDING)
+        .exists()
+    )
+
+
+def _authority_allows_scheduling_repeat(case: _Case, *, reconciled: bool) -> bool:
+    """Autoridade vigente permite ``scheduling_repeat``? (R1.2)."""
+    _event, validity = _latest_confirmation_validity(case)
+    if validity is None or validity.valid:
+        return True
+    if _is_failed_reason(validity.reason):
+        return False
+    return reconciled and _is_gate_reason(validity.reason)
+
+
+def _validate_locked_scheduling_pair(
+    incoming: _Case,
+    prior: _Case,
+    *,
+    allowed_incoming_statuses: tuple[_CaseStatus, ...],
+    reconciled: bool,
+) -> tuple[str, str] | None:
+    """Revalida o par de agendamento sob o grupo travado → (evidence_code, revision) ou ``None``."""
+    if incoming.status not in allowed_incoming_statuses:
+        return None
+    if _incoming_has_medical_decision(incoming):
+        return None
+    if prior.status not in _SCHEDULING_QUEUE_STATUSES:
+        return None
+    if not _is_strictly_anterior(prior, incoming):
+        return None
+    incoming_signals = _identity_signals_for(incoming)
+    classification = classify_pair(incoming_signals, _identity_signals_for(prior))
+    if classification.verdict != "strong" or classification.origin is None:
+        return None
+    if not _authority_allows_scheduling_repeat(incoming, reconciled=reconciled):
+        return None
+    return classification.origin, revision_digest_for_pair(incoming, prior)
 
 
 def _existing_applied_link(incoming: _Case) -> _CaseReappearance | None:
@@ -640,7 +741,11 @@ _TERMINAL_REASON_CODES: tuple[str, str, str] = (
 
 
 def _find_pending_link(
-    *, incoming: _Case, prior: _Case, revision_digest: str
+    *,
+    incoming: _Case,
+    prior: _Case,
+    revision_digest: str,
+    resolution_kind: str = _ResolutionKind.MEDICAL_REPLACEMENT,
 ) -> _CaseReappearance | None:
     """PENDING do mesmo par/revisão/kind, se existir (reuso R4.4)."""
     return (
@@ -649,7 +754,7 @@ def _find_pending_link(
             prior_case=prior,
             revision_digest=revision_digest,
             state=_ReappearanceState.PENDING,
-            resolution_kind=_ResolutionKind.MEDICAL_REPLACEMENT,
+            resolution_kind=resolution_kind,
         )
         .order_by("created_at", "id")
         .first()
@@ -999,6 +1104,13 @@ def _reenqueue_refusal_reason(
         prior = _Case.objects.get(pk=link.prior_case_id)
     if revision_digest_for_pair(incoming, prior) != link.revision_digest:
         return REASON_STATE_INELIGIBLE
+    if link.resolution_kind == _ResolutionKind.SCHEDULING_REPEAT:
+        if (
+            prior.status not in _SCHEDULING_QUEUE_STATUSES
+            or incoming.status not in _SCHEDULING_REPEAT_INCOMING_STATUSES
+            or _incoming_has_medical_decision(incoming)
+        ):
+            return REASON_STATE_INELIGIBLE
     return None
 
 
@@ -1114,6 +1226,7 @@ def _defer_locked(
     evidence_code: str,
     revision_digest: str,
     reason_code: str,
+    resolution_kind: str = _ResolutionKind.MEDICAL_REPLACEMENT,
 ) -> _CaseReappearance:
     """Adiamento auditável (D4/D6): vínculo pendente + retry, sem efeito clínico.
 
@@ -1121,7 +1234,12 @@ def _defer_locked(
     INSERT, sem consumo de orçamento e sem agenda duplicada; só agenda se
     a pendência está sem agenda durável por falha anterior (schedule_failed).
     """
-    existing = _find_pending_link(incoming=incoming, prior=prior, revision_digest=revision_digest)
+    existing = _find_pending_link(
+        incoming=incoming,
+        prior=prior,
+        revision_digest=revision_digest,
+        resolution_kind=resolution_kind,
+    )
     if existing is not None:
         existing = _CaseReappearance.objects.select_for_update().get(pk=existing.pk)
         if existing.last_reason_code in _TERMINAL_REASON_CODES:
@@ -1136,14 +1254,15 @@ def _defer_locked(
             _schedule_retry_or_mark_failed(existing)
         existing.refresh_from_db()
         return existing
+    canonical = prior if resolution_kind == _ResolutionKind.SCHEDULING_REPEAT else incoming
     link = _CaseReappearance.objects.create(
         incoming_case=incoming,
         prior_case=prior,
-        canonical_case=incoming,
+        canonical_case=canonical,
         revision_digest=revision_digest,
         evidence_code=evidence_code,
         state=_ReappearanceState.PENDING,
-        resolution_kind=_ResolutionKind.MEDICAL_REPLACEMENT,
+        resolution_kind=resolution_kind,
     )
     scheduled = _schedule_retry_or_mark_failed(link)
     if not scheduled and link.last_reason_code == REASON_LEASE_BUSY:
@@ -1251,6 +1370,284 @@ def resolve_medical_replacement(
     )
 
 
+# ── Reapresentação na fila de agendamento (slice 003, D5) ───────────────────
+
+
+@dataclass(frozen=True)
+class SchedulingRepeatOutcome:
+    """Desfecho da resolução de reapresentação no agendamento."""
+
+    status: Literal["archived", "deferred", "none", "aborted"]
+    link: _CaseReappearance | None = None
+    lease_released: bool = False
+
+
+def _emit_scheduling_repeat_events(
+    *,
+    link: _CaseReappearance,
+    incoming: _Case,
+    prior: _Case,
+    actor: _User | None,
+    role: str,
+) -> None:
+    """Dois eventos correlacionados (D6): SUPERSEDED no incoming, APPLIED no canônico."""
+    actor_type = _ActorType.USER if actor is not None else _ActorType.SYSTEM
+    payload_superseded: dict[str, object] = {
+        "reappearance_id": str(link.pk),
+        "canonical_case_id": str(prior.pk),
+        "evidence_code": link.evidence_code,
+        "resolution_kind": link.resolution_kind,
+        "revision_digest": link.revision_digest,
+    }
+    payload_applied: dict[str, object] = {
+        "reappearance_id": str(link.pk),
+        "incoming_case_id": str(incoming.pk),
+        "evidence_code": link.evidence_code,
+        "resolution_kind": link.resolution_kind,
+        "revision_digest": link.revision_digest,
+    }
+    _CaseEvent.objects.create(
+        case_id=incoming.case_id,
+        event_type=_CaseEventType.CASE_REAPPEARANCE_SUPERSEDED,
+        actor_type=actor_type,
+        actor=actor,
+        actor_role=role or "",
+        payload=payload_superseded,
+    )
+    _CaseEvent.objects.create(
+        case_id=prior.case_id,
+        event_type=_CaseEventType.CASE_REAPPEARANCE_APPLIED,
+        actor_type=actor_type,
+        actor=actor,
+        actor_role=role or "",
+        payload=payload_applied,
+    )
+
+
+def _apply_scheduling_repeat_locked(
+    *,
+    incoming: _Case,
+    prior: _Case,
+    evidence_code: str,
+    revision_digest: str,
+    user: _User | None,
+    role: str,
+    own_lock_token: _uuid.UUID | None = None,
+) -> _CaseReappearance:
+    """Aplica ``scheduling_repeat`` sob o grupo travado: vínculo + fecho retido + eventos."""
+    applied = (
+        _CaseReappearance.objects.filter(
+            incoming_case=incoming,
+            prior_case=prior,
+            revision_digest=revision_digest,
+            state=_ReappearanceState.APPLIED,
+            resolution_kind=_ResolutionKind.SCHEDULING_REPEAT,
+        )
+        .order_by("applied_at", "id")
+        .first()
+    )
+    if applied is not None:
+        return applied
+    now = _timezone.now()
+    pending = _find_pending_link(
+        incoming=incoming,
+        prior=prior,
+        revision_digest=revision_digest,
+        resolution_kind=_ResolutionKind.SCHEDULING_REPEAT,
+    )
+    if pending is not None:
+        pending = _CaseReappearance.objects.select_for_update().get(pk=pending.pk)
+        if pending.last_reason_code in _TERMINAL_REASON_CODES:
+            return pending
+        pending.state = _ReappearanceState.APPLIED
+        pending.applied_at = now
+        pending.evidence_code = evidence_code
+        pending.canonical_case = prior
+        pending.save(update_fields=["state", "applied_at", "evidence_code", "canonical_case"])
+        link = pending
+    else:
+        link = _CaseReappearance.objects.create(
+            incoming_case=incoming,
+            prior_case=prior,
+            canonical_case=prior,
+            revision_digest=revision_digest,
+            evidence_code=evidence_code,
+            state=_ReappearanceState.APPLIED,
+            resolution_kind=_ResolutionKind.SCHEDULING_REPEAT,
+            applied_at=now,
+        )
+    _close_scheduling_incoming(incoming, user=user, role=role, own_lock_token=own_lock_token)
+    _emit_scheduling_repeat_events(link=link, incoming=incoming, prior=prior, actor=user, role=role)
+    _drop_pending_schedules(link.pk)
+    return link
+
+
+def _has_scheduling_candidate_or_link(case_pk: _uuid.UUID) -> bool:
+    """Fast path sem lock: há candidato de agendamento ou vínculo ``scheduling_repeat``?"""
+    if _CaseReappearance.objects.filter(
+        incoming_case_id=case_pk,
+        resolution_kind=_ResolutionKind.SCHEDULING_REPEAT,
+        state__in=(_ReappearanceState.PENDING, _ReappearanceState.APPLIED),
+    ).exists():
+        return True
+    incoming = _Case.objects.only(
+        "case_id",
+        "patient_name",
+        "agency_record_number",
+        "patient_cns",
+        "origin_unit",
+        "patient_age",
+        "created_at",
+    ).get(pk=case_pk)
+    return any(row.status in _SCHEDULING_QUEUE_STATUSES for row in _candidate_queryset(incoming))
+
+
+def _resolve_scheduling_repeat_common(
+    *,
+    case_pk: _uuid.UUID,
+    allowed_incoming_statuses: tuple[_CaseStatus, ...],
+    own_lock_token: _uuid.UUID | None,
+    reconciled: bool,
+    user: _User | None,
+    role: str,
+) -> SchedulingRepeatOutcome:
+    """Núcleo D4 compartilhado pelo hook pós-LLM1 e pelo caso pronto."""
+    if not is_reappearance_resolution_enabled():
+        return SchedulingRepeatOutcome(status="none")
+    if not _has_scheduling_candidate_or_link(case_pk):
+        return SchedulingRepeatOutcome(status="none")
+    for _attempt in range(_FINAL_MAX_ATTEMPTS):
+        key_source = _Case.objects.only("case_id", "patient_name").get(pk=case_pk)
+        acquired_key = _mutex_key(key_source.patient_name or "")
+        try:
+            with _transaction.atomic():
+                acquire_reappearance_mutex(acquired_key)
+                collect_source = _Case.objects.only(
+                    "case_id",
+                    "patient_name",
+                    "agency_record_number",
+                    "patient_cns",
+                    "origin_unit",
+                    "patient_age",
+                    "created_at",
+                ).get(pk=case_pk)
+                plausible = _candidate_queryset(collect_source)
+                recorded = _recorded_prior_ids(case_pk)
+                locked_ids = {case_pk} | {row.pk for row in plausible} | recorded
+                group = _lock_group(sorted(locked_ids))
+                locked_incoming = group[case_pk]
+                existing_locked = _existing_applied_link(locked_incoming)
+                if locked_incoming.status == _CaseStatus.CLEANED:
+                    if (
+                        existing_locked is not None
+                        and existing_locked.resolution_kind == _ResolutionKind.SCHEDULING_REPEAT
+                    ):
+                        return SchedulingRepeatOutcome(status="archived", link=existing_locked)
+                    return SchedulingRepeatOutcome(status="aborted")
+                if existing_locked is not None:
+                    if existing_locked.resolution_kind == _ResolutionKind.SCHEDULING_REPEAT:
+                        return SchedulingRepeatOutcome(status="archived", link=existing_locked)
+                    return SchedulingRepeatOutcome(status="none")
+                _check_drift(
+                    acquired_key=acquired_key,
+                    locked_incoming=locked_incoming,
+                    locked_ids=locked_ids,
+                    fresh_plausible=_candidate_queryset(locked_incoming),
+                    recorded_ids=_recorded_prior_ids(case_pk),
+                )
+                if locked_incoming.status not in allowed_incoming_statuses:
+                    return SchedulingRepeatOutcome(status="none")
+                prior = _single_strong_scheduling(
+                    locked_incoming,
+                    [row for row in group.values() if row.pk != locked_incoming.pk],
+                )
+                if prior is None:
+                    return SchedulingRepeatOutcome(status="none")
+                validated = _validate_locked_scheduling_pair(
+                    locked_incoming,
+                    prior,
+                    allowed_incoming_statuses=allowed_incoming_statuses,
+                    reconciled=reconciled,
+                )
+                if validated is None:
+                    return SchedulingRepeatOutcome(status="none")
+                evidence_code, revision_digest = validated
+                now = _timezone.now()
+                if _has_other_worker_live_lease(prior, now) or _has_other_actor_live_lease(
+                    locked_incoming, now, own_lock_token=own_lock_token
+                ):
+                    link = _defer_locked(
+                        incoming=locked_incoming,
+                        prior=prior,
+                        evidence_code=evidence_code,
+                        revision_digest=revision_digest,
+                        reason_code=REASON_LEASE_BUSY,
+                        resolution_kind=_ResolutionKind.SCHEDULING_REPEAT,
+                    )
+                    return SchedulingRepeatOutcome(status="deferred", link=link)
+                link = _apply_scheduling_repeat_locked(
+                    incoming=locked_incoming,
+                    prior=prior,
+                    evidence_code=evidence_code,
+                    revision_digest=revision_digest,
+                    user=user,
+                    role=role,
+                    own_lock_token=own_lock_token,
+                )
+                if link.state != _ReappearanceState.APPLIED:
+                    return SchedulingRepeatOutcome(status="deferred", link=link)
+                locked_incoming.refresh_from_db()
+                return SchedulingRepeatOutcome(
+                    status="archived",
+                    link=link,
+                    lease_released=locked_incoming.lock_token is None,
+                )
+        except _DriftDetectedError:
+            continue
+    raise ReappearanceDriftError(
+        f"reappearance drift persistente após {_FINAL_MAX_ATTEMPTS} tentativas (incoming={case_pk})"
+    )
+
+
+def archive_scheduling_repeat_after_llm1(
+    *,
+    case_pk: _uuid.UUID,
+    lock_token: _uuid.UUID,
+    reconciled: bool = True,
+    user: _User | None = None,
+    role: str = "system",
+) -> SchedulingRepeatOutcome:
+    """Hook pós-LLM1/reconciliação do orquestrador (S3, D4/D5)."""
+    return _resolve_scheduling_repeat_common(
+        case_pk=case_pk,
+        allowed_incoming_statuses=(
+            _CaseStatus.LLM_EXTRACTING,
+            _CaseStatus.LLM_SUMMARIZING,
+        ),
+        own_lock_token=lock_token,
+        reconciled=reconciled,
+        user=user,
+        role=role,
+    )
+
+
+def resolve_scheduling_repeat(
+    incoming_pk: _uuid.UUID,
+    *,
+    user: _User | None = None,
+    role: str = "system",
+) -> SchedulingRepeatOutcome:
+    """Entrypoint para caso pronto em ``AWAITING_DOCTOR`` sem decisão médica (S3, D5)."""
+    return _resolve_scheduling_repeat_common(
+        case_pk=incoming_pk,
+        allowed_incoming_statuses=(_CaseStatus.AWAITING_DOCTOR,),
+        own_lock_token=None,
+        reconciled=True,
+        user=user,
+        role=role,
+    )
+
+
 # ── Recuperação limitada do efeito pendente (D6) ────────────────────────────
 
 
@@ -1352,6 +1749,42 @@ def handle_reappearance_retry(
                     return
                 if locked_incoming.status == _CaseStatus.CLEANED:
                     _mark_retry_exhausted(link, reason=REASON_STATE_INELIGIBLE)
+                    return
+                if link.resolution_kind == _ResolutionKind.SCHEDULING_REPEAT:
+                    prior = _single_strong_scheduling(
+                        locked_incoming,
+                        [row for row in group.values() if row.pk != locked_incoming.pk],
+                    )
+                    if prior is None or prior.pk != link.prior_case_id:
+                        _mark_retry_exhausted(link, reason=REASON_STATE_INELIGIBLE)
+                        return
+                    validated = _validate_locked_scheduling_pair(
+                        locked_incoming,
+                        prior,
+                        allowed_incoming_statuses=_SCHEDULING_REPEAT_INCOMING_STATUSES,
+                        reconciled=True,
+                    )
+                    if validated is None:
+                        _mark_retry_exhausted(link, reason=REASON_STATE_INELIGIBLE)
+                        return
+                    evidence_code, fresh_digest = validated
+                    if fresh_digest != link.revision_digest:
+                        _mark_retry_exhausted(link, reason=REASON_STATE_INELIGIBLE)
+                        return
+                    retry_now = _timezone.now()
+                    if _has_other_worker_live_lease(prior, retry_now) or _has_live_lease(
+                        locked_incoming, retry_now
+                    ):
+                        _schedule_retry_or_mark_failed(link)
+                        return
+                    _apply_scheduling_repeat_locked(
+                        incoming=locked_incoming,
+                        prior=prior,
+                        evidence_code=evidence_code,
+                        revision_digest=fresh_digest,
+                        user=None,
+                        role="system",
+                    )
                     return
                 prior = _single_strong_medical(
                     locked_incoming,

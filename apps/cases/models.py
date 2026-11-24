@@ -584,9 +584,17 @@ class Case(FSMModelMixin, models.Model):
     def _fsm_complete_cleaning(self) -> None:
         """Hook FSM CLEANING → CLEANED."""
 
-    @transition(field="status", source=CaseStatus.AWAITING_DOCTOR, target=CaseStatus.CLEANED)
+    @transition(
+        field="status",
+        source=[
+            CaseStatus.AWAITING_DOCTOR,
+            CaseStatus.LLM_EXTRACTING,
+            CaseStatus.LLM_SUMMARIZING,
+        ],
+        target=CaseStatus.CLEANED,
+    )
     def _fsm_close_as_reappearance(self) -> None:
-        """Hook FSM AWAITING_DOCTOR → CLEANED (substituição médica, slice 002)."""
+        """Hook FSM {AWAITING_DOCTOR, LLM_EXTRACTING, LLM_SUMMARIZING} → CLEANED."""
 
     @transition(
         field="status",

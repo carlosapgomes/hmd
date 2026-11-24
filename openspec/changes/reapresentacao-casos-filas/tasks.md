@@ -1,6 +1,6 @@
 # Tasks
 
-Plano produzido com `openspec-vertical-change-writer`, revisto após F-01–F-12 e, agora, após auditoria integral AUD-01–14 e confirmação explícita do dono das decisões de saneamento (design D10). Estado: S1, S2 e S3 implementados, aceitos com notas P2 adiadas (S2: AUD-12, AUD-13, P2-3 e P2-4, na Review 4 independente, 23/23 PASS, 0 P0/P1; S3: P2-1 docstring desatualizada em `Case.close_as_reappearance`, P2-2 nota de log RED da Unidade 3C, na Review 1/2 independente, 18/18 PASS, 0 P0/P1) e commitados; S4–S5 não iniciados. Executar um slice por vez, em ordem; cada unidade inclui seus testes, documentação e gates. Não habilitar produção antes do aceite S1–S5. Antigo S3 foi dividido em S3 (núcleo seguro) e S4 (UI); antiga conferência S4 passa a S5. Esta revisão é só de planejamento: não autoriza apply, commit ou novo orçamento de revisão e não reinicia os três rounds consumidos. Preservar base, código e evidências históricos.
+Plano produzido com `openspec-vertical-change-writer`, revisto após F-01–F-12 e, agora, após auditoria integral AUD-01–14 e confirmação explícita do dono das decisões de saneamento (design D10). Estado: S1, S2, S3 e S4 implementados, aceitos com notas P2 adiadas (S2: AUD-12, AUD-13, P2-3 e P2-4, na Review 4 independente, 23/23 PASS, 0 P0/P1; S3: P2-1 docstring desatualizada em `Case.close_as_reappearance`, P2-2 nota de log RED da Unidade 3C, na Review 1/2 independente, 18/18 PASS, 0 P0/P1; S4: P2-1 release de `work_lock.js` no viewer mobile alinhado ao padrão `doctor`, P2-2 prova R4 via `.update()` em pytest vs runtime e2e real, P2-3 typo de fixture no log RED de R3 antes do GREEN, na Review 1/2 independente, 5/5 PASS, 0 P0/P1) e commitados; S5 não iniciado. Executar um slice por vez, em ordem; cada unidade inclui seus testes, documentação e gates. Não habilitar produção antes do aceite S1–S5. Antigo S3 foi dividido em S3 (núcleo seguro) e S4 (UI); antiga conferência S4 passa a S5. Esta revisão é só de planejamento: não autoriza apply, commit ou novo orçamento de revisão e não reinicia os três rounds consumidos. Preservar base, código e evidências históricos.
 
 ## 1. S1 — Identidade e prior-case
 
@@ -33,7 +33,7 @@ Unidades sequenciais do MESMO S3, não novos slices, commits ou aceites independ
 
 ## 4. S4 — UI do agendador
 
-- [ ] 4.1 Entregar contador/partial, seção de documentos na página de trabalho real e histórico CLEANED, espera herdada médica→agendamento e manual; verificar queries sem N+1, gates originais preservados, jornada verify-hmd 1280/390 PDF/imagem/anexo PDF, agendamento não interrompido e quality gate. Contract: [slice-004-ui-agendamento.md](slices/slice-004-ui-agendamento.md).
+- [x] 4.1 Entregar contador/partial, seção de documentos na página de trabalho real e histórico CLEANED, espera herdada médica→agendamento e manual; verificar queries sem N+1, gates originais preservados, jornada verify-hmd 1280/390 PDF/imagem/anexo PDF, agendamento não interrompido e quality gate. Contract: [slice-004-ui-agendamento.md](slices/slice-004-ui-agendamento.md).
 
 ## 5. S5 — Conferência NIR
 

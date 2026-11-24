@@ -310,6 +310,113 @@
     {% endif %}
     {% endif %}
 
+    {% if reappearances %}
+    <!-- Reapresentações recebidas (Slice 004, R2/R3/D5/D8): seção separada do
+         relatório aprovado pelo médico; documentos recebidos disponíveis para
+         consulta sem suspender o agendamento nem criar triagem clínica. -->
+    <section id="reapresentacoes-recebidas" class="card shadow-sm mb-4 report-card" aria-labelledby="reapresentacoes-recebidas-titulo">
+      <div class="card-header bg-white d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <h2 id="reapresentacoes-recebidas-titulo" class="h5 mb-0">Reapresentações recebidas</h2>
+        <span class="badge rounded-pill text-bg-info">{{ reappearances|length }} {% if reappearances|length == 1 %}envio{% else %}envios{% endif %}</span>
+      </div>
+      <div class="card-body">
+        <div class="alert alert-warning py-2 px-3 small mb-3" role="note">
+          Documentação recebida em reapresentação — não substitui o relatório aprovado pelo médico.
+        </div>
+        {% for item in reappearances %}
+        <div class="border rounded-3 p-3 {% if not forloop.last %}mb-3{% endif %}">
+          <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+            <div>
+              <strong>Envio {{ forloop.counter }}</strong>
+              <span class="text-muted small ms-1">({{ item.incoming_reference }})</span>
+            </div>
+            <span class="small text-muted">Recebido em {{ item.received_at|date:"d/m/Y H:i" }}</span>
+          </div>
+          <dl class="row small mb-2">
+            <dt class="col-sm-3">Responsável</dt>
+            <dd class="col-sm-9 mb-1">{{ item.submitter_name|default:"—" }}</dd>
+            <dt class="col-sm-3">Nº de regulação</dt>
+            <dd class="col-sm-9 mb-0">{{ item.agency_record_number|default:"—" }}</dd>
+          </dl>
+          {% if item.files_unavailable %}
+          <p class="small text-muted mb-0">
+            Documentos removidos por minimização ou purga — indisponíveis para abertura.
+          </p>
+          {% else %}
+            {% if item.documents %}
+            <div class="mt-2">
+              <div class="small fw-semibold mb-1">Relatório recebido</div>
+              {% for doc in item.documents %}
+              <div class="mb-2">
+                <a href="{{ doc.viewer_url }}?next={{ detail_url|urlencode }}"
+                   class="btn btn-sm btn-outline-primary d-inline-flex d-md-none align-items-center gap-2 text-break">
+                  PDF {{ doc.position }} — {{ doc.filename }}
+                </a>
+                <button class="btn btn-link text-decoration-none p-0 text-dark d-none d-md-inline-flex align-items-center gap-2 collapsed" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#reapp-doc-{{ item.id }}-{{ doc.id }}"
+                        aria-expanded="false" aria-controls="reapp-doc-{{ item.id }}-{{ doc.id }}">
+                  {{ doc.filename }} <small class="text-muted">({{ doc.size|filesizeformat }})</small>
+                </button>
+                <div class="collapse mt-2" id="reapp-doc-{{ item.id }}-{{ doc.id }}" data-pdf-doc-collapse>
+                  <div class="mb-2 text-end">
+                    <a href="{{ doc.serve_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Abrir em nova aba</a>
+                  </div>
+                  <div class="ratio ratio-1x1 d-none d-md-block" style="max-height: 80vh;">
+                    <embed class="pdf-lazy-embed" data-src="{{ doc.serve_url }}" type="application/pdf" style="width: 100%; height: 100%;">
+                  </div>
+                </div>
+                <noscript>
+                  <p class="mb-2"><a href="{{ doc.serve_url }}" target="_blank" rel="noopener">Abrir PDF {{ doc.filename }}</a></p>
+                </noscript>
+              </div>
+              {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if item.attachments %}
+            <div class="mt-2">
+              <div class="small fw-semibold mb-1">Anexos recebidos</div>
+              {% for att in item.attachments %}
+              <div class="mb-2">
+                {% if att.is_pdf %}
+                <a href="{{ att.viewer_url }}?next={{ detail_url|urlencode }}"
+                   class="btn btn-sm btn-outline-primary d-inline-flex d-md-none align-items-center gap-2 text-break">
+                  Anexo PDF — {{ att.filename }}
+                </a>
+                <button class="btn btn-link text-decoration-none p-0 text-dark d-none d-md-inline-flex align-items-center gap-2 collapsed" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#reapp-att-{{ item.id }}-{{ att.id }}"
+                        aria-expanded="false" aria-controls="reapp-att-{{ item.id }}-{{ att.id }}">
+                  {{ att.filename }} <small class="text-muted">({{ att.size|filesizeformat }})</small>
+                </button>
+                <div class="collapse mt-2" id="reapp-att-{{ item.id }}-{{ att.id }}" data-pdf-doc-collapse>
+                  <div class="mb-2 text-end">
+                    <a href="{{ att.serve_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Abrir em nova aba</a>
+                  </div>
+                  <div class="ratio ratio-1x1 d-none d-md-block" style="max-height: 80vh;">
+                    <embed class="pdf-lazy-embed" data-src="{{ att.serve_url }}" type="application/pdf" style="width: 100%; height: 100%;">
+                  </div>
+                </div>
+                <noscript>
+                  <p class="mb-2"><a href="{{ att.serve_url }}" target="_blank" rel="noopener">Abrir anexo {{ att.filename }}</a></p>
+                </noscript>
+                {% else %}
+                <div class="mb-1">
+                  <a href="{{ att.serve_url }}" class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener">{{ att.filename }}</a>
+                  <small class="text-muted ms-1">({{ att.size|filesizeformat }})</small>
+                </div>
+                <img loading="lazy" src="{{ att.serve_url }}" alt="{{ att.filename }}" class="img-fluid rounded border d-block" style="max-height: 400px;">
+                {% endif %}
+              </div>
+              {% endfor %}
+            </div>
+            {% endif %}
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
     <!-- Thread de comunicações -->
     <div class="card shadow-sm mb-4 report-card">
       <div class="card-header bg-white">
@@ -351,7 +458,7 @@
 {% endif %}
 <!-- Lazy-embed dos PDFs do relatório (slice PVP-004, R2/D2): sem ele os
      sub-collapses de documento não carregam por expansão no desktop. -->
-{% if can_view_pdf %}
+{% if can_view_pdf or has_reappearance_pdfs %}
 <script src="{% static 'js/pdf-lazy-embed.js' %}"></script>
 {% endif %}
 {% endblock %}

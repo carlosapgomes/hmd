@@ -23,6 +23,7 @@ const base = manifest.url;
 const journeyArg = process.argv.indexOf('--journey');
 const journeyName = journeyArg >= 0 ? process.argv[journeyArg + 1] : 'default';
 const isS2 = journeyName === 's2' || process.argv.includes('--s2');
+const isS4 = journeyName === 's4' || process.argv.includes('--s4');
 const artifacts = path.join(runDir, 'artifacts');
 const PASSWORD = manifest.seedPassword;
 
@@ -176,7 +177,17 @@ try {
   // Chromium pinado do Playwright — nunca o Chrome do sistema. Se o
   // download não aconteceu (ver artifacts/playwright-install.log), o
   // lançamento falha e o drive sai BLOCKED (exit 2), sem substituir motor.
-  browser = await chromium.launch({ headless: true });
+  // Para s4 (que prova rede de <embed type="application/pdf">), o plugin de PDF
+  // exige Chromium headed sob Xvfb (DISPLAY), nunca headless-shell.
+  if (isS4) {
+    if (!process.env.DISPLAY) {
+      console.error('infra BLOCKED: sem DISPLAY — o plugin de PDF do headless não busca/renderiza <embed>; rode sob Xvfb.');
+      process.exit(2);
+    }
+    browser = await chromium.launch({ headless: false, args: ['--no-sandbox'] });
+  } else {
+    browser = await chromium.launch({ headless: true });
+  }
 } catch (err) {
   console.error(`infra BLOCKED: Chromium pinado do Playwright indisponível (${err.message}) — nenhum motor substituto foi usado.`);
   process.exit(2);
@@ -426,6 +437,375 @@ if (isS2) {
   await browser.close();
   console.log(s2failures.length === 0 ? 'DRIVE S2 PASS' : `DRIVE S2 FAIL: ${s2failures.join(', ')}`);
   process.exit(s2failures.length === 0 ? 0 : 1);
+}
+// Jornada S4 (slice 004) via entrypoint oficial drive.mjs --journey s4.
+// Mesma posse/Chromium/assets do default; prova fila, #reapresentacoes-recebidas
+// (lazy PDF desktop, viewer mobile + Voltar, imagem), histórico retido vs purgado
+// e confirmação real em 1280×800 e 390×844. Artefatos s4-* sem sobrescrever default.
+if (isS4) {
+  const s4checks = [];
+  const s4failures = [];
+  const s4failedAssets = [];
+  const s4observed = { runId: manifest.runId, base, database: manifest.database, steps: [] };
+  function s4check(id, ok, detail) {
+    s4checks.push({ id, ok: !!ok, detail: String(detail ?? '') });
+    if (!ok) s4failures.push(id);
+    console.log(`${ok ? 'PASS' : 'FAIL'} ${id} ${detail ?? ''}`);
+  }
+  async function s4snap(page, name) {
+    const file = path.join(artifacts, `${name}.txt`);
+    let text;
+    try {
+      text = await page.locator('body').ariaSnapshot();
+    } catch {
+      text = await page.locator('body').innerText();
+    }
+    writeFileSync(file, `${page.url()}\n${text}\n`);
+    await page.screenshot({ path: path.join(artifacts, `${name}.png`), fullPage: true });
+  }
+  async function s4loginAs(viewport, username) {
+    const context = await browser.newContext(viewport ? { viewport } : {});
+    const page = await context.newPage();
+    page.on('response', (res) => {
+      if (res.url().includes('/static/') && res.status() >= 400) {
+        s4failedAssets.push(`${res.status()} ${res.url()}`);
+      }
+    });
+    await page.goto(`${base}/login/`, { waitUntil: 'domcontentloaded' });
+    await page.getByLabel('Usuário').fill(username);
+    await page.getByLabel('Senha', { exact: true }).fill(PASSWORD);
+    await page.getByRole('button', { name: 'Entrar' }).click();
+    await page.waitForURL((url) => !url.pathname.endsWith('/login/'), { timeout: 15000 });
+    return { context, page };
+  }
+  const VIEWPORTS = { desktop: { width: 1280, height: 800 }, mobile: { width: 390, height: 844 } };
+  let case401Url = '';
+  let case401Id = '';
+  let case402Url = '';
+  let case402Id = '';
+  try {
+    // ── 1) Desktop 1280×800 ──
+    {
+      const { context, page } = await s4loginAs(VIEWPORTS.desktop, 'verify-scheduler');
+      const reappResponses = [];
+      page.on('response', (res) => {
+        const u = new URL(res.url()).pathname;
+        if (u.includes('/reappearances/')) {
+          reappResponses.push({ pathname: u, status: res.status() });
+        }
+      });
+
+      s4check('s4-desktop-scheduler-home', page.url().includes('/scheduler/'), page.url());
+      for (const asset of REQUIRED_ASSETS) {
+        const status = await page.evaluate(async (u) => (await fetch(u, { cache: 'no-store' })).status, asset);
+        s4check(`s4-static-asset-desktop-${asset.split('/').pop()}`, status === 200, `${asset} HTTP ${status}`);
+      }
+
+      const card401 = page.locator('[data-scheduler-queue-card][data-agency-record-number="880401"]');
+      s4check('s4-desktop-queue-card-880401', (await card401.count()) === 1, `${await card401.count()} card(s)`);
+      const cardText = await card401.first().innerText();
+      const waitingText = await card401.first().locator('.waiting-time').innerText();
+      s4check('s4-desktop-queue-inherited-wait', /6\s*dias/.test(waitingText), waitingText.trim());
+      s4check(
+        's4-desktop-queue-counter-badge',
+        cardText.includes('Caso reapresentado 2 vezes enquanto aguarda agendamento') &&
+          cardText.includes('Último recebimento:'),
+        'badge 2 vezes + último recebimento',
+      );
+      const anchorLink = card401.first().locator('a[href*="#reapresentacoes-recebidas"]');
+      s4check('s4-desktop-queue-anchor-link', (await anchorLink.count()) === 1, await anchorLink.getAttribute('href'));
+      await s4snap(page, 's4-desktop-queue');
+      s4observed.steps.push({ step: 's4-desktop-queue', url: page.url(), waiting: waitingText.trim() });
+
+      // Navega pelo link do card até #reapresentacoes-recebidas
+      await anchorLink.click();
+      await page.waitForURL(/\/scheduler\/case\/[0-9a-f-]{36}\//, { timeout: 15000 });
+      await page.waitForLoadState('networkidle');
+      case401Url = page.url().split('#')[0];
+      case401Id = case401Url.match(/\/scheduler\/case\/([0-9a-f-]{36})\//)?.[1] || '';
+
+      const confirmForm = page.locator('form[action$="/confirm/"]');
+      const denyForm = page.locator('form[action$="/deny/"]');
+      s4check(
+        's4-desktop-401-post-forms-and-lock',
+        (await confirmForm.count()) === 1 &&
+          (await denyForm.count()) === 1 &&
+          (await confirmForm.locator('input[name="lock_token"]').count()) === 1 &&
+          (await denyForm.locator('input[name="lock_token"]').count()) === 1,
+        'confirm/deny POST + lock_token',
+      );
+      const section401 = page.locator('#reapresentacoes-recebidas');
+      const section401Text = await section401.innerText();
+      s4check(
+        's4-desktop-401-disclaimer',
+        section401Text.includes('Documentação recebida em reapresentação — não substitui o relatório aprovado pelo médico.'),
+        'aviso de não-aprovação presente',
+      );
+      const body401 = await page.locator('body').innerText();
+      s4check('s4-desktop-401-no-original-pdf-card', !body401.includes('Visualizar PDF Original'), 'PDF original oculto');
+
+      const lazyPaths401 = await page.locator('#reapresentacoes-recebidas embed.pdf-lazy-embed').evaluateAll((els) =>
+        els.map((el) => el.getAttribute('data-src')).filter(Boolean),
+      );
+      const eagerPdfFetches401 = reappResponses.filter((r) => lazyPaths401.includes(r.pathname));
+      s4check(
+        's4-desktop-401-zero-eager-pdf-fetches',
+        lazyPaths401.length >= 2 && eagerPdfFetches401.length === 0,
+        `embeds=${lazyPaths401.length}, eager=${eagerPdfFetches401.length}`,
+      );
+      await s4snap(page, 's4-desktop-401-before-expand');
+
+      // Expande sub-collapse do relatório PDF recebido
+      const docBtn = section401.locator('button[data-bs-target^="#reapp-doc-"]').first();
+      const docTarget = await docBtn.getAttribute('data-bs-target');
+      const docSrc = await page.locator(`${docTarget} embed.pdf-lazy-embed`).getAttribute('data-src');
+      await docBtn.scrollIntoViewIfNeeded();
+      const [docRes] = await Promise.all([
+        page.waitForResponse(
+          (res) => new URL(res.url()).pathname === docSrc && res.status() === 200,
+          { timeout: 15000 },
+        ),
+        docBtn.click(),
+      ]);
+      await page.waitForFunction(
+        (sel) => {
+          const el = document.querySelector(sel);
+          return el && el.classList.contains('show') && !el.classList.contains('collapsing');
+        },
+        docTarget,
+        { timeout: 15000 },
+      );
+      s4check('s4-desktop-401-lazy-doc-pdf-200', docRes.status() === 200, `${docSrc} HTTP ${docRes.status()}`);
+      // Fecha o primeiro sub-collapse antes de clicar no próximo para evitar que o plugin PDF do <embed> intercepte o clique.
+      await docBtn.click();
+      await page.waitForFunction(
+        (sel) => {
+          const el = document.querySelector(sel);
+          return el && !el.classList.contains('show') && !el.classList.contains('collapsing');
+        },
+        docTarget,
+        { timeout: 15000 },
+      );
+
+      // Expande sub-collapse do anexo PDF recebido
+      const attBtn = section401.locator('button[data-bs-target^="#reapp-att-"]').first();
+      const attTarget = await attBtn.getAttribute('data-bs-target');
+      const attSrc = await page.locator(`${attTarget} embed.pdf-lazy-embed`).getAttribute('data-src');
+      await attBtn.scrollIntoViewIfNeeded();
+      const [attRes] = await Promise.all([
+        page.waitForResponse(
+          (res) => new URL(res.url()).pathname === attSrc && res.status() === 200,
+          { timeout: 15000 },
+        ),
+        attBtn.click(),
+      ]);
+      s4check('s4-desktop-401-lazy-att-pdf-200', attRes.status() === 200, `${attSrc} HTTP ${attRes.status()}`);
+
+      // Verifica imagem anexa carregada com naturalWidth > 0
+      const imgEl = section401.locator('img').first();
+      await imgEl.scrollIntoViewIfNeeded();
+      await page.waitForFunction(
+        () => {
+          const img = document.querySelector('#reapresentacoes-recebidas img');
+          return img && img.complete && img.naturalWidth > 0;
+        },
+        { timeout: 15000 },
+      );
+      const imgSrc = await imgEl.getAttribute('src');
+      const imgNaturalWidth = await imgEl.evaluate((el) => el.naturalWidth);
+      const imgResp = reappResponses.find((r) => r.pathname === imgSrc && r.status === 200);
+      s4check(
+        's4-desktop-401-image-att-200',
+        !!imgResp && imgNaturalWidth > 0,
+        `${imgSrc} HTTP ${imgResp?.status} naturalWidth=${imgNaturalWidth}`,
+      );
+
+      // Original case_pdf retorna 404
+      const origPdfStatus401 = await page.evaluate(
+        async (id) => (await fetch(`/scheduler/case/${id}/pdf/1/`, { cache: 'no-store' })).status,
+        case401Id,
+      );
+      s4check('s4-desktop-401-original-pdf-404', origPdfStatus401 === 404, `HTTP ${origPdfStatus401}`);
+      await s4snap(page, 's4-desktop-401-expanded');
+      s4observed.steps.push({ step: 's4-desktop-401', url: case401Url });
+
+      // ── 880402 (CLEANED retido histórico) ──
+      await page.goto(`${base}/scheduler/historical/?q=880402`, { waitUntil: 'domcontentloaded' });
+      const link402 = page.locator('a[href*="/scheduler/historical/"]:has-text("Ver detalhes")').first();
+      s4check('s4-desktop-402-in-historical-search', (await link402.count()) === 1, await link402.getAttribute('href'));
+      await link402.click();
+      await page.waitForURL(/\/scheduler\/historical\/[0-9a-f-]{36}\//, { timeout: 15000 });
+      await page.waitForLoadState('networkidle');
+      case402Url = page.url().split('#')[0];
+      case402Id = case402Url.match(/\/scheduler\/historical\/([0-9a-f-]{36})\//)?.[1] || '';
+
+      const section402 = page.locator('#reapresentacoes-recebidas');
+      s4check('s4-desktop-402-section-visible', (await section402.count()) === 1, case402Url);
+      const body402 = await page.locator('body').innerText();
+      s4check('s4-desktop-402-no-original-pdf-card', !body402.includes('Visualizar PDF Original'), 'PDF original oculto');
+
+      const lazyPaths402 = await section402.locator('embed.pdf-lazy-embed').evaluateAll((els) =>
+        els.map((el) => el.getAttribute('data-src')).filter(Boolean),
+      );
+      const eagerPdfFetches402 = reappResponses.filter((r) => lazyPaths402.includes(r.pathname));
+      s4check('s4-desktop-402-zero-eager-pdf-fetches', lazyPaths402.length >= 1 && eagerPdfFetches402.length === 0, `eager=${eagerPdfFetches402.length}`);
+
+      const doc402Btn = section402.locator('button[data-bs-target^="#reapp-doc-"]').first();
+      const doc402Target = await doc402Btn.getAttribute('data-bs-target');
+      const doc402Src = await page.locator(`${doc402Target} embed.pdf-lazy-embed`).getAttribute('data-src');
+      await doc402Btn.scrollIntoViewIfNeeded();
+      const [doc402Res] = await Promise.all([
+        page.waitForResponse(
+          (res) => new URL(res.url()).pathname === doc402Src && res.status() === 200,
+          { timeout: 15000 },
+        ),
+        doc402Btn.click(),
+      ]);
+      s4check('s4-desktop-402-lazy-doc-pdf-200', doc402Res.status() === 200, `${doc402Src} HTTP ${doc402Res.status()}`);
+
+      const origPdfStatus402 = await page.evaluate(
+        async (id) => (await fetch(`/scheduler/case/${id}/pdf/1/`, { cache: 'no-store' })).status,
+        case402Id,
+      );
+      s4check('s4-desktop-402-original-pdf-404', origPdfStatus402 === 404, `HTTP ${origPdfStatus402}`);
+      await s4snap(page, 's4-desktop-402-historical');
+      s4observed.steps.push({ step: 's4-desktop-402', url: case402Url });
+
+      // ── 880403 (CLEANED minimizado/purgado histórico) ──
+      await page.goto(`${base}/scheduler/historical/?q=880403`, { waitUntil: 'domcontentloaded' });
+      const link403 = page.locator('a[href*="/scheduler/historical/"]:has-text("Ver detalhes")').first();
+      s4check('s4-desktop-403-in-historical-search', (await link403.count()) === 1, await link403.getAttribute('href'));
+      await link403.click();
+      await page.waitForURL(/\/scheduler\/historical\/[0-9a-f-]{36}\//, { timeout: 15000 });
+      const body403 = await page.locator('body').innerText();
+      s4check(
+        's4-desktop-403-unavailable-notice',
+        body403.includes('Documentos removidos por minimização ou purga — indisponíveis para abertura.'),
+        'aviso de indisponibilidade',
+      );
+      const reappLinks403 = await page.locator('a[href*="/reappearances/"], embed[data-src*="/reappearances/"]').count();
+      s4check('s4-desktop-403-zero-reappearance-links', reappLinks403 === 0, `links=${reappLinks403}`);
+      await s4snap(page, 's4-desktop-403-purged');
+      s4observed.steps.push({ step: 's4-desktop-403', url: page.url() });
+
+      await context.close();
+    }
+
+    // ── 2) Mobile 390×844 ──
+    {
+      const { context, page } = await s4loginAs(VIEWPORTS.mobile, 'verify-scheduler');
+      const mobileReappResponses = [];
+      page.on('response', (res) => {
+        const u = new URL(res.url()).pathname;
+        if (u.includes('/reappearances/')) {
+          mobileReappResponses.push({ pathname: u, status: res.status() });
+        }
+      });
+
+      await page.goto(case401Url, { waitUntil: 'networkidle' });
+      const mobileEmbedPaths = await page.locator('#reapresentacoes-recebidas embed.pdf-lazy-embed').evaluateAll((els) =>
+        els.map((el) => el.getAttribute('data-src')).filter(Boolean),
+      );
+      const mobileEagerFetches = mobileReappResponses.filter((r) => mobileEmbedPaths.includes(r.pathname));
+      s4check('s4-mobile-401-zero-eager-embed-fetches', mobileEagerFetches.length === 0, `eager=${mobileEagerFetches.length}`);
+      await s4snap(page, 's4-mobile-401-detail');
+
+      // Viewer mobile do relatório PDF recebido + Voltar
+      const docViewerLink = page.locator('#reapresentacoes-recebidas a[href*="/reappearances/"][href*="/documents/"][href*="/viewer/"]').first();
+      await docViewerLink.scrollIntoViewIfNeeded();
+      const [docViewerRes, docServeRes] = await Promise.all([
+        page.waitForResponse(
+          (res) => new URL(res.url()).pathname.includes('/reappearances/') && new URL(res.url()).pathname.endsWith('/viewer/') && res.status() === 200,
+          { timeout: 15000 },
+        ),
+        page.waitForResponse(
+          (res) => new URL(res.url()).pathname.includes('/reappearances/') && !new URL(res.url()).pathname.endsWith('/viewer/') && new URL(res.url()).pathname.includes('/documents/') && res.status() === 200,
+          { timeout: 15000 },
+        ),
+        docViewerLink.click(),
+      ]);
+      await page.waitForURL(/\/viewer\//, { timeout: 15000 });
+      s4check('s4-mobile-401-doc-viewer-200', docViewerRes.status() === 200 && docServeRes.status() === 200, `viewer=${docViewerRes.status()} serve=${docServeRes.status()}`);
+      await s4snap(page, 's4-mobile-401-doc-viewer');
+
+      await page.locator('a:has-text("Voltar")').first().click();
+      await page.waitForURL(new RegExp(`/scheduler/case/${case401Id}/$`), { timeout: 15000 });
+      s4check('s4-mobile-401-doc-viewer-back', page.url().includes(`/scheduler/case/${case401Id}/`), page.url());
+
+      // Viewer mobile do anexo PDF recebido + Voltar
+      const attViewerLink = page.locator('#reapresentacoes-recebidas a[href*="/reappearances/"][href*="/attachments/"][href*="/viewer/"]').first();
+      await attViewerLink.scrollIntoViewIfNeeded();
+      const [attServeRes] = await Promise.all([
+        page.waitForResponse(
+          (res) => new URL(res.url()).pathname.includes('/reappearances/') && !new URL(res.url()).pathname.endsWith('/viewer/') && new URL(res.url()).pathname.includes('/attachments/') && res.status() === 200,
+          { timeout: 15000 },
+        ),
+        attViewerLink.click(),
+      ]);
+      await page.waitForURL(/\/viewer\//, { timeout: 15000 });
+      s4check('s4-mobile-401-att-viewer-200', attServeRes.status() === 200, `serve=${attServeRes.status()}`);
+      await s4snap(page, 's4-mobile-401-att-viewer');
+
+      await page.locator('a:has-text("Voltar")').first().click();
+      await page.waitForURL(new RegExp(`/scheduler/case/${case401Id}/$`), { timeout: 15000 });
+      s4check('s4-mobile-401-att-viewer-back', page.url().includes(`/scheduler/case/${case401Id}/`), page.url());
+
+      // Histórico 880402 no mobile → viewer mobile → Voltar
+      await page.goto(case402Url, { waitUntil: 'domcontentloaded' });
+      const histViewerLink = page.locator('#reapresentacoes-recebidas a[href*="/reappearances/"][href*="/documents/"][href*="/viewer/"]').first();
+      await histViewerLink.scrollIntoViewIfNeeded();
+      const [histServeRes] = await Promise.all([
+        page.waitForResponse(
+          (res) => new URL(res.url()).pathname.includes('/reappearances/') && !new URL(res.url()).pathname.endsWith('/viewer/') && new URL(res.url()).pathname.includes('/documents/') && res.status() === 200,
+          { timeout: 15000 },
+        ),
+        histViewerLink.click(),
+      ]);
+      await page.waitForURL(/\/viewer\//, { timeout: 15000 });
+      s4check('s4-mobile-402-hist-viewer-200', histServeRes.status() === 200, `serve=${histServeRes.status()}`);
+      await page.locator('a:has-text("Voltar")').first().click();
+      await page.waitForURL(new RegExp(`/scheduler/historical/${case402Id}/$`), { timeout: 15000 });
+      s4check('s4-mobile-402-hist-viewer-back', page.url().includes(`/scheduler/historical/${case402Id}/`), page.url());
+      await s4snap(page, 's4-mobile-402-back');
+
+      await context.close();
+    }
+
+    // ── 3) Confirmação real de agendamento em 880401 (sem pergunta clínica/suspensão) ──
+    {
+      const { context, page } = await s4loginAs(VIEWPORTS.desktop, 'verify-scheduler');
+      await page.goto(case401Url, { waitUntil: 'domcontentloaded' });
+      const confirmForm = page.locator('form[action$="/confirm/"]');
+      await confirmForm.locator('select[name="unit"]').selectOption('1');
+      await confirmForm.locator('input[name="scheduled_date"]').fill('2026-12-15');
+      await confirmForm.locator('input[name="scheduled_time"]').fill('10:30');
+      await confirmForm.locator('input[name="scheduled_location"]').fill('Sala Hemodinamica 1');
+      await confirmForm.getByRole('button', { name: 'Confirmar' }).click();
+      await page.waitForLoadState('domcontentloaded');
+      const postBody = await page.locator('body').innerText();
+      s4check(
+        's4-confirm-880401-success-no-clinical-gate',
+        postBody.includes('Agendamento confirmado.') &&
+          !postBody.toLowerCase().includes('revisão clínica') &&
+          !postBody.toLowerCase().includes('suspenso'),
+        page.url(),
+      );
+      await s4snap(page, 's4-confirm-880401');
+      s4observed.steps.push({ step: 's4-confirm-880401', url: page.url() });
+      await context.close();
+    }
+  } catch (err) {
+    console.error(`infra/driver: ${err.message}`);
+    writeFileSync(path.join(artifacts, 'observed-state-s4.json'), JSON.stringify(s4observed, null, 2));
+    await browser.close();
+    process.exit(2);
+  }
+  s4check('s4-no-failed-static-assets', s4failedAssets.length === 0, s4failedAssets.join('; ') || 'nenhum /static/* >= 400');
+  writeFileSync(path.join(artifacts, 'report-s4.json'), JSON.stringify({ runId: manifest.runId, checks: s4checks, failures: s4failures, pass: s4failures.length === 0 }, null, 2));
+  writeFileSync(path.join(artifacts, 'observed-state-s4.json'), JSON.stringify(s4observed, null, 2));
+  await browser.close();
+  console.log(s4failures.length === 0 ? 'DRIVE S4 PASS' : `DRIVE S4 FAIL: ${s4failures.join(', ')}`);
+  process.exit(s4failures.length === 0 ? 0 : 1);
 }
 try {
   // 1) Médico: fila médica em leitura.

@@ -56,7 +56,8 @@ from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import F, Q
+from django.db.models import Count, F, Max, Q
+from django.db.models.functions import Coalesce
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -98,7 +99,10 @@ from .forms import (
     SchedulerDenyForm,
     SchedulerReopenForm,
 )
-from .presenters import build_scheduler_case_detail_context
+from .presenters import (
+    build_scheduler_case_detail_context,
+    build_scheduler_reappearances_context,
+)
 from .services import (
     confirm_case_scheduling,
     deny_case_scheduling,
@@ -238,7 +242,13 @@ def _form_error_text(form: SchedulerConfirmForm) -> str:
     return " ".join(errors) if errors else "Formulário inválido."
 
 
-def _queue_item(case: Case, *, user: User, include_decider: bool = False) -> dict[str, object]:
+def _queue_item(
+    case: Case,
+    *,
+    user: User,
+    include_decider: bool = False,
+    include_reappearances: bool = False,
+) -> dict[str, object]:
     """Item de card da fila: identificação + tipos declarados + unidade + reserva.
 
     Os tipos saem das rows já pré-carregadas (``prefetch_related``),
@@ -271,6 +281,13 @@ def _queue_item(case: Case, *, user: User, include_decider: bool = False) -> dic
         "days_on_screen": case.days_on_screen,
         "agency_record_number": case.agency_record_number or "—",
         "created_at": case.created_at,
+        "waiting_since": case.effective_wait_started_at,
+        "reappearance_count": (
+            int(getattr(case, "reappearance_count", 0) or 0) if include_reappearances else 0
+        ),
+        "last_reappearance_at": (
+            getattr(case, "last_reappearance_at", None) if include_reappearances else None
+        ),
         "unit_label": unit_label_text,
         "reopen_reason": case.scheduling_reopen_reason.strip(),
         "lock": compute_lock_display(case, user),
@@ -342,14 +359,40 @@ def _build_queue_context(request: HttpRequest) -> dict[str, object]:
                 procedures__declared_by_nir=True,
                 procedures__procedure_type=procedure_type,
             ).distinct()
+        reappearance_filter = Q(
+            reappearance_canonical_links__prior_case_id=F("case_id"),
+            reappearance_canonical_links__resolution_kind=ResolutionKind.SCHEDULING_REPEAT,
+            reappearance_canonical_links__state=ReappearanceState.APPLIED,
+        )
         cases = (
-            cases.order_by(F("days_on_screen").desc(nulls_last=True), "created_at", "case_id")
+            cases.annotate(
+                reappearance_count=Count(
+                    "reappearance_canonical_links__incoming_case_id",
+                    filter=reappearance_filter,
+                    distinct=True,
+                ),
+                last_reappearance_at=Max(
+                    "reappearance_canonical_links__applied_at",
+                    filter=reappearance_filter,
+                ),
+            )
+            .order_by(
+                F("days_on_screen").desc(nulls_last=True),
+                Coalesce("reappearance_wait_started_at", "created_at"),
+                "created_at",
+                "case_id",
+            )
             .select_related("locked_by")
             .prefetch_related("procedures")
         )
     page = Paginator(cases, QUEUE_PAGE_SIZE).get_page(request.GET.get("page", "1"))
     items = [
-        _queue_item(case, user=user, include_decider=(tab == "processados"))
+        _queue_item(
+            case,
+            user=user,
+            include_decider=(tab == "processados"),
+            include_reappearances=(tab == "aguardando"),
+        )
         for case in page.object_list
     ]
 
@@ -497,13 +540,19 @@ def historical_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResp
     context["incident_disabled"] = False
     context["is_historical"] = True
 
+    detail_url = reverse("scheduler:historical_case_detail", args=[case.case_id])
+    context["detail_url"] = detail_url
     can_view_pdf = _scheduler_can_view_pdf(case)
     context["can_view_pdf"] = can_view_pdf
     if can_view_pdf:
         context["case"] = case
         documents: list[CaseDocument] = list(case.documents.all())
         context["pdf_items"] = _build_pdf_items(case, documents)
-        context["detail_url"] = reverse("scheduler:historical_case_detail", args=[case.case_id])
+    if _scheduler_can_view_reappearance_original(case):
+        context.update(build_scheduler_reappearances_context(case, detail_url=detail_url))
+    else:
+        context["reappearances"] = []
+        context["has_reappearance_pdfs"] = False
     return render(request, "scheduler/case_detail.html", context)
 
 
@@ -559,6 +608,8 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
     if bool(context["can_reopen"]):
         context["reopen_form"] = SchedulerReopenForm()
 
+    detail_url = reverse("scheduler:case_detail", args=[case.case_id])
+    context["detail_url"] = detail_url
     can_view_pdf = _scheduler_can_view_pdf(case)
     context["can_view_pdf"] = can_view_pdf
     if can_view_pdf:
@@ -567,7 +618,11 @@ def case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
         context["case"] = case
         documents: list[CaseDocument] = list(case.documents.all())
         context["pdf_items"] = _build_pdf_items(case, documents)
-        context["detail_url"] = reverse("scheduler:case_detail", args=[case.case_id])
+    if _scheduler_can_view_reappearance_original(case):
+        context.update(build_scheduler_reappearances_context(case, detail_url=detail_url))
+    else:
+        context["reappearances"] = []
+        context["has_reappearance_pdfs"] = False
     return render(request, "scheduler/case_detail.html", context)
 
 

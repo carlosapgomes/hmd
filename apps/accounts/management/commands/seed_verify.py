@@ -161,6 +161,15 @@ class Command(BaseCommand):
                 "primitiva/pipeline reais após o seed_prompts."
             ),
         )
+        parser.add_argument(
+            "--reapresentacao-s4",
+            action="store_true",
+            default=False,
+            help=(
+                "Semeia as fixtures de reapresentação no agendamento "
+                "(880401, 880402, 880403) pelos serviços reais."
+            ),
+        )
 
     def handle(self, *args: object, **options: object) -> None:
         _assert_verify_context()
@@ -170,6 +179,9 @@ class Command(BaseCommand):
             return
         if options.get("reapresentacao_s2"):
             self._seed_reappearance_s2()
+            return
+        if options.get("reapresentacao_s4"):
+            self._seed_reappearance_s4()
             return
         creator = User.objects.get(username="verify-nir")
         for record_number, patient_name, patient_age, days_on_screen in _VERIFY_CASES:
@@ -400,6 +412,343 @@ class Command(BaseCommand):
                 )
             self.stdout.write("  Created incoming 880101")
         self.stdout.write(self.style.SUCCESS("seed_verify --reapresentacao-s2 concluído"))
+
+    @staticmethod
+    def _make_pdf_bytes(lines: list[str]) -> bytes:
+        import pymupdf
+
+        document = pymupdf.open()  # type: ignore[no-untyped-call]
+        try:
+            document.new_page().insert_text((72, 72), "\n".join(lines))
+            return bytes(document.tobytes())  # type: ignore[no-untyped-call]
+        finally:
+            document.close()  # type: ignore[no-untyped-call]
+
+    @staticmethod
+    def _make_png_bytes() -> bytes:
+        import pymupdf
+
+        pix = pymupdf.Pixmap(pymupdf.csRGB, (0, 0, 64, 64), False)  # type: ignore[no-untyped-call]
+        pix.clear_with(210)  # type: ignore[no-untyped-call]
+        return bytes(pix.tobytes("png"))  # type: ignore[no-untyped-call]
+
+    def _seed_reappearance_s4(self) -> None:
+        """Fixtures S4 (880401, 880402, 880403) pelos serviços reais (setup, não prova).
+
+        - ``880401``: substituição médica (espera herdada 6 dias > created_at)
+          → aprovação médica → ``SCHEDULER_REQUESTED`` + 2 incomings distintos
+          ``scheduling_repeat`` aplicados (com PDF de relatório, anexo PDF e
+          anexo PNG válidos).
+        - ``880402``: aprovado → ``scheduling_repeat`` aplicado → confirmado
+          pelo agendador → ciência do NIR em retenção (``CLEANED`` retido).
+        - ``880403``: aprovado → ``scheduling_repeat`` aplicado → confirmado
+          pelo agendador → ciência do NIR → purgado via ``purge_closed_case_data``
+          (``CLEANED`` minimizado/purgado).
+        """
+        import json
+        from datetime import timedelta
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.test import override_settings
+        from django.utils import timezone
+
+        from apps.cases.closure import acknowledge_case_receipt, purge_closed_case_data
+        from apps.cases.models import (
+            CaseReappearance,
+            CaseStatus,
+            ReappearanceState,
+            ResolutionKind,
+        )
+        from apps.cases.procedures import record_doctor_procedure_decisions
+        from apps.cases.reappearance import resolve_scheduling_repeat
+        from apps.intake.services import create_case_with_documents
+        from apps.scheduler.services import confirm_case_scheduling
+
+        call_command("seed_prompts")
+        creator = User.objects.get(username="verify-nir")
+        doctor = User.objects.get(username="verify-doctor")
+        scheduler = User.objects.get(username="verify-scheduler")
+        declared = "angio_art_perif"
+
+        def _ensure_scheduling_repeat_applied(incoming: Case, canonical: Case) -> None:
+            incoming.refresh_from_db()
+            if incoming.status != CaseStatus.CLEANED:
+                resolve_scheduling_repeat(incoming.pk, user=creator, role="system")
+                incoming.refresh_from_db()
+            applied = CaseReappearance.objects.filter(
+                incoming_case=incoming,
+                canonical_case=canonical,
+                resolution_kind=ResolutionKind.SCHEDULING_REPEAT,
+                state=ReappearanceState.APPLIED,
+            ).exists()
+            if not applied:
+                raise CommandError(
+                    f"seed_verify --reapresentacao-s4: incoming {incoming.case_id} "
+                    f"não aplicou scheduling_repeat em {canonical.case_id} "
+                    f"(status={incoming.status}); setup abortado."
+                )
+
+        # ── 1) 880401: pendente de agendamento com espera herdada + 2 reapresentações ──
+        num_401 = "880401"
+        name_401 = "Paciente Agendamento Pendente"
+        existing_401 = list(
+            Case.objects.filter(agency_record_number=num_401).order_by("created_at")
+        )
+        canon_401 = next(
+            (c for c in existing_401 if c.status == CaseStatus.SCHEDULER_REQUESTED),
+            None,
+        )
+        if canon_401 is None:
+            if existing_401:
+                raise CommandError(
+                    f"seed_verify --reapresentacao-s4: {num_401} em estado incompatível."
+                )
+            orig_401 = create_case_with_documents(
+                user=creator,
+                role="nir",
+                file=SimpleUploadedFile(
+                    f"relatorio-{num_401}-original.pdf",
+                    self._make_pdf_bytes(_review_report_lines(num_401, name_401, 62, 3)),
+                    content_type="application/pdf",
+                ),
+                procedure_type=declared,
+            )
+            orig_401.refresh_from_db()
+            if orig_401.status != CaseStatus.AWAITING_DOCTOR:
+                raise CommandError(
+                    f"seed_verify --reapresentacao-s4: original {num_401} "
+                    f"não atingiu AWAITING_DOCTOR (status={orig_401.status})."
+                )
+            Case.objects.filter(pk=orig_401.pk).update(
+                created_at=timezone.now() - timedelta(days=6)
+            )
+            canon_401 = create_case_with_documents(
+                user=creator,
+                role="nir",
+                file=SimpleUploadedFile(
+                    f"relatorio-{num_401}-substituto.pdf",
+                    self._make_pdf_bytes(_review_report_lines(num_401, name_401, 62, 4)),
+                    content_type="application/pdf",
+                ),
+                procedure_type=declared,
+            )
+            canon_401.refresh_from_db()
+            if (
+                canon_401.status != CaseStatus.AWAITING_DOCTOR
+                or canon_401.reappearance_wait_started_at is None
+                or canon_401.reappearance_wait_started_at
+                >= canon_401.created_at - timedelta(days=4)
+            ):
+                raise CommandError(
+                    f"seed_verify --reapresentacao-s4: substituição médica {num_401} "
+                    f"não herdou espera (status={canon_401.status}, "
+                    f"wait={canon_401.reappearance_wait_started_at})."
+                )
+            record_doctor_procedure_decisions(
+                canon_401,
+                {declared: ("approved", "")},
+                user=doctor,
+                role="doctor",
+            )
+            canon_401.refresh_from_db()
+            if canon_401.status != CaseStatus.SCHEDULER_REQUESTED:
+                raise CommandError(
+                    f"seed_verify --reapresentacao-s4: {num_401} não atingiu "
+                    f"SCHEDULER_REQUESTED após aprovação (status={canon_401.status})."
+                )
+            inc_401_1 = create_case_with_documents(
+                user=creator,
+                role="nir",
+                file=SimpleUploadedFile(
+                    f"relatorio-{num_401}-reenvio-1.pdf",
+                    self._make_pdf_bytes(_review_report_lines(num_401, name_401, 62, 5)),
+                    content_type="application/pdf",
+                ),
+                procedure_type=declared,
+                attachments=[
+                    SimpleUploadedFile(
+                        f"anexo-{num_401}-1.pdf",
+                        self._make_pdf_bytes(
+                            [f"Anexo PDF {num_401}", "Documento complementar valido para PDF.js."]
+                        ),
+                        content_type="application/pdf",
+                    ),
+                    SimpleUploadedFile(
+                        f"imagem-{num_401}-1.png",
+                        self._make_png_bytes(),
+                        content_type="image/png",
+                    ),
+                ],
+            )
+            _ensure_scheduling_repeat_applied(inc_401_1, canon_401)
+            inc_401_2 = create_case_with_documents(
+                user=creator,
+                role="nir",
+                file=SimpleUploadedFile(
+                    f"relatorio-{num_401}-reenvio-2.pdf",
+                    self._make_pdf_bytes(_review_report_lines(num_401, name_401, 62, 6)),
+                    content_type="application/pdf",
+                ),
+                procedure_type=declared,
+            )
+            _ensure_scheduling_repeat_applied(inc_401_2, canon_401)
+            self.stdout.write(f"  Created S4 pending fixture {num_401} ({canon_401.case_id})")
+        else:
+            self.stdout.write(f"  Kept S4 pending fixture {num_401} ({canon_401.case_id})")
+
+        # ── 2) 880402: CLEANED retido histórico ──
+        num_402 = "880402"
+        name_402 = "Paciente Historico Retido"
+        existing_402 = list(
+            Case.objects.filter(agency_record_number=num_402).order_by("created_at")
+        )
+        canon_402 = next(
+            (
+                c
+                for c in existing_402
+                if c.status == CaseStatus.CLEANED
+                and c.scheduling_decided_at is not None
+                and c.clinical_data_disposed_at is None
+            ),
+            None,
+        )
+        if canon_402 is None:
+            if existing_402:
+                raise CommandError(
+                    f"seed_verify --reapresentacao-s4: {num_402} em estado incompatível."
+                )
+            canon_402 = create_case_with_documents(
+                user=creator,
+                role="nir",
+                file=SimpleUploadedFile(
+                    f"relatorio-{num_402}-original.pdf",
+                    self._make_pdf_bytes(_review_report_lines(num_402, name_402, 58, 2)),
+                    content_type="application/pdf",
+                ),
+                procedure_type=declared,
+            )
+            record_doctor_procedure_decisions(
+                canon_402,
+                {declared: ("approved", "")},
+                user=doctor,
+                role="doctor",
+            )
+            inc_402 = create_case_with_documents(
+                user=creator,
+                role="nir",
+                file=SimpleUploadedFile(
+                    f"relatorio-{num_402}-reenvio.pdf",
+                    self._make_pdf_bytes(_review_report_lines(num_402, name_402, 58, 3)),
+                    content_type="application/pdf",
+                ),
+                procedure_type=declared,
+            )
+            _ensure_scheduling_repeat_applied(inc_402, canon_402)
+            canon_402.refresh_from_db()
+            confirm_case_scheduling(
+                canon_402,
+                unit=1,
+                scheduled_datetime=timezone.now() + timedelta(days=2),
+                scheduled_location="Sala Hemodinamica 1",
+                user=scheduler,
+                role="scheduler",
+            )
+            canon_402.refresh_from_db()
+            with override_settings(CASE_CLOSURE_MINIMIZATION_ENABLED=False):
+                acknowledge_case_receipt(canon_402, user=creator, role="nir")
+            canon_402.refresh_from_db()
+            if (
+                canon_402.status != CaseStatus.CLEANED
+                or canon_402.clinical_data_disposed_at is not None
+            ):
+                raise CommandError(
+                    f"seed_verify --reapresentacao-s4: {num_402} não ficou CLEANED retido."
+                )
+            self.stdout.write(f"  Created S4 retained fixture {num_402} ({canon_402.case_id})")
+        else:
+            self.stdout.write(f"  Kept S4 retained fixture {num_402} ({canon_402.case_id})")
+
+        # ── 3) 880403: CLEANED minimizado/purgado histórico ──
+        num_403 = "880403"
+        name_403 = "Paciente Historico Purgado"
+        existing_403 = list(
+            Case.objects.filter(agency_record_number=num_403).order_by("created_at")
+        )
+        canon_403 = next(
+            (
+                c
+                for c in existing_403
+                if c.status == CaseStatus.CLEANED
+                and c.scheduling_decided_at is not None
+                and c.clinical_data_disposed_at is not None
+            ),
+            None,
+        )
+        if canon_403 is None:
+            if existing_403:
+                raise CommandError(
+                    f"seed_verify --reapresentacao-s4: {num_403} em estado incompatível."
+                )
+            canon_403 = create_case_with_documents(
+                user=creator,
+                role="nir",
+                file=SimpleUploadedFile(
+                    f"relatorio-{num_403}-original.pdf",
+                    self._make_pdf_bytes(_review_report_lines(num_403, name_403, 70, 4)),
+                    content_type="application/pdf",
+                ),
+                procedure_type=declared,
+            )
+            record_doctor_procedure_decisions(
+                canon_403,
+                {declared: ("approved", "")},
+                user=doctor,
+                role="doctor",
+            )
+            inc_403 = create_case_with_documents(
+                user=creator,
+                role="nir",
+                file=SimpleUploadedFile(
+                    f"relatorio-{num_403}-reenvio.pdf",
+                    self._make_pdf_bytes(_review_report_lines(num_403, name_403, 70, 5)),
+                    content_type="application/pdf",
+                ),
+                procedure_type=declared,
+            )
+            _ensure_scheduling_repeat_applied(inc_403, canon_403)
+            canon_403.refresh_from_db()
+            confirm_case_scheduling(
+                canon_403,
+                unit=1,
+                scheduled_datetime=timezone.now() + timedelta(days=3),
+                scheduled_location="Sala Hemodinamica 2",
+                user=scheduler,
+                role="scheduler",
+            )
+            canon_403.refresh_from_db()
+            acknowledge_case_receipt(canon_403, user=creator, role="nir")
+            canon_403.refresh_from_db()
+            if canon_403.clinical_data_disposed_at is None:
+                purge_closed_case_data(canon_403)
+                canon_403.refresh_from_db()
+            if (
+                canon_403.status != CaseStatus.CLEANED
+                or canon_403.clinical_data_disposed_at is None
+            ):
+                raise CommandError(
+                    f"seed_verify --reapresentacao-s4: {num_403} não ficou CLEANED purgado."
+                )
+            self.stdout.write(f"  Created S4 purged fixture {num_403} ({canon_403.case_id})")
+        else:
+            self.stdout.write(f"  Kept S4 purged fixture {num_403} ({canon_403.case_id})")
+
+        payload = {
+            "880401": str(canon_401.case_id),
+            "880402": str(canon_402.case_id),
+            "880403": str(canon_403.case_id),
+        }
+        self.stdout.write(f"S4_SEED_JSON {json.dumps(payload)}")
+        self.stdout.write(self.style.SUCCESS("seed_verify --reapresentacao-s4 concluído"))
 
     @staticmethod
     def _fixture_compatible(case: Case, declared: str) -> bool:

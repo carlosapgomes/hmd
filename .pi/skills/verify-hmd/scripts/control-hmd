@@ -414,11 +414,13 @@ case "$CMD" in
     # jornada default e todos os guards fail-closed; o S2 passa pelo mesmo
     # doctor + Chromium pinado + drive.mjs (sem invocação direta do driver
     # customizado, sem duplicar ownership). Uso: drive --run <dir> --journey s2.
-    DRIVE_S2=""
-    if [ "${4:-}" = "--journey" ] && [ "${5:-}" = "s2" ]; then
-      DRIVE_S2="1"
+    DRIVE_JOURNEY=""
+    if [ "${4:-}" = "--journey" ] && [ -n "${5:-}" ]; then
+      DRIVE_JOURNEY="${5}"
     elif [ "${4:-}" = "--s2" ] || [ "${4:-}" = "s2" ]; then
-      DRIVE_S2="1"
+      DRIVE_JOURNEY="s2"
+    elif [ "${4:-}" = "--s4" ] || [ "${4:-}" = "s4" ]; then
+      DRIVE_JOURNEY="s4"
     fi
     # Todo drive passa pelo doctor (sem bypass) e pelo Chromium pinado do
     # Playwright — nunca Chrome do sistema, nunca motor substituto: se o
@@ -432,11 +434,18 @@ case "$CMD" in
       echo "BLOCKED: download do Chromium pinado do Playwright falhou (ver artifacts/playwright-install.log) — nenhum motor substituto foi usado" >&2
       exit 2
     fi
-    if [ -n "$DRIVE_S2" ]; then
-      node "$PW_DIR/drive.mjs" --run "$run" --journey s2
+    if [ "$DRIVE_JOURNEY" = "s4" ] && [ -z "${DISPLAY:-}" ]; then
+      if command -v xvfb-run >/dev/null 2>&1; then
+        xvfb-run -a node "$PW_DIR/drive.mjs" --run "$run" --journey s4
+      else
+        echo "BLOCKED: s4 exige Xvfb (DISPLAY ou xvfb-run) para prova de rede de <embed type=application/pdf>" >&2
+        exit 2
+      fi
+    elif [ -n "$DRIVE_JOURNEY" ]; then
+      node "$PW_DIR/drive.mjs" --run "$run" --journey "$DRIVE_JOURNEY"
     else
       node "$PW_DIR/drive.mjs" --run "$run"
     fi
     ;;
-  *) echo "uso: control-hmd {launch|doctor --run <dir>|drive --run <dir> [--journey s2]|cleanup --run <dir>}" >&2; exit 2 ;;
+  *) echo "uso: control-hmd {launch|doctor --run <dir>|drive --run <dir> [--journey s2|s4]|cleanup --run <dir>}" >&2; exit 2 ;;
 esac

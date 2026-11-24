@@ -306,6 +306,23 @@
         intercorrência desabilitada; após a re-confirmação o ciclo pode se
         repetir.
       </li>
+      <li>
+        <strong>Reapresentações e espera herdada</strong>: quando o mesmo pedido
+        é reenviado enquanto aguarda agendamento, o card da aba <em>Pendentes</em>
+        exibe o contador de reapresentações aplicadas, a data do último
+        recebimento e o link direto para a seção <em>Reapresentações recebidas</em>
+        no detalhe (onde os relatórios e anexos recebidos ficam separados por
+        envio — eles <strong>não substituem</strong> o relatório aprovado pelo
+        médico, e o PDF original continua sob seu próprio gate de acesso). No
+        <em>Histórico do agendador</em>, casos <code>CLEANED</code> em retenção
+        mantêm a seção de documentos recebidos em leitura (quando minimizados ou
+        purgados, a seção informa a indisponibilidade sem links de arquivo). Se o
+        caso veio de substituição na fila médica, a <strong>espera herdada</strong>
+        é preservada no card e no desempate FIFO da aba <em>Pendentes</em>. A
+        reapresentação <strong>não suspende</strong> o agendamento nem cria
+        triagem ou pergunta clínica adicional — você pode confirmar ou negar
+        normalmente na mesma página de trabalho.
+      </li>
     </ul>
   </div>
   </section>

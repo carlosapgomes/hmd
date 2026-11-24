@@ -57,6 +57,13 @@ urlpatterns: list[URLPattern] = [
         views.procedure_review_confirm,
         name="procedure_review_confirm",
     ),
+    # Conferência NIR de reapresentação (reapresentacao-casos-filas, slice 005,
+    # D2): POST em escopo de equipe para responder same_request / independent.
+    path(
+        "cases/<uuid:case_id>/reappearance/respond/",
+        views.reappearance_respond,
+        name="reappearance_respond",
+    ),
     # Ações do gate NIR (slice 005, D6/D7): apenas caso retido do próprio criador.
     path(
         "cases/<uuid:case_id>/gate/release/",

@@ -18,11 +18,20 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from django.db.models.fields.files import FieldFile
+from django.urls import reverse
 from django.utils.timezone import localtime
 
 from apps.anonymization.reidentify import reidentify_text
 from apps.cases.event_trail import build_event_trail_context
-from apps.cases.models import Case, CaseStatus, DoctorDisposition, SchedulingUnit
+from apps.cases.models import (
+    Case,
+    CaseStatus,
+    DoctorDisposition,
+    ReappearanceState,
+    ResolutionKind,
+    SchedulingUnit,
+)
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.procedures import get_declared_procedure_types
 from apps.cases.units import unit_label
@@ -149,4 +158,118 @@ def build_scheduler_case_detail_context(case: Case) -> dict[str, object]:
             case.status == CaseStatus.FINAL_REPLY_POSTED
             and case.scheduled_unit == SchedulingUnit.UNIT_2
         ),
+    }
+
+
+def _file_exists(file_field: FieldFile | None) -> bool:
+    """Verifica existência física do arquivo sem lançar exceção de storage."""
+    if not file_field or not file_field.name:
+        return False
+    try:
+        return bool(file_field.storage.exists(file_field.name))
+    except OSError:
+        return False
+
+
+def build_scheduler_reappearances_context(case: Case, *, detail_url: str) -> dict[str, object]:
+    """Monta a seção read-only de reapresentações aplicadas ao canônico (D5/D8).
+
+    Não consulta ``CASE_REAPPEARANCE_ENABLED`` para que vínculos já aplicados
+    continuem visíveis mesmo com a flag desligada.
+    """
+    from apps.cases.models import CaseReappearance
+
+    links = list(
+        CaseReappearance.objects.filter(
+            canonical_case=case,
+            prior_case=case,
+            resolution_kind=ResolutionKind.SCHEDULING_REPEAT,
+            state=ReappearanceState.APPLIED,
+        )
+        .select_related("incoming_case", "incoming_case__created_by")
+        .prefetch_related("incoming_case__documents", "incoming_case__attachments")
+        .order_by("applied_at", "id")
+    )
+
+    items: list[dict[str, object]] = []
+    has_reappearance_pdfs = False
+
+    for link in links:
+        incoming = link.incoming_case
+        doc_items: list[dict[str, object]] = []
+        att_items: list[dict[str, object]] = []
+
+        if incoming.clinical_data_disposed_at is None:
+            docs = sorted(incoming.documents.all(), key=lambda doc: (doc.position, doc.pk))
+            for doc in docs:
+                if not _file_exists(doc.file):
+                    continue
+                doc_items.append(
+                    {
+                        "id": doc.pk,
+                        "position": doc.position,
+                        "filename": doc.original_filename,
+                        "size": doc.size_bytes,
+                        "serve_url": reverse(
+                            "scheduler:reappearance_document_serve",
+                            args=[case.case_id, link.id, doc.pk],
+                        ),
+                        "viewer_url": reverse(
+                            "scheduler:reappearance_document_viewer",
+                            args=[case.case_id, link.id, doc.pk],
+                        ),
+                    }
+                )
+
+            atts = sorted(incoming.attachments.all(), key=lambda att: (att.created_at, att.pk))
+            for att in atts:
+                if not _file_exists(att.file):
+                    continue
+                is_pdf = att.content_type == "application/pdf"
+                att_items.append(
+                    {
+                        "id": att.pk,
+                        "filename": att.original_filename,
+                        "size": att.size_bytes,
+                        "is_pdf": is_pdf,
+                        "content_type": att.content_type,
+                        "serve_url": reverse(
+                            "scheduler:reappearance_attachment_serve",
+                            args=[case.case_id, link.id, att.pk],
+                        ),
+                        "viewer_url": (
+                            reverse(
+                                "scheduler:reappearance_attachment_viewer",
+                                args=[case.case_id, link.id, att.pk],
+                            )
+                            if is_pdf
+                            else ""
+                        ),
+                    }
+                )
+
+        if doc_items or any(bool(att["is_pdf"]) for att in att_items):
+            has_reappearance_pdfs = True
+
+        submitter = incoming.created_by
+        items.append(
+            {
+                "id": str(link.id),
+                "received_at": link.applied_at or incoming.created_at,
+                "submitter_name": submitter.display_name if submitter is not None else "—",
+                "agency_record_number": incoming.agency_record_number or "—",
+                "incoming_reference": incoming.display_reference,
+                "files_unavailable": (
+                    incoming.clinical_data_disposed_at is not None
+                    or (not doc_items and not att_items)
+                ),
+                "documents": doc_items,
+                "attachments": att_items,
+            }
+        )
+
+    return {
+        "reappearances": items,
+        "has_reappearance_pdfs": has_reappearance_pdfs,
+        "detail_url": detail_url,
     }

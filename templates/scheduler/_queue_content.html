@@ -40,6 +40,20 @@ quando já definido no agendamento.
             <strong>Reaberto por intercorrência:</strong> {{ item.reopen_reason }}
           </div>
           {% endif %}
+          {% if item.reappearance_count > 0 %}
+          <div class="alert alert-info py-2 px-3 mt-2 mb-2 small d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <div>
+              <span class="badge rounded-pill text-bg-primary me-1">Reapresentação</span>
+              <strong>Caso reapresentado {{ item.reappearance_count }} {% if item.reappearance_count == 1 %}vez{% else %}vezes{% endif %} enquanto aguarda agendamento</strong>
+              {% if item.last_reappearance_at %}
+              <span class="text-muted ms-1">· Último recebimento: {{ item.last_reappearance_at|date:"d/m/Y H:i" }}</span>
+              {% endif %}
+            </div>
+            <a href="{{ card_url }}#reapresentacoes-recebidas" class="position-relative z-2 fw-semibold text-decoration-none">
+              Ver documentos recebidos →
+            </a>
+          </div>
+          {% endif %}
           <div class="summary-box mt-2">
             <div class="row">
               <div class="col-sm-12 mb-2">
@@ -66,7 +80,7 @@ quando já definido no agendamento.
           <span class="badge badge-wrap bg-warning text-dark mb-2">Dias em tela: {{ item.days_on_screen }}</span>
           {% endif %}
           <div class="waiting-time">
-            ⏱ Aguardando há {{ item.created_at|timesince }}
+            ⏱ Aguardando há {{ item.waiting_since|timesince }}
           </div>
           {% if item.lock.is_locked_by_current_user %}
           <a href="{{ card_url }}" class="btn btn-sm btn-success stretched-link mt-2">▶ Continuar</a>

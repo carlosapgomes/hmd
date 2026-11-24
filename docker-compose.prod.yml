@@ -96,6 +96,16 @@ services:
       # Disposição dos dados no encerramento (ADR-0010, política temporária):
       # false (default) = retenção total; true = minimização no encerramento.
       CASE_CLOSURE_MINIMIZATION_ENABLED: ${CASE_CLOSURE_MINIMIZATION_ENABLED:-false}
+      # Reapresentação de casos (slice 001, R5): identidade nova + janela
+      # única do prior-case (defaults false/15 — S1–S5 ainda não aceitos; só
+      # habilitar em prod com os cinco slices aceitos). Desligada, o lookup
+      # legado (7/15 + nome/nascimento) é preservado.
+      CASE_REAPPEARANCE_ENABLED: ${CASE_REAPPEARANCE_ENABLED:-false}
+      CASE_REAPPEARANCE_WINDOW_DAYS: ${CASE_REAPPEARANCE_WINDOW_DAYS:-15}
+      # Janelas legadas do prior-case (rollback): usadas SOMENTE com a flag
+      # acima desligada; nunca combinadas com a janela nova.
+      PRIOR_CASE_WINDOW_DAYS: ${PRIOR_CASE_WINDOW_DAYS:-7}
+      PRIOR_CASE_FALLBACK_WINDOW_DAYS: ${PRIOR_CASE_FALLBACK_WINDOW_DAYS:-15}
       # Limites do envio em lote (change intake-batch-semantics): 1 PDF = 1
       # caso; o total default de 100 MB é o limite prático do request body no
       # túnel Cloudflare do piloto (~100 MB no plano free). Sempre com
@@ -241,6 +251,9 @@ services:
       DJANGO_SECRET_KEY_FILE: /run/secrets/secret_key
       Q_CLUSTER_NAME: pdf
       INTAKE_ENABLED: "false"
+      # Reapresentação (slice 001, R5): flag + janela nova com passthrough.
+      CASE_REAPPEARANCE_ENABLED: ${CASE_REAPPEARANCE_ENABLED:-false}
+      CASE_REAPPEARANCE_WINDOW_DAYS: ${CASE_REAPPEARANCE_WINDOW_DAYS:-15}
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
       LLM_RUN_TASKS_INLINE: "false"
@@ -286,6 +299,9 @@ services:
       # nem é construído — a alavanca de reativação precisa do passthrough para
       # alcançar o container.
       ANONYMIZATION_USE_NER: ${ANONYMIZATION_USE_NER:-false}
+      # Reapresentação (slice 001, R5): flag + janela nova com passthrough.
+      CASE_REAPPEARANCE_ENABLED: ${CASE_REAPPEARANCE_ENABLED:-false}
+      CASE_REAPPEARANCE_WINDOW_DAYS: ${CASE_REAPPEARANCE_WINDOW_DAYS:-15}
       INTAKE_ENABLED: "false"
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
@@ -336,6 +352,13 @@ services:
       LLM2_MODEL: ${LLM2_MODEL:-}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-120}
+      # Reapresentação (slice 001, R5): flag + janela nova com passthrough.
+      CASE_REAPPEARANCE_ENABLED: ${CASE_REAPPEARANCE_ENABLED:-false}
+      CASE_REAPPEARANCE_WINDOW_DAYS: ${CASE_REAPPEARANCE_WINDOW_DAYS:-15}
+      # Janelas legadas do prior-case (rollback): usadas SOMENTE com a flag
+      # acima desligada; nunca combinadas com a janela nova.
+      PRIOR_CASE_WINDOW_DAYS: ${PRIOR_CASE_WINDOW_DAYS:-7}
+      PRIOR_CASE_FALLBACK_WINDOW_DAYS: ${PRIOR_CASE_FALLBACK_WINDOW_DAYS:-15}
       INTAKE_ENABLED: "false"
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"
@@ -387,6 +410,9 @@ services:
       # Camada NER/Presidio OPT-IN (default false): este worker também anonimiza
       # anexos — a alavanca de reativação precisa do passthrough aqui.
       ANONYMIZATION_USE_NER: ${ANONYMIZATION_USE_NER:-false}
+      # Reapresentação (slice 001, R5): flag + janela nova com passthrough.
+      CASE_REAPPEARANCE_ENABLED: ${CASE_REAPPEARANCE_ENABLED:-false}
+      CASE_REAPPEARANCE_WINDOW_DAYS: ${CASE_REAPPEARANCE_WINDOW_DAYS:-15}
       INTAKE_ENABLED: "false"
       INTAKE_RUN_TASKS_INLINE: "false"
       ANONYMIZATION_RUN_TASKS_INLINE: "false"

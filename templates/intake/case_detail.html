@@ -56,6 +56,167 @@
       </div>
     </div>
 
+    {% include "cases/_reappearance_recovery.html" %}
+
+    {% if reappearance_candidates or reappearance_error or reappearance_conflict %}
+    <section id="conferencia-reapresentacao" class="card shadow-sm mb-4 report-card border-warning" aria-labelledby="conferencia-reapresentacao-titulo">
+      <div class="card-header bg-warning-subtle d-flex flex-wrap align-items-center gap-2">
+        <h2 id="conferencia-reapresentacao-titulo" class="h5 mb-0">Conferência de reapresentação</h2>
+      </div>
+      <div class="card-body">
+        {% if reappearance_error %}
+        <div class="alert alert-danger" role="alert">{{ reappearance_error }}</div>
+        {% endif %}
+        {% if reappearance_conflict %}
+        <div class="alert alert-warning" role="alert">{{ reappearance_conflict }}</div>
+        {% endif %}
+        <p class="small text-muted mb-3">
+          Fechar ou sair desta página sem clicar não responde à conferência, não encerra nenhum caso e não bloqueia o processamento. Esta conferência não concede aprovação clínica e não substitui a revisão de divergência de procedimento.
+        </p>
+
+        {% for cand in reappearance_candidates %}
+        <div class="border rounded p-3 mb-3">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+            <h3 class="h6 mb-0">Possível reapresentação — Caso {{ cand.prior_reference }}</h3>
+            <span class="badge rounded-pill text-bg-secondary">{{ cand.reason_label }}</span>
+            {% if cand.conflict %}
+            <span class="badge rounded-pill text-bg-danger">Conflito de CNS</span>
+            {% endif %}
+            <a href="{{ cand.prior_detail_url }}" class="btn btn-sm btn-outline-secondary ms-auto">Ver caso anterior</a>
+          </div>
+
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <div class="border rounded p-2 h-100 bg-light-subtle">
+                <h4 class="h6 text-muted text-uppercase mb-2">Caso atual (novo)</h4>
+                <dl class="row small mb-2">
+                  <dt class="col-sm-5">Paciente</dt>
+                  <dd class="col-sm-7">{{ case.patient_name|default:"—" }}</dd>
+                  <dt class="col-sm-5">Idade</dt>
+                  <dd class="col-sm-7">{% if case.patient_age is not None %}{{ case.patient_age }} a{% else %}—{% endif %}</dd>
+                  <dt class="col-sm-5">CNS</dt>
+                  <dd class="col-sm-7">{{ case.patient_cns|default:"—" }}</dd>
+                  <dt class="col-sm-5">Nº de regulação</dt>
+                  <dd class="col-sm-7">{{ case.agency_record_number|default:"—" }}</dd>
+                  <dt class="col-sm-5">Unidade de origem</dt>
+                  <dd class="col-sm-7">{{ case.origin_unit|default:"—" }}</dd>
+                  <dt class="col-sm-5">Procedimento(s)</dt>
+                  <dd class="col-sm-7">{{ current_declared_labels|join:", "|default:"—" }}</dd>
+                  <dt class="col-sm-5">Recebimento</dt>
+                  <dd class="col-sm-7">{{ case.created_at|date:"d/m/Y H:i" }}</dd>
+                  <dt class="col-sm-5">Situação atual</dt>
+                  <dd class="col-sm-7">{{ status_label }}</dd>
+                </dl>
+                {% if pdf_items %}
+                <div class="mt-2">
+                  {% for item in pdf_items %}
+                  <div class="mb-2">
+                    <a href="{{ item.viewer_url }}?next={{ detail_url|urlencode }}"
+                       class="btn btn-sm btn-outline-primary d-inline-flex d-md-none align-items-center gap-1">
+                      Visualizar PDF atual
+                    </a>
+                    <button class="btn btn-sm btn-outline-primary d-none d-md-inline-flex align-items-center gap-1 collapsed" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#conf-curr-doc-{{ forloop.parentloop.counter }}-{{ item.position }}"
+                            aria-expanded="false" aria-controls="conf-curr-doc-{{ forloop.parentloop.counter }}-{{ item.position }}">
+                      PDF atual: {{ item.filename }}
+                    </button>
+                    <div class="collapse mt-2" id="conf-curr-doc-{{ forloop.parentloop.counter }}-{{ item.position }}" data-pdf-doc-collapse>
+                      <div class="mb-2 text-end">
+                        <a href="{{ item.serve_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Abrir em nova aba</a>
+                      </div>
+                      <div class="ratio ratio-1x1 d-none d-md-block" style="max-height: 60vh;">
+                        <embed class="pdf-lazy-embed" data-src="{{ item.serve_url }}" type="application/pdf" style="width: 100%; height: 100%;">
+                      </div>
+                    </div>
+                  </div>
+                  {% endfor %}
+                </div>
+                <noscript>
+                  {% for item in pdf_items %}
+                  <p class="small mb-1"><a href="{{ item.serve_url }}" target="_blank" rel="noopener">Abrir PDF atual {{ item.filename }}</a></p>
+                  {% endfor %}
+                </noscript>
+                {% else %}
+                <p class="small text-muted mb-0">PDF atual indisponível.</p>
+                {% endif %}
+              </div>
+            </div>
+
+            <div class="col-md-6">
+              <div class="border rounded p-2 h-100 bg-light-subtle">
+                <h4 class="h6 text-muted text-uppercase mb-2">Caso anterior (candidato)</h4>
+                <dl class="row small mb-2">
+                  <dt class="col-sm-5">Paciente</dt>
+                  <dd class="col-sm-7">{{ cand.patient_name|default:"—" }}</dd>
+                  <dt class="col-sm-5">Idade</dt>
+                  <dd class="col-sm-7">{% if cand.patient_age is not None %}{{ cand.patient_age }} a{% else %}—{% endif %}</dd>
+                  <dt class="col-sm-5">CNS</dt>
+                  <dd class="col-sm-7">{{ cand.patient_cns|default:"—" }}</dd>
+                  <dt class="col-sm-5">Nº de regulação</dt>
+                  <dd class="col-sm-7">{{ cand.agency_record_number|default:"—" }}</dd>
+                  <dt class="col-sm-5">Unidade de origem</dt>
+                  <dd class="col-sm-7">{{ cand.origin_unit|default:"—" }}</dd>
+                  <dt class="col-sm-5">Procedimento(s)</dt>
+                  <dd class="col-sm-7">{{ cand.procedure_labels|join:", "|default:"—" }}</dd>
+                  <dt class="col-sm-5">Recebimento</dt>
+                  <dd class="col-sm-7">{{ cand.created_at|date:"d/m/Y H:i" }}</dd>
+                  <dt class="col-sm-5">Situação atual</dt>
+                  <dd class="col-sm-7">
+                    {{ cand.status_label }}
+                    {% if cand.has_historical_decision %}
+                    <br><span class="text-muted">Decisão: {{ cand.prior_decision_label }}{% if cand.prior_decided_at %} em {{ cand.prior_decided_at|date:"d/m/Y H:i" }}{% endif %}</span>
+                    {% endif %}
+                  </dd>
+                </dl>
+                {% if cand.prior_pdf_items %}
+                <div class="mt-2">
+                  {% for item in cand.prior_pdf_items %}
+                  <div class="mb-2">
+                    <a href="{{ item.viewer_url }}?next={{ detail_url|urlencode }}"
+                       class="btn btn-sm btn-outline-primary d-inline-flex d-md-none align-items-center gap-1">
+                      Visualizar PDF anterior
+                    </a>
+                    <button class="btn btn-sm btn-outline-primary d-none d-md-inline-flex align-items-center gap-1 collapsed" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#conf-prior-doc-{{ forloop.parentloop.counter }}-{{ item.id }}"
+                            aria-expanded="false" aria-controls="conf-prior-doc-{{ forloop.parentloop.counter }}-{{ item.id }}">
+                      PDF anterior: {{ item.filename }}
+                    </button>
+                    <div class="collapse mt-2" id="conf-prior-doc-{{ forloop.parentloop.counter }}-{{ item.id }}" data-pdf-doc-collapse>
+                      <div class="mb-2 text-end">
+                        <a href="{{ item.serve_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Abrir em nova aba</a>
+                      </div>
+                      <div class="ratio ratio-1x1 d-none d-md-block" style="max-height: 60vh;">
+                        <embed class="pdf-lazy-embed" data-src="{{ item.serve_url }}" type="application/pdf" style="width: 100%; height: 100%;">
+                      </div>
+                    </div>
+                  </div>
+                  {% endfor %}
+                </div>
+                <noscript>
+                  {% for item in cand.prior_pdf_items %}
+                  <p class="small mb-1"><a href="{{ item.serve_url }}" target="_blank" rel="noopener">Abrir PDF anterior {{ item.filename }}</a></p>
+                  {% endfor %}
+                </noscript>
+                {% else %}
+                <p class="small text-muted mb-0">PDF anterior indisponível (removido por minimização ou purga).</p>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <form method="post" action="{% url 'intake:reappearance_respond' case.case_id %}" class="d-flex flex-wrap gap-2">
+            {% csrf_token %}
+            <input type="hidden" name="prior_case_id" value="{{ cand.prior_case_id }}">
+            <input type="hidden" name="revision_digest" value="{{ cand.revision_digest }}">
+            <button type="submit" name="decision" value="same_request" class="btn btn-primary btn-sm">É reapresentação do mesmo pedido</button>
+            <button type="submit" name="decision" value="independent" class="btn btn-outline-secondary btn-sm">É um pedido independente</button>
+          </form>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
     <div class="card shadow-sm mb-4 report-card">
       <div class="card-body">
         {% if case.manual_review_required %}

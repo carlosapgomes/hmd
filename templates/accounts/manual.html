@@ -139,6 +139,41 @@
         <code>FAILED</code>, sem nova tentativa automática.
       </li>
       <li>
+        <strong>Substituição por reapresentação e recuperação</strong>: quando
+        um reenvio do mesmo pedido substitui o caso anterior na fila médica, o
+        detalhe do caso novo mostra a espera herdada e, enquanto a substituição
+        aguarda a liberação da reserva do caso anterior, um aviso de
+        recuperação — <em>agendada</em> (com a data da próxima tentativa),
+        <em>falha ao agendar</em> (sem agenda; informe à equipe de suporte) ou
+        <em>esgotada</em> (limite técnico; depende do suporte). O aviso aparece
+        somente no detalhe do caso novo, nunca no substituído, e desaparece
+        quando a recuperação é agendada ou a substituição é aplicada — o
+        histórico permanece na trilha de eventos do caso novo. Não há botão
+        de repetição nem nova resposta a enviar: a recuperação é técnica e é
+        retomada pela equipe de suporte com o comando
+        <code>reenqueue_pending_reappearances &lt;id-do-vínculo&gt;</code>
+        (simulação, sem escrita) e <code>--apply</code> para agendar de fato;
+        a repetição com agenda válida é NO-OP e casos terminais/aplicados são
+        recusados sem reiniciar limites.
+      </li>
+      <li>
+        <strong>Conferência de reapresentação</strong>: quando um envio novo
+        apresenta candidatos por origem comum, divergência de idade, conflito
+        de CNS ou múltiplos candidatos na fila, o detalhe do caso exibe a
+        comparação lado a lado e o acesso aos PDFs de ambos os casos para
+        qualquer NIR da equipe. Existem estritamente duas respostas
+        (<em>É reapresentação do mesmo pedido</em> ou
+        <em>É um pedido independente</em>) — não há terceiro botão. Fechar ou sair da página
+        sem clicar não responde, não encerra casos e não bloqueia o
+        processamento. Marcar como independente suprime apenas aquele par e
+        revisão atual (alterar documento ou declaração reabre a conferência).
+        Confirmar o mesmo pedido aplica a regra de cada fluxo (substituição
+        médica apenas quando o novo caso está pronto; repetição de agendamento
+        mantém o original e arquiva o novo sem triagem clínica nem suspensão;
+        negativa histórica informa o card médico e distingue confirmação tardia
+        após a sumarização sem reanálise automática).
+      </li>
+      <li>
         <strong>Casos em Processamento</strong> (<em>Casos em Processamento</em>):
         a lista mostra os casos <em>ativos</em> (em andamento) de <strong>qualquer
         criador</strong> — tudo exceto <code>CLEANED</code> — com a contagem no
@@ -194,8 +229,15 @@
       </li>
       <li>
         <strong>Casos prévios (prior-case)</strong>: para cada procedimento com
-        caso prévio, um card mostra data, desfecho e o motivo real da decisão
-        anterior.
+        caso prévio — mesmo paciente (nome + nº de ocorrência ou CNS) com
+        decisão nos últimos 15 dias — um card mostra data, desfecho, origem do
+        vínculo e o motivo real da decisão anterior.
+      </li>
+      <li>
+        <strong>Espera herdada (reapresentação)</strong>: quando um reenvio do
+        mesmo pedido substitui o caso anterior na fila, o novo card exibe a
+        espera acumulada desde o pedido original (a criação e o tempo de tela
+        do relatório novo permanecem intactos).
       </li>
       <li>
         <strong>Cards de anexos com verificação de paciente</strong>: quando o
@@ -283,6 +325,23 @@
         NIR é comunicado. Casos confirmados na <strong>{{ unit_labels.unit_2 }}</strong> têm a
         intercorrência desabilitada; após a re-confirmação o ciclo pode se
         repetir.
+      </li>
+      <li>
+        <strong>Reapresentações e espera herdada</strong>: quando o mesmo pedido
+        é reenviado enquanto aguarda agendamento, o card da aba <em>Pendentes</em>
+        exibe o contador de reapresentações aplicadas, a data do último
+        recebimento e o link direto para a seção <em>Reapresentações recebidas</em>
+        no detalhe (onde os relatórios e anexos recebidos ficam separados por
+        envio — eles <strong>não substituem</strong> o relatório aprovado pelo
+        médico, e o PDF original continua sob seu próprio gate de acesso). No
+        <em>Histórico do agendador</em>, casos <code>CLEANED</code> em retenção
+        mantêm a seção de documentos recebidos em leitura (quando minimizados ou
+        purgados, a seção informa a indisponibilidade sem links de arquivo). Se o
+        caso veio de substituição na fila médica, a <strong>espera herdada</strong>
+        é preservada no card e no desempate FIFO da aba <em>Pendentes</em>. A
+        reapresentação <strong>não suspende</strong> o agendamento nem cria
+        triagem ou pergunta clínica adicional — você pode confirmar ou negar
+        normalmente na mesma página de trabalho.
       </li>
     </ul>
   </div>

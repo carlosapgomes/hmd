@@ -1,0 +1,26 @@
+<!-- Aviso atual de recuperação de reapresentação (slice 002 unidade D, R4.10):
+     somente no detalhe do incoming (NIR/gerencial), nunca no prior. Leitura
+     read-only: sem botão, sem ação GET mutante, sem terceira resposta NIR.
+     Distingue agenda real (scheduled) de falha sem agenda e de terminal. -->
+{% if reappearance_recovery %}
+{% if reappearance_recovery.kind == 'scheduled' %}
+<div class="alert alert-info" role="alert">
+  <strong>Recuperação de reapresentação agendada.</strong>
+  A substituição deste pedido aguarda a liberação da reserva do caso anterior;
+  a recuperação automática está agendada{% if reappearance_recovery.next_attempt_at %} para {{ reappearance_recovery.next_attempt_at|date:"d/m/Y H:i" }}{% endif %}.
+</div>
+{% elif reappearance_recovery.kind == 'schedule_failed' %}
+<div class="alert alert-warning" role="alert">
+  <strong>Falha ao agendar a recuperação de reapresentação.</strong>
+  A pendência segue sem agenda programada. Anote o número do caso e informe à
+  equipe de suporte — não é necessário reenviar o relatório.
+</div>
+{% else %}
+<div class="alert alert-danger" role="alert">
+  <strong>Recuperação de reapresentação esgotada.</strong>
+  A recuperação automática atingiu o limite técnico; a pendência permanece
+  auditada e depende de intervenção do suporte técnico. Anote o número do
+  caso e informe à equipe de suporte.
+</div>
+{% endif %}
+{% endif %}

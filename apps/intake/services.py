@@ -411,6 +411,7 @@ _RESUBMIT_CLEARED_FIELDS = (
     "patient_gender",
     "patient_race",
     "days_on_screen",
+    "patient_cns",
     "origin_unit",
     "transport_type",
     "manual_review_required",
@@ -803,6 +804,11 @@ def resubmit_case_documents(
             locked.patient_gender = ""
             locked.patient_race = ""
             locked.days_on_screen = None
+            # R1 (reapresentacao-casos-filas, slice 001): o CNS estrutural é
+            # zerado IMEDIATAMENTE, antes de reagendar — o documento
+            # substituído limpa a identidade antiga; o reprocessamento o
+            # sobrescreve (inclusive com vazio).
+            locked.patient_cns = ""
             locked.origin_unit = ""
             locked.transport_type = None
             locked.manual_review_required = False

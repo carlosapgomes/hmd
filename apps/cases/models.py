@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable, Iterable
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from django.conf import settings
@@ -80,6 +81,37 @@ class DoctorDisposition(models.TextChoices):
     PENDING = "pending", "Pendente"
     APPROVED = "approved", "Aprovado"
     DENIED = "denied", "Negado"
+
+
+class ReappearanceState(models.TextChoices):
+    """Estado do vínculo de reapresentação (change reapresentacao-casos-filas,
+    slice 002, D2).
+
+    ``pending`` representa resolução automática ou confirmada adiada por lease
+    (criada pela entrada de serviço/worker, nunca pelo GET); ``confirmed``
+    guarda decisão do NIR; ``independent`` suprime par/revisão; ``applied``
+    indica efeito/contexto efetivamente vinculado. Sem estados novos além
+    destes — S3/S5 reusam o mesmo conjunto.
+    """
+
+    PENDING = "pending", "Pendente"
+    CONFIRMED = "confirmed", "Confirmada"
+    INDEPENDENT = "independent", "Independente"
+    APPLIED = "applied", "Aplicada"
+
+
+class ResolutionKind(models.TextChoices):
+    """Natureza operacional do vínculo aplicado (slice 002, D2).
+
+    ``medical_replacement`` (S2: original substituído na fila médica) e
+    ``scheduling_repeat`` (S3: incoming arquivado no agendamento) são as duas
+    resoluções de FILA — UMA aplicada por incoming (unicidade parcial); o
+    ``prior_context`` histórico coexiste com qualquer uma, sem fechar caso.
+    """
+
+    MEDICAL_REPLACEMENT = "medical_replacement", "Substituição médica"
+    SCHEDULING_REPEAT = "scheduling_repeat", "Repetição no agendamento"
+    PRIOR_CONTEXT = "prior_context", "Contexto de caso anterior"
 
 
 class TransportType(models.TextChoices):
@@ -182,6 +214,14 @@ class Case(FSMModelMixin, models.Model):
     patient_gender = models.CharField(max_length=16, blank=True)
     patient_race = models.CharField(max_length=32, blank=True)
     days_on_screen = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    # CNS estrutural do paciente (change reapresentacao-casos-filas, slice
+    # 001, R1/D1): 15 dígitos validados do rótulo ``CNS:`` do cabeçalho SESAB
+    # (extração em ``deterministic.extract_patient_cns`` + persistência no
+    # wrapper de anonimização). Vazio (``""``) = identidade CNS ausente/
+    # inválida/ambígua; preservado pelo CLEANED (identificação, como
+    # ``agency_record_number``) e zerado no reenvio de documentos.
+    patient_cns = models.CharField(max_length=15, blank=True, default="", db_index=True)
 
     # Unidade de origem do cabeçalho SESAB (change painel-ats-parity, slice
     # 001, R2/D1): dado ADMINISTRATIVO/institucional (não é PHI demográfico),
@@ -307,6 +347,13 @@ class Case(FSMModelMixin, models.Model):
     # de reabertura lê APENAS esta coluna (nunca proxy de campos).
     clinical_data_disposed_at = models.DateTimeField(null=True, blank=True)
 
+    # Marco de espera herdada (change reapresentacao-casos-filas, slice 002,
+    # D2/D4): menor marco da cadeia de substituições médicas herdado pelo
+    # representante vigente. Nulo nos legados e nos casos sem substituição —
+    # o fallback é o ``created_at`` (propriedade ``effective_wait_started_at``).
+    # Nunca reescreve ``created_at`` nem ``days_on_screen``.
+    reappearance_wait_started_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
     # Reenvio corrigido (change nir-result-closure, design D4): um caso
     # encerrado (``CLEANED``) reenviado com correção gera um NOVO caso
     # (pipeline completo desde NEW) vinculado ao original por
@@ -356,6 +403,16 @@ class Case(FSMModelMixin, models.Model):
         """``nº · <8 chars>`` quando há nº (distingue reenvio corrigido do original)."""
         record = self.agency_record_number.strip()
         return f"{record} · {self.short_id}" if record else f"uid {self.short_id}"
+
+    @property
+    def effective_wait_started_at(self) -> datetime:
+        """Marco efetivo da espera na fila (slice 002, R3/D4).
+
+        Menor marco herdado da cadeia de substituições médicas ou o
+        ``created_at`` quando não há substituição (legados e casos comuns).
+        Fonte única da espera exibida nos cards e do desempate FIFO.
+        """
+        return self.reappearance_wait_started_at or self.created_at
 
     # ── Hooks FSM privados ─────────────────────────────────────────────────
     # Cada operação pública (tabela D4) tem um hook decorado com
@@ -526,6 +583,18 @@ class Case(FSMModelMixin, models.Model):
     @transition(field="status", source=CaseStatus.CLEANING, target=CaseStatus.CLEANED)
     def _fsm_complete_cleaning(self) -> None:
         """Hook FSM CLEANING → CLEANED."""
+
+    @transition(
+        field="status",
+        source=[
+            CaseStatus.AWAITING_DOCTOR,
+            CaseStatus.LLM_EXTRACTING,
+            CaseStatus.LLM_SUMMARIZING,
+        ],
+        target=CaseStatus.CLEANED,
+    )
+    def _fsm_close_as_reappearance(self) -> None:
+        """Hook FSM {AWAITING_DOCTOR, LLM_EXTRACTING, LLM_SUMMARIZING} → CLEANED."""
 
     @transition(
         field="status",
@@ -892,6 +961,19 @@ class Case(FSMModelMixin, models.Model):
                 },
             )
 
+    def close_as_reappearance(self, *, user: User | None = None, role: str | None = None) -> None:
+        """AWAITING_DOCTOR → CLEANED (substituição médica por reapresentação).
+
+        Operação FSM nomeada do slice 002 (D4): SÓ o original ainda aguardando
+        decisão médica é encerrado, e somente quando o representante já está
+        pronto. O serviço ``resolve_medical_replacement``
+        (``apps/cases/reappearance.py``) valida identidade/lease/autoridade,
+        cria o vínculo e roda a disposição ordinária no MESMO atomic — esta op
+        grava só a transição (``CASE_STATUS_CLEANED`` com o ``source`` real).
+        Source inválido → ``TransitionNotAllowed`` sem efeito (django-fsm).
+        """
+        self._run_transition(self._fsm_close_as_reappearance, user=user, role=role)
+
 
 def case_document_upload_path(instance: CaseDocument, filename: str) -> str:
     """Path de storage seguro do documento do relatório (R1/D1).
@@ -1117,3 +1199,93 @@ class CaseCommunicationMessage(models.Model):
         if self.message_type == MessageType.SYSTEM:
             return f"CaseCommunicationMessage {self.message_id} [system: {self.system_event_type}]"
         return f"CaseCommunicationMessage {self.message_id} [{self.author_role}]"
+
+
+# Resoluções de fila com unicidade parcial de UMA aplicada por incoming
+# (slice 002, D2): medical_replacement (S2) e scheduling_repeat (S3).
+_QUEUE_RESOLUTION_KINDS: list[str] = [
+    ResolutionKind.MEDICAL_REPLACEMENT.value,
+    ResolutionKind.SCHEDULING_REPEAT.value,
+]
+
+
+class CaseReappearance(models.Model):
+    """Vínculo de reapresentação do mesmo pedido (slice 002, D2).
+
+    Liga o caso ``incoming`` (novo envio) ao ``prior`` (caso anterior na fila)
+    sob um ``revision_digest`` versionado das fontes/documentos, declaração
+    efetiva e identidade dos dois casos. Confirmação/independência pertencem ao
+    par+revisão e valem para todos os seus kinds; a unicidade parcial garante
+    UMA resolução de FILA aplicada por incoming, enquanto o ``prior_context``
+    histórico coexiste sem fechar caso. ``incoming`` nunca é o próprio
+    ``prior`` (check) e ciclos são impedidos sob mutex + locks de grupo no
+    serviço. ``canonical_case`` aponta quem continua operacional (o novo na
+    substituição médica). Os campos de recuperação (``attempt_count``,
+    ``first_attempt_at``, ``next_attempt_at``, ``last_reason_code``)
+    sustentam o retry limitado do D6 — não são decisões NIR novas.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    incoming_case = models.ForeignKey(
+        Case, on_delete=models.PROTECT, related_name="reappearance_incoming_links"
+    )
+    prior_case = models.ForeignKey(
+        Case, on_delete=models.PROTECT, related_name="reappearance_prior_links"
+    )
+    canonical_case = models.ForeignKey(
+        Case,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="reappearance_canonical_links",
+    )
+    revision_digest = models.CharField(max_length=80)
+    evidence_code = models.CharField(max_length=24)
+    state = models.CharField(
+        max_length=16,
+        choices=ReappearanceState.choices,
+        default=ReappearanceState.PENDING,
+        db_index=True,
+    )
+    resolution_kind = models.CharField(max_length=24, choices=ResolutionKind.choices)
+    applied_at = models.DateTimeField(null=True, blank=True)
+    confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="reappearance_confirmations",
+    )
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    attempt_count = models.PositiveIntegerField(default=0)
+    first_attempt_at = models.DateTimeField(null=True, blank=True)
+    next_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_reason_code = models.CharField(max_length=40, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["incoming_case", "prior_case", "revision_digest", "resolution_kind"],
+                name="uniq_reappearance_pair_revision_kind",
+            ),
+            models.UniqueConstraint(
+                fields=["incoming_case"],
+                condition=models.Q(
+                    state=ReappearanceState.APPLIED,
+                    resolution_kind__in=_QUEUE_RESOLUTION_KINDS,
+                ),
+                name="uniq_reappearance_applied_queue_per_incoming",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(incoming_case=models.F("prior_case")),
+                name="reappearance_incoming_ne_prior",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"CaseReappearance {self.incoming_case_id}→{self.prior_case_id} "
+            f"[{self.resolution_kind}/{self.state}]"
+        )

@@ -59,6 +59,7 @@ from apps.cases.models import (
 from apps.cases.presentation import _PROFILE_BY_TYPE, _as_list, _as_str, build_structure_sections
 from apps.cases.procedure_catalog import PROCEDURE_PROFILES
 from apps.cases.procedure_review import build_doctor_confirmation_notice
+from apps.cases.reappearance import PRIOR_ORIGIN_LABELS
 from apps.pipeline.prior_case import lookup_prior_case_context
 
 # Ordem canônica do catálogo (mesma regra de ``apps/cases/procedures.py``) para
@@ -102,10 +103,11 @@ _PRIOR_DECISION_LABELS: dict[str, str] = {
     DoctorDisposition.APPROVED: "Aprovado",
     DoctorDisposition.DENIED: "Negado",
 }
-_PRIOR_ORIGIN_LABELS: dict[str, str] = {
-    "occurrence_number": "Nº de ocorrência",
-    "name_birthdate_fallback": "Nome e nascimento",
-}
+# Rótulos de origem do prior-case (S1, R4): fonte única compartilhada com o
+# pipeline (``apps.cases.reappearance.PRIOR_ORIGIN_LABELS``) — presenter e
+# evento usam os mesmos códigos/labels; ``name_birthdate_fallback`` permanece
+# para eventos históricos e o modo legado.
+_PRIOR_ORIGIN_LABELS: dict[str, str] = dict(PRIOR_ORIGIN_LABELS)
 
 # Severidades exibidas como requisito geral acionável (policy — informativo).
 _GENERAL_REQUIREMENT_SEVERITY = "informativo"
@@ -305,6 +307,7 @@ def _build_prior_cases(
                 "reason": _prior_real_reason(summary.prior_case_id, procedure_type),
                 "origin_label": _PRIOR_ORIGIN_LABELS.get(summary.origin, summary.origin),
                 "denial_count": summary.prior_denial_count,
+                "confirmed_after_summarization": summary.confirmed_after_summarization,
             }
         )
     return prior_cases

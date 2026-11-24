@@ -62,6 +62,7 @@ from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import F, QuerySet
+from django.db.models.functions import Coalesce
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -199,9 +200,10 @@ def _accessible_cases(
 ) -> QuerySet[Case]:
     """Casos da fila visíveis ao papel ativo (matriz D2) + filtro de subtipo.
 
-    A base de acesso replica exatamente ``access.allowed_types``: sem
-    restrição para admin/generalista; médico com subtipos S fica restrito aos
-    casos com ≥1 tipo declarado de subtipo em S (mesma regra do predicado).
+    Base de acesso replica exatamente ``access.allowed_types``; ordenação por
+    tempo de tela (``days_on_screen`` desc, nulls-last), desempate FIFO pelo
+    MARCO EFETIVO de espera (``reappearance_wait_started_at`` herdado ou
+    ``created_at`` — slice 002, R3) e ``created_at``/``case_id`` determinísticos.
     """
     cases = Case.objects.filter(status__in=statuses)
     allowed_types = access.allowed_types
@@ -216,7 +218,12 @@ def _accessible_cases(
             procedures__procedure_type__in=_TYPES_BY_SUBTYPE[subtype],
         ).distinct()
     return (
-        cases.order_by(F("days_on_screen").desc(nulls_last=True), "created_at", "case_id")
+        cases.order_by(
+            F("days_on_screen").desc(nulls_last=True),
+            Coalesce("reappearance_wait_started_at", "created_at"),
+            "created_at",
+            "case_id",
+        )
         .select_related("locked_by")
         .prefetch_related("procedures")
     )
@@ -354,6 +361,7 @@ def _queue_item(case: Case, *, user: User, include_decider: bool = False) -> dic
     decider = case.doctor_decided_by if include_decider else None
     return {
         "case_id": case.case_id,
+        "waiting_since": case.effective_wait_started_at,
         "decided_by_display": decider.display_name if decider is not None else "",
         "status_label": case.get_status_display(),
         "patient_name": case.patient_name or "—",

@@ -177,7 +177,8 @@ def anonymize_case_text(case: Case) -> AnonymizationCoreResult:
 
     Numa única transação grava em ``case``: ``anonymized_text``,
     ``pseudonym_map``, ``anonymization_report`` e o linkage determinístico —
-    ``patient_name``/``patient_birth_date`` SEMPRE sobrescritos pelo resultado
+    ``patient_name``/``patient_cns``/``patient_birth_date`` SEMPRE sobrescritos
+    pelo resultado
     do núcleo (em reprocessamento, sumiu do texto → vira vazio; ``None`` → campo
     vazio) e ``agency_record_number`` apenas quando o núcleo achou e o campo
     ainda está vazio (único campo preservado-se-vazio, contrato R4) — +
@@ -192,6 +193,7 @@ def anonymize_case_text(case: Case) -> AnonymizationCoreResult:
         case.pseudonym_map = result.pseudonym_map
         case.anonymization_report = result.anonymization_report
         case.patient_name = result.extraction.patient_name or ""
+        case.patient_cns = result.extraction.patient_cns or ""
         case.patient_birth_date = result.extraction.birth_date
         if result.extraction.record_number is not None and not case.agency_record_number:
             case.agency_record_number = result.extraction.record_number

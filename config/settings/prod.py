@@ -138,6 +138,18 @@ ATTACHMENTS_RUN_TASKS_INLINE = os.environ.get("ATTACHMENTS_RUN_TASKS_INLINE", "f
     "yes",
 )
 
+# Reapresentação de casos (change reapresentacao-casos-filas, slice 001, R5):
+# em produção o default é DESLIGADO — o lookup legado (7/15 + nome/nascimento)
+# é preservado e nenhum candidato novo é persistido/confirmado/resolvido.
+# Só liga com intenção explícita via env (S1–S5 aceitos). A janela única tem o
+# mesmo default do base (15 dias).
+CASE_REAPPEARANCE_ENABLED = os.environ.get("CASE_REAPPEARANCE_ENABLED", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+CASE_REAPPEARANCE_WINDOW_DAYS = int(os.environ.get("CASE_REAPPEARANCE_WINDOW_DAYS", "15"))
+
 # Segurança
 CSRF_COOKIE_SECURE = True
 SESSION_COOKIE_SECURE = True

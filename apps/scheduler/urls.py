@@ -39,6 +39,28 @@ urlpatterns: list[URLPattern] = [
         views.pdf_viewer,
         name="pdf_viewer",
     ),
+    # Documentos e anexos recebidos via reapresentação scheduling_repeat
+    # aplicada (slice 003, Unit 3C, D8 / R3.1–R3.4).
+    path(
+        "case/<uuid:case_id>/reappearances/<uuid:reappearance_id>/documents/<int:document_id>/",
+        views.reappearance_document_serve,
+        name="reappearance_document_serve",
+    ),
+    path(
+        "case/<uuid:case_id>/reappearances/<uuid:reappearance_id>/documents/<int:document_id>/viewer/",
+        views.reappearance_document_viewer,
+        name="reappearance_document_viewer",
+    ),
+    path(
+        "case/<uuid:case_id>/reappearances/<uuid:reappearance_id>/attachments/<int:attachment_id>/",
+        views.reappearance_attachment_serve,
+        name="reappearance_attachment_serve",
+    ),
+    path(
+        "case/<uuid:case_id>/reappearances/<uuid:reappearance_id>/attachments/<int:attachment_id>/viewer/",
+        views.reappearance_attachment_viewer,
+        name="reappearance_attachment_viewer",
+    ),
     path("case/<uuid:case_id>/confirm/", views.case_confirm, name="case_confirm"),
     path("case/<uuid:case_id>/deny/", views.case_deny, name="case_deny"),
     path("case/<uuid:case_id>/reopen/", views.case_reopen, name="case_reopen"),

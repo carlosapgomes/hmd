@@ -27,7 +27,7 @@ from typing import Any, cast
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -620,6 +620,9 @@ class TestBuildCaseDetailContext:
 
         assert context["case_reference"] == f"uid {str(case.case_id)[:8]}"
 
+    # Intenção legada: fallback por nome+nascimento (o modo novo não usa
+    # nascimento e este cenário vira sem-contexto até a confirmação NIR).
+    @override_settings(CASE_REAPPEARANCE_ENABLED=False)
     def test_prior_case_reference_falls_back_to_short_uid(
         self,
         user_factory: Callable[..., User],

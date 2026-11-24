@@ -513,6 +513,23 @@ _INVALIDATED_REASON_LABELS: dict[str, str] = {
 }
 
 
+_REAPPEARANCE_EVIDENCE_LABELS: dict[str, str] = {
+    "occurrence_number": "Nº de ocorrência",
+    "patient_cns": "CNS",
+    "nir_confirmed": "Confirmado pelo NIR",
+    "origin_unit": "Mesma unidade de origem",
+    "age_divergence": "Divergência de idade",
+    "cns_conflict": "Conflito de CNS",
+    "ambiguous_strong": "Múltiplos candidatos na fila",
+}
+
+_REAPPEARANCE_RESOLUTION_LABELS: dict[str, str] = {
+    "medical_replacement": "Substituição médica",
+    "scheduling_repeat": "Repetição no agendamento",
+    "prior_context": "Contexto de caso anterior",
+}
+
+
 def event_detail_lines(event: CaseEvent) -> list[str]:
     """Linhas legíveis da trilha do painel para os eventos da revisão (D8).
 
@@ -563,6 +580,42 @@ def event_detail_lines(event: CaseEvent) -> list[str]:
         return ["Caso sob o contrato de revisão de procedimento do NIR."]
     if event_type == CaseEventType.CASE_PROCEDURE_REPROCESSING_REQUESTED:
         return ["Reprocessamento do mesmo caso solicitado após confirmação."]
+    if event_type == CaseEventType.CASE_REAPPEARANCE_SCHEDULE_FAILED:
+        return [
+            "Falha ao agendar a recuperação automática; a pendência segue "
+            "sem agenda e depende de suporte técnico."
+        ]
+    if event_type == CaseEventType.CASE_REAPPEARANCE_RETRY_EXHAUSTED:
+        reason = payload.get("reason_code")
+        labels = {
+            "retry_exhausted": "limite de tentativas atingido",
+            "window_exceeded": "janela de 24 horas atingida",
+            "state_ineligible": "par/revisão deixou de ser elegível",
+        }
+        label = labels.get(str(reason), "limite técnico atingido")
+        return [
+            f"Recuperação automática esgotada ({label}); a pendência "
+            "permanece auditada e depende de suporte técnico."
+        ]
+    if event_type == CaseEventType.CASE_REAPPEARANCE_REENQUEUED:
+        return ["Recuperação técnica reenfileirada; nova tentativa agendada."]
+    if event_type == CaseEventType.CASE_REAPPEARANCE_CONFIRMED:
+        lines_conf: list[str] = ["Vínculo de reapresentação confirmado pelo NIR."]
+        evidence_code = payload.get("evidence_code")
+        if isinstance(evidence_code, str) and evidence_code in _REAPPEARANCE_EVIDENCE_LABELS:
+            lines_conf.append(f"Critério: {_REAPPEARANCE_EVIDENCE_LABELS[evidence_code]}.")
+        resolution_kind = payload.get("resolution_kind")
+        if isinstance(resolution_kind, str) and resolution_kind in _REAPPEARANCE_RESOLUTION_LABELS:
+            lines_conf.append(f"Resolução: {_REAPPEARANCE_RESOLUTION_LABELS[resolution_kind]}.")
+        return lines_conf
+    if event_type == CaseEventType.CASE_REAPPEARANCE_INDEPENDENT:
+        lines_indep: list[str] = ["Par marcado como independente para esta revisão."]
+        evidence_code = payload.get("evidence_code")
+        if isinstance(evidence_code, str) and evidence_code in _REAPPEARANCE_EVIDENCE_LABELS:
+            lines_indep.append(
+                f"Critério avaliado: {_REAPPEARANCE_EVIDENCE_LABELS[evidence_code]}."
+            )
+        return lines_indep
     if event_type == CaseEventType.CASE_PROCEDURE_REPROCESS_ENQUEUE_FAILED:
         scheduled = payload.get("recovery_scheduled") is True
         if scheduled:

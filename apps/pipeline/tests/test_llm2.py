@@ -463,6 +463,8 @@ def test_payload_rejects_real_values_from_case_map(owner_user: User) -> None:
 
 
 @pytest.mark.django_db
+# Intenção legada: match por nº sem nome normalizado (o modo novo exige nome).
+@override_settings(CASE_REAPPEARANCE_ENABLED=False)
 def test_payload_rejects_real_values_from_prior_case_map(
     owner_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:

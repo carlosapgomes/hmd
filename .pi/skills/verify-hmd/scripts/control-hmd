@@ -205,6 +205,16 @@ EOF
   export HMD_VERIFY_MEDIA_ROOT="$media_root"
   py="$ROOT/.venv/bin/python"
   [ -x "$py" ] || py="uv run python"
+  # Fail-closed: checkout .venv sem Django nunca serve como prova — usa o
+  # interpretador documentado via path direto (preserva posse do socket pelo
+  # PID do runserver; `uv run` forka e quebraria o doctor) sem modificar .venv.
+  if ! "$py" -c "import django" >/dev/null 2>&1; then
+    if [ -n "${UV_PROJECT_ENVIRONMENT:-}" ] && [ -x "$UV_PROJECT_ENVIRONMENT/bin/python" ]; then
+      py="$UV_PROJECT_ENVIRONMENT/bin/python"
+    else
+      py="uv run --no-sync python"
+    fi
+  fi
   # Estáticos reais para o WhiteNoise servir com DEBUG=False (mesmos assets
   # do app); sem collectstatic, /static/* daria 404 no drive.
   # shellcheck disable=SC2086
@@ -400,6 +410,20 @@ case "$CMD" in
   cleanup) run="$(require_run "${2:-}" "${3:-}")" || exit 2; cleanup_run "$run" ;;
   drive)
     run="$(require_run "${2:-}" "${3:-}")" || exit 2
+    # Jornada S2 (slice 002) roteada pelo entrypoint oficial: preserva a
+    # jornada default e todos os guards fail-closed; o S2 passa pelo mesmo
+    # doctor + Chromium pinado + drive.mjs (sem invocação direta do driver
+    # customizado, sem duplicar ownership). Uso: drive --run <dir> --journey s2.
+    DRIVE_JOURNEY=""
+    if [ "${4:-}" = "--journey" ] && [ -n "${5:-}" ]; then
+      DRIVE_JOURNEY="${5}"
+    elif [ "${4:-}" = "--s2" ] || [ "${4:-}" = "s2" ]; then
+      DRIVE_JOURNEY="s2"
+    elif [ "${4:-}" = "--s4" ] || [ "${4:-}" = "s4" ]; then
+      DRIVE_JOURNEY="s4"
+    elif [ "${4:-}" = "--s5" ] || [ "${4:-}" = "s5" ]; then
+      DRIVE_JOURNEY="s5"
+    fi
     # Todo drive passa pelo doctor (sem bypass) e pelo Chromium pinado do
     # Playwright — nunca Chrome do sistema, nunca motor substituto: se o
     # download falhar, BLOCKED com a evidência em artifacts/, exit 2.
@@ -412,7 +436,18 @@ case "$CMD" in
       echo "BLOCKED: download do Chromium pinado do Playwright falhou (ver artifacts/playwright-install.log) — nenhum motor substituto foi usado" >&2
       exit 2
     fi
-    node "$PW_DIR/drive.mjs" --run "$run"
+    if { [ "$DRIVE_JOURNEY" = "s4" ] || [ "$DRIVE_JOURNEY" = "s5" ]; } && [ -z "${DISPLAY:-}" ]; then
+      if command -v xvfb-run >/dev/null 2>&1; then
+        xvfb-run -a node "$PW_DIR/drive.mjs" --run "$run" --journey "$DRIVE_JOURNEY"
+      else
+        echo "BLOCKED: $DRIVE_JOURNEY exige Xvfb (DISPLAY ou xvfb-run) para prova de rede de <embed type=application/pdf>" >&2
+        exit 2
+      fi
+    elif [ -n "$DRIVE_JOURNEY" ]; then
+      node "$PW_DIR/drive.mjs" --run "$run" --journey "$DRIVE_JOURNEY"
+    else
+      node "$PW_DIR/drive.mjs" --run "$run"
+    fi
     ;;
-  *) echo "uso: control-hmd {launch|doctor --run <dir>|drive --run <dir>|cleanup --run <dir>}" >&2; exit 2 ;;
+  *) echo "uso: control-hmd {launch|doctor --run <dir>|drive --run <dir> [--journey s2|s4|s5]|cleanup --run <dir>}" >&2; exit 2 ;;
 esac

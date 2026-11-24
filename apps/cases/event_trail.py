@@ -85,6 +85,16 @@ EVENT_LABELS: dict[str, str] = {
     # Reenvio corrigido.
     CaseEventType.CASE_MARKED_SUPERSEDED: "Caso substituído por reenvio corrigido",
     CaseEventType.CASE_CORRECTION_CREATED: "Reenvio corrigido criado",
+    # Substituição médica por reapresentação (slice 002, D2/D6).
+    CaseEventType.CASE_REAPPEARANCE_APPLIED: "Reapresentação aplicada",
+    CaseEventType.CASE_REAPPEARANCE_SUPERSEDED: ("Caso substituído por reapresentação"),
+    CaseEventType.CASE_REAPPEARANCE_RETRY_EXHAUSTED: ("Recuperação de reapresentação esgotada"),
+    CaseEventType.CASE_REAPPEARANCE_SCHEDULE_FAILED: (
+        "Falha ao agendar recuperação de reapresentação"
+    ),
+    CaseEventType.CASE_REAPPEARANCE_REENQUEUED: ("Recuperação de reapresentação reenfileirada"),
+    CaseEventType.CASE_REAPPEARANCE_CONFIRMED: "Reapresentação confirmada pelo NIR",
+    CaseEventType.CASE_REAPPEARANCE_INDEPENDENT: "Pedido marcado como independente pelo NIR",
     # Anexos clínicos.
     CaseEventType.CASE_ATTACHMENT_EXTERNAL_OCR_DISPATCHED: "Anexo enviado a OCR externo",
     CaseEventType.CASE_ATTACHMENT_PROCESSED: "Anexo processado e verificado",
@@ -145,6 +155,15 @@ EVENT_BADGE_CSS: dict[str, str] = {
     CaseEventType.PRIOR_CASE_LOOKUP: BADGE_SYSTEM,
     CaseEventType.CASE_MARKED_SUPERSEDED: BADGE_NIR,
     CaseEventType.CASE_CORRECTION_CREATED: BADGE_NIR,
+    # Substituição médica por reapresentação (slice 002, D2/D6): vínculo
+    # aplicado/superado são operações de sistema; o esgotamento é falha.
+    CaseEventType.CASE_REAPPEARANCE_APPLIED: BADGE_SYSTEM,
+    CaseEventType.CASE_REAPPEARANCE_SUPERSEDED: BADGE_SYSTEM,
+    CaseEventType.CASE_REAPPEARANCE_RETRY_EXHAUSTED: BADGE_FAILURE,
+    CaseEventType.CASE_REAPPEARANCE_SCHEDULE_FAILED: BADGE_FAILURE,
+    CaseEventType.CASE_REAPPEARANCE_REENQUEUED: BADGE_SYSTEM,
+    CaseEventType.CASE_REAPPEARANCE_CONFIRMED: BADGE_NIR,
+    CaseEventType.CASE_REAPPEARANCE_INDEPENDENT: BADGE_NIR,
     CaseEventType.CASE_ATTACHMENT_EXTERNAL_OCR_DISPATCHED: BADGE_SYSTEM,
     CaseEventType.CASE_ATTACHMENT_PROCESSED: BADGE_SYSTEM,
     CaseEventType.CASE_ATTACHMENT_FAILED: BADGE_FAILURE,

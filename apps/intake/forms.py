@@ -331,3 +331,22 @@ class ProcedureReviewForm(forms.Form):
         if "\x00" in text:
             raise forms.ValidationError("Justificativa contém caractere inválido.")
         return text
+
+
+class ReappearanceConferenceForm(forms.Form):
+    """Resposta do NIR na conferência de reapresentação (slice 005, D2/R1/R4).
+
+    Apenas duas decisões possíveis (``same_request`` ou ``independent``); sem
+    terceira opção. A cardinalidade de campo repetido é validada na view via
+    ``request.POST.getlist``.
+    """
+
+    prior_case_id = forms.UUIDField(widget=forms.HiddenInput)
+    revision_digest = forms.CharField(max_length=80, widget=forms.HiddenInput)
+    decision = forms.ChoiceField(
+        choices=(
+            ("same_request", "É reapresentação do mesmo pedido"),
+            ("independent", "É um pedido independente"),
+        ),
+        required=True,
+    )

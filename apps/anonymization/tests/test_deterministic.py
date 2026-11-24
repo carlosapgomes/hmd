@@ -371,6 +371,8 @@ def test_full_extraction_real_layout_composition() -> None:
     assert result.birth_date is None  # o relatório SESAB real não traz nascimento
     assert result.record_number == "5040778"
     assert result.cns_candidates == ("547762666886141",)
+    # S1/R1: o CNS do rótulo do cabeçalho real é identidade estrutural válida.
+    assert result.patient_cns == "547762666886141"
 
 
 def test_patient_name_anchor_real_corpus_variant_without_colons() -> None:

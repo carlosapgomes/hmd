@@ -95,6 +95,31 @@ _SOCIAL_NAME_FIELD_PATTERN = re.compile(
 # escrito dígito a dígito não vaza como CPF nem uma sequência de 16 vira CNS.
 _DIGIT_RUN_PATTERN = re.compile(r"[0-9](?:[0-9 .\-]*[0-9])?")
 
+# CNS estrutural do paciente (slice 001 da change reapresentacao-casos-filas,
+# R1/D1 revision002): gramatica textual FECHADA — somente o slot imediato
+# ``Central Estadual de Regulacao`` -> ``CNS:`` -> ``Dias em tela:`` dentro do
+# candidato titulo -> Nome Social. Linha ``CNS:`` com whitespace horizontal
+# opcional antes/depois dos dois-pontos; valor na MESMA linha (nunca a
+# seguinte). D1 normalizado por acentos/caixa/whitespace; sem janelas de
+# distancia, numeros de linha fixos ou salto sobre outros conteudos.
+_PATIENT_CNS_LINE_PATTERN = re.compile(
+    r"^\s*CNS[ \t]*:[ \t]*(?P<value>.*?)\s*$", flags=re.IGNORECASE
+)
+_DIAS_EM_TELA_LINE_PATTERN = re.compile(r"^\s*Dias\s+em\s+tela\s*:", flags=re.IGNORECASE)
+_TITLE_FOLDED = "relatorio de ocorrencias"
+_SIGNATURE_FOLDED = "central estadual de regulacao"
+
+# Seccoes clinicas/narrativas (limites de rejeicao do candidato D1): se
+# aparecem entre o titulo e o Nome Social, o candidato e ignorado — nunca
+# se procura outro Nome Social alem da narrativa. Catalogo ja existente.
+_NARRATIVE_SECTION_LABELS: frozenset[str] = frozenset(
+    {"resumo clinico", "motivo da solicitacao", "complemento da solicitacao"}
+)
+# Gramatica do valor (fix-1 P1-01, mantida): SOMENTE digitos e separadores
+# usuais (espaco/tab/ponto/hifen) — letras ou outros simbolos colados aos
+# digitos invalidam a identidade em vez de serem silenciosamente removidos.
+_CNS_VALUE_ALLOWED_PATTERN = re.compile(r"[0-9 \t.\-]*")
+
 
 @dataclass(frozen=True)
 class DeterministicExtraction:
@@ -112,6 +137,10 @@ class DeterministicExtraction:
     # Nome social do cabeçalho, quando preenchido e válido (R2/D2): candidato
     # PESSOA PRÓPRIO na anonimização — nunca alimenta o linkage do caso.
     social_name: str | None = None
+    # CNS estrutural do paciente (reapresentacao-casos-filas, slice 001,
+    # R1/D1): somente dígitos validados do rótulo ``CNS:`` do cabeçalho;
+    # ausente/inválido/ambíguo → ``None`` (identidade vazia, sem inferência).
+    patient_cns: str | None = None
 
 
 def extract_record_number(text: str) -> str | None:
@@ -209,6 +238,75 @@ def extract_cns_candidates(text: str) -> tuple[str, ...]:
     return _digit_runs_with_count(text, 15)
 
 
+def extract_patient_cns(text: str) -> str | None:
+    """CNS estrutural do paciente no slot do bloco textual D1 (R1/revision002).
+
+    Gramatica FECHADA (substitui proximidade/reinicio por demografia):
+    somente a linha de titulo inteiro ``RELATORIO DE OCORRENCIAS``
+    (normalizada por acentos/caixa/whitespace) abre candidato; comeco do
+    documento, demografia ou rotulos isolados NUNCA abrem/reabrem. O candidato
+    termina no PRIMEIRO ``Nome Social:``, proximo titulo, inicio de secao
+    clinica ou EOF — soh eh valido se o termino for Nome Social (valor na
+    mesma linha ou rotulo sozinho). Dentro dele, exigir rotulos distintos
+    ``Paciente:`` e ``Codigo:`` ANTES da assinatura ``Central Estadual de
+    Regulacao`` (linha inteira normalizada); depois dela, a proxima linha
+    nao vazia deve ser ``CNS:`` (valor opcional na MESMA linha) e a seguinte
+    ``Dias em tela:`` — sem conteudo interveniente, sem buscar valor na
+    linha seguinte, sem janela de distancia. CNS fora desse slot nao
+    participa; mais de um slot no mesmo candidato = ambiguidade.
+
+    A pertinencia do bloco/slot eh validada ANTES de formato/checksum/taint:
+    narrativa (mesmo invalida) nunca contamina; somente valor nao vazio
+    invalido em slot estrutural valido invalida a identidade. Blocos validos
+    repetidos deduplicam o mesmo CNS; valores validos distintos deixam a
+    identidade vazia. Bloco sem estrutura reconhecida eh ignorado; sem bloco
+    elegivel, retorna ``None`` sem bloquear o caso.
+    """
+    # Import tardio: o validador vive em ``recognizers`` (que importa o
+    # Presidio); o reuso aqui nao cria dependencia de import do modulo puro.
+    from apps.anonymization.recognizers import valid_cns
+
+    lines = text.splitlines()
+    title_indexes = [i for i, line in enumerate(lines) if _is_title_line(line)]
+    if not title_indexes:
+        return None
+    seen: set[str] = set()
+    found_structural = False
+    for order, title_idx in enumerate(title_indexes):
+        endpoint_idx, endpoint_kind = _candidate_endpoint(lines, title_idx)
+        if endpoint_kind != "nome_social":
+            # Falta titulo/assinatura/termino, secao clinica ou proximo titulo
+            # antes do Nome Social: formato parcial, candidato ignorado.
+            continue
+        slots = _structural_slots(lines, title_idx, endpoint_idx)
+        if not slots:
+            continue
+        if len(slots) > 1:
+            # Mais de um slot estrutural no mesmo candidato: ambiguidade.
+            return None
+        signature_idx, cns_idx, _dias_idx = slots[0]
+        if not _has_patient_code_before(lines, title_idx, signature_idx):
+            continue
+        found_structural = True
+        match = _PATIENT_CNS_LINE_PATTERN.match(lines[cns_idx])
+        # ``_structural_slots`` soh coleta linhas que casam o padrao.
+        assert match is not None
+        raw_value = match.group("value").strip()
+        if not raw_value:
+            # Rotulo vazio legitimo: nao busca a linha seguinte.
+            continue
+        if _CNS_VALUE_ALLOWED_PATTERN.fullmatch(raw_value) is None:
+            return None
+        digits = re.sub(r"[^0-9]", "", raw_value)
+        if not digits or not valid_cns(digits):
+            return None
+        seen.add(digits)
+        _ = order
+    if not found_structural or len(seen) != 1:
+        return None
+    return next(iter(seen))
+
+
 def run_deterministic_extraction(text: str) -> DeterministicExtraction:
     """Compõe todos os extratores sobre o texto extraído (R6). Função pura."""
     patient_name = extract_patient_name(text)
@@ -219,6 +317,7 @@ def run_deterministic_extraction(text: str) -> DeterministicExtraction:
         cpf_candidates=extract_cpf_candidates(text),
         cns_candidates=extract_cns_candidates(text),
         social_name=extract_social_name(text, patient_name=patient_name),
+        patient_cns=extract_patient_cns(text),
     )
 
 
@@ -300,6 +399,99 @@ def _capture_field_value(lines: list[str], label_index: int, value_start: int) -
 def _starts_field(line: str) -> bool:
     """A linha inicia um novo campo (rótulo canônico do relatório SESAB)."""
     return _FIELD_BREAK_PATTERN.match(_fold(line)) is not None
+
+
+def _sesab_field_label(line: str) -> str | None:
+    """Rótulo canônico do campo SESAB que inicia a linha, se houver (fix-1 P1-01)."""
+    folded = _fold(line)
+    for label in SESAB_FIELD_LABELS:
+        if not folded.startswith(label):
+            continue
+        rest = folded[len(label) :].lstrip()
+        if rest == "" or rest.startswith(":"):
+            return label
+    return None
+
+
+def _is_title_line(line: str) -> bool:
+    """Linha de titulo inteiro D1 (normalizada por acentos/caixa/whitespace)."""
+    return _fold(line) == _TITLE_FOLDED
+
+
+def _is_nome_social_line(line: str) -> bool:
+    """Rotulo ``Nome Social:`` sozinho ou com valor na mesma linha."""
+    return _sesab_field_label(line) == "nome social"
+
+
+def _is_clinical_section_line(line: str) -> bool:
+    """Inicio de secao clinica: limite de rejeicao, nunca reabertura."""
+    return _sesab_field_label(line) in _NARRATIVE_SECTION_LABELS
+
+
+def _is_signature_line(line: str) -> bool:
+    """Assinatura institucional D1: linha inteira normalizada."""
+    return _fold(line) == _SIGNATURE_FOLDED
+
+
+def _is_dias_line(line: str) -> bool:
+    """Rotulo ``Dias em tela:`` com ou sem valor, case-insensitive."""
+    return _DIAS_EM_TELA_LINE_PATTERN.match(line) is not None
+
+
+def _candidate_endpoint(lines: Sequence[str], title_idx: int) -> tuple[int, str]:
+    """Primeiro terminador apos o titulo: nome_social/title/clinical/eof."""
+    for idx in range(title_idx + 1, len(lines)):
+        line = lines[idx]
+        if _is_nome_social_line(line):
+            return idx, "nome_social"
+        if _is_title_line(line):
+            return idx, "title"
+        if _is_clinical_section_line(line):
+            return idx, "clinical"
+    return len(lines), "eof"
+
+
+def _next_nonblank(lines: Sequence[str], start: int, end: int) -> int | None:
+    """Proxima linha nao vazia em ``[start, end)`` ou ``None``."""
+    for idx in range(start, end):
+        if lines[idx].strip():
+            return idx
+    return None
+
+
+def _structural_slots(
+    lines: Sequence[str], title_idx: int, endpoint_idx: int
+) -> list[tuple[int, int, int]]:
+    """Slots imediatos assinatura -> CNS -> Dias dentro do candidato."""
+    slots: list[tuple[int, int, int]] = []
+    for sig_idx in range(title_idx + 1, endpoint_idx):
+        if not _is_signature_line(lines[sig_idx]):
+            continue
+        cns_idx = _next_nonblank(lines, sig_idx + 1, endpoint_idx)
+        if cns_idx is None:
+            continue
+        if _PATIENT_CNS_LINE_PATTERN.match(lines[cns_idx]) is None:
+            continue
+        dias_idx = _next_nonblank(lines, cns_idx + 1, endpoint_idx)
+        if dias_idx is None or not _is_dias_line(lines[dias_idx]):
+            continue
+        slots.append((sig_idx, cns_idx, dias_idx))
+    return slots
+
+
+def _has_patient_code_before(lines: Sequence[str], title_idx: int, signature_idx: int) -> bool:
+    """Rotulos distintos ``Paciente:`` e ``Codigo:`` antes da assinatura."""
+    has_patient = False
+    has_code = False
+    for idx in range(title_idx + 1, signature_idx):
+        label = _sesab_field_label(lines[idx])
+        if label == "paciente":
+            has_patient = True
+        elif label == "codigo":
+            has_code = True
+        if has_patient and has_code:
+            return True
+    return False
 
 
 def _fold(text: str) -> str:

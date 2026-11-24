@@ -58,3 +58,7 @@ credencial AD é assistencial única; admin = identidade local permanente.
   autenticação local é idêntico em dev/prod; falhas de perfil AD na rota do
   admin não contaminam os contadores locais (indisponibilidade do AD não
   conta — emenda preservada do change 02).
+- **Troca de senha fora do aplicativo** (ADR-0011): o admin local perde o
+  autoatendimento de senha; a rotação é feita pela TI com
+  `manage.py changepassword <username>` (shell no host; em produção via
+  compose).

@@ -63,6 +63,10 @@ habilitação; preencher `ad_upn` no superusuário o torna autenticável por AD.
 login do Django admin é coberto pelo mesmo anti-lockout local dos demais
 logins. Detalhes em `docs/adr/ADR-0004-*.md` e `docs/adr/ADR-0009-*.md`.
 
+A senha do admin local é rotacionada pela TI com
+`manage.py changepassword <username>` (shell no host; em produção via
+compose), pois o aplicativo não oferece troca de senha (ADR-0011).
+
 ### `ad_check` — aceitação contra os DCs reais (manual, fora do CI)
 
 Valida uma senha AD contra **cada** DC configurado e imprime por DC o

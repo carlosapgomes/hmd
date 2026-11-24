@@ -4,6 +4,27 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.30] — 2026-11-24
+
+**Bloqueio de troca de senha (BREAKING — senha é do AD, só na TI)** —
+1 change (`bloqueio-troca-de-senha`), 2 slices TDD com revisão
+independente por slice. Suíte 2838 → **2861** (+23 testes). Sem
+migrations e **sem seeds novos** (passo 5 do runbook roda idempotente
+como segurança; catálogo segue em 14 tipos e os seeds do `neurointerv`
+estão em produção desde a v0.1.26).
+
+- **Perfil sem troca de senha (BREAKING)**: `POST /profile/` não
+  processa mais troca e responde 405; card «Alterar senha» removido
+  (dados da conta em largura total) com linha de orientação fixa — a
+  troca é feita pessoalmente na TI do hospital; `HospitalPasswordChangeForm`
+  removida.
+- **Rotas de troca de senha do Django admin removidas (BREAKING)** por
+  filtragem por nome (override de `admin/base.html` sem o link, com
+  teste anti-drift; formulário de edição de usuário sem botão de
+  senha).
+- A senha do admin local passa a ser rotacionada pela TI via
+  `manage.py changepassword` (ADR-0011).
+
 ## [0.1.29] — 2026-11-24
 
 **Reapresentação de casos e filas (deduplicação de reenvios)** — 1

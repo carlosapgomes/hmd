@@ -4,6 +4,33 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.29] — 2026-11-24
+
+**Reapresentação de casos e filas (deduplicação de reenvios)** — 1
+change (`reapresentacao-casos-filas`), 5 slices TDD com revisão
+independente por slice. Suíte 2431 → **2838** (+407 testes).
+**COM migrations (0016–0017):** CNS do paciente + vínculo de
+reapresentação — o passo `migrate` do deploy aplica schema.
+**Sem seeds novos** (passo 5 do runbook roda idempotente como
+segurança; catálogo segue em 14 tipos e os seeds do `neurointerv`
+estão em produção desde a v0.1.26).
+
+- **Identificação de reapresentações** por nome normalizado + nº de
+  regulação, CNS (bloco SESAB completo) ou unidade de origem — sempre
+  do mesmo procedimento; evidência forte resolve automático, o resto
+  vai a conferência do NIR (duas respostas, com os dois PDFs), sem
+  bloqueio por falta de resposta.
+- **Fila médica**: substituição só com o novo integralmente
+  processado, espera acumulada preservada sem reescrever `created_at`;
+  **agendamento**: original/aprovação/andamento preservados, novo
+  encerrado vinculado após LLM1 (sem LLM2), PDFs/anexos separados
+  inclusive no histórico `CLEANED`.
+- Negativa médica anterior informa o novo ciclo em janela única de 15
+  dias; encerrados por reapresentação saem de «Em andamento» e da
+  tabela por procedimento (volume de envios e auditoria preservados);
+  proteção temporária contra minimização/purga de documentos ligados a
+  caso ativo.
+
 ## [0.1.28] — 2026-11-23
 
 **CRM do médico nas respostas finais ao NIR (exigência SUREM)** — 1

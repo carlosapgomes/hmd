@@ -9,7 +9,7 @@ change admin-local-identity). Os fluxos aqui exercitam esse caminho:
   correta, com mensagem genérica (sem revelar o motivo interno);
 - R2/R6: login break-glass válido cria sessão; senha errada nega com mensagem
   genérica; profile exige login; logout encerra a sessão e volta ao login;
-- R2: troca de senha local no perfil preserva a sessão e a nova senha autentica;
+- R2: escrita no perfil (POST) é recusada com 405, sem alterar a senha nem a sessão;
 - R4: home autenticada placeholder exige login e cumprimenta o usuário;
 - R5: usuário autenticado em ``/login/`` é redirecionado para a home.
 """
@@ -63,7 +63,7 @@ def client() -> Client:
 
 @pytest.mark.django_db
 class TestLoginFlow:
-    """R2/R6: login, sessão, perfil, logout e troca de senha."""
+    """R2/R6: login, sessão, perfil, logout e recusa de escrita no perfil."""
 
     def test_login_logout_profile(self, client: Client) -> None:
         _create_user(first_name="Maria", last_name="Silva")
@@ -137,7 +137,7 @@ class TestLoginFlow:
         assert client.get(reverse("home")).status_code == 302
 
     def test_profile_password_change(self, client: Client) -> None:
-        """R2: troca de senha local no perfil preserva sessão e autentica."""
+        """R2: escrita no perfil é recusada (405), senha inalterada, sessão válida."""
         _create_user()
         client.post(reverse("login"), {"username": USERNAME, "password": PASSWORD})
 
@@ -150,18 +150,13 @@ class TestLoginFlow:
                 "new_password2": new_password,
             },
         )
-        assert response.status_code == 302
-        assert response.headers["Location"] == reverse("profile")
+        assert response.status_code == 405
 
-        # Sessão mantida após a troca e a nova senha autentica.
+        # Senha não muda e a sessão continua válida.
         user = User.objects.get(username=USERNAME)
-        assert user.check_password(new_password)
+        assert user.check_password(PASSWORD)
+        assert not user.check_password(new_password)
         assert client.get(reverse("profile")).status_code == 200
-
-        client.post(reverse("logout"))
-        response = client.post(reverse("login"), {"username": USERNAME, "password": new_password})
-        assert response.status_code == 302
-        assert response.headers["Location"] == reverse("home")
 
 
 @pytest.mark.django_db

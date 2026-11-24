@@ -37,6 +37,49 @@ django-fsm substituído por django-fsm-2 (MIT; API django-fsm preservada — vie
 
 ## Estado atual (execução do roadmap)
 
+**Change `bloqueio-troca-de-senha` (2 slices + gate, ARQUIVADA em 2026-11-24)**:
+dono removeu do aplicativo toda affordance de troca de senha — a senha é do AD e
+só é trocada presencialmente na TI do hospital (ADR-0011). S1 `9625e32`: perfil
+só de leitura (`@login_required` por fora + `@require_GET` por dentro → 405 em
+POST, sem leitura de `request.POST`), card «Alterar senha» removido, dados em
+largura total (`col-12`), linha exata «Precisa trocar a senha? Procure
+pessoalmente a TI do hospital.», `HospitalPasswordChangeForm` extinta (nunca
+funcionara para AD: `check_password` com senha inutilizável), harness
+`sessoes` com checagens negativas e de VISIBILIDADE da orientação. S2
+`0f92a4a`: as TRÊS rotas herdadas do Django admin sem o projeto as ter pedido
+(`admin:password_change`, `admin:password_change_done` e
+`admin:auth_user_password_change`) saem por filtragem POR NOME em
+`HmdAdminSite.get_urls`/`UserAdmin.get_urls` (autoatendimento → 404 pelo
+catch-all); override de `templates/admin/base.html` sem o link «Alterar senha»
+(o `{% url %}` derrubaria TODAS as páginas do admin com `NoReverseMatch`) com
+teste anti-drift contra o original do Django instalado (upgrade que toque o
+`base.html` quebra o teste por desenho); formulário de edição de usuário sem
+botão de senha e com help_text neutro REAFIRMADO após `super().__init__` (o
+`UserChangeForm` da base o sobrescreve para senha inutilizável); template do
+widget no NÍVEL DO APP (`apps/accounts/templates/accounts/widgets/` — primeiro
+diretório de templates por app do repo; o renderer de formulários só busca em
+`django/forms/templates` + `templates/` dos apps, nunca no `DIRS` do projeto);
+varredura recursiva do resolver com prefixos acumulados (zero padrões com
+`password`). Decisões do dono: template no app (1-a); rota por usuário com
+comportamento nativo — 302 (redirect de compatibilidade do `ModelAdmin`) → 302
+(objeto inexistente → índice do admin com aviso) → 200, sem página de senha e
+sem escrita; nem o padrão de compatibilidade nem o redirect de objeto
+inexistente são filtrados/sobrescritos; campos de senha do formulário de
+CRIAÇÃO de usuário (`add_fieldsets`) FORA de escopo. Operação: o admin local
+perde o autoatendimento — senha rotacionada pela TI com `manage.py
+changepassword <username>` (README, seção «Autenticação AD»; `seed_admin` em
+re-execução segue sem resetar). Execução: 2 loops `/slice-loop` (worker
+meta/muse-ember-1.0:medium + reviewer openai-codex/gpt-6.1-terra:high; 2
+rodadas e 1 ciclo de fix por slice; S2 com 2 tentativas bloqueadas por decisão
+humana — erros do DESENHO do controlador: caminho do template e a falsa
+premissa de que a página de edição daria 404; evidências em
+`/tmp/hmd-slice-runs/hmd/remove-pw-change/bloqueio-troca-de-senha/`). Suíte
+2842→2861. Specs: `account-access` +2 requisitos ADDED (8 cenários);
+`validate --specs` 18/18 (avisos --strict de texto longo são os 6 pré-existentes).
+Notas de processo: o gate do host (`acceptance.verify`) só executa no nível
+`verified` — em `checked` o `verifyRuns` vem vazio; CHANGELOG fica para o
+release. Commits 9625e32 + 0f92a4a.
+
 **Change `registro-profissional-resposta-final` (2 slices + gate, ARQUIVADA em 2026-11-23)**: exigência SUREM — nome e CRM de quem autorizou/aceitou/recusou o exame no retorno ao NIR. Descoberta: o par `professional_council`/`professional_council_number` (+ property `professional_registration_display`, consumida no perfil) já existia desde o bootstrap mas estava inerte — SEM superfície de edição no Django admin. (001) fieldset «Profissional» no `UserAdmin` (fieldsets+add_fieldsets, molde ats-web; validação par-ou-nada permanece só em `User.clean`; testes de estrutura+POST add/change); (002) helper único puro `apps/cases/doctor_credit.py::doctor_credit_line(case)` — lê `Case.doctor_decided_by` (nunca o `user` do post), `.strip()` defensivo — compondo a última linha `Médico responsável: {nome} — {CRM N}` nas 3 respostas finais ao NIR (confirmação U1/U2 em `confirm_case_scheduling` — `reply_unit_2_text()` preservada sem argumentos, composição no serviço — e negativa médica em `post_doctor_denial_reply`), degradação graciosa (sem registro → só nome; decisor nulo → omite; nunca falha), `|linebreaksbr` na thread nas 3 superfícies (NIR detalhe/histórico + agendador; corrige também o colapso visual dos itens da negativa), manual cita a linha. Fora de escopo (R6): negação de agendamento e intercorrência sem a linha (pins); previews de notificação intactos. Thread append-only = snapshot no post (D4). Execução: 2 loops pi-subagents-openspec-loop/2 standalone (worker muse-ember-1.0:high + reviewer muse-wonder-1.0:medium; evidências /tmp/hmd-slice-registro-00{1,2}-run/; ambos aceitos na 1ª rodada de review — OK with notes; plano revisado por reviewer independente antes: M1/M2/m1–m4 quitados, incl. mapa de testes auditado: só `test_closure_denial.py` e `test_views.py:1478` quebram por igualdade estrita; `test_services.py:199/245` verdes pela degradação; `:381`/incident/unit_labels pins intocados). Suíte 2420→2431. Specs promovidas ×3 MODIFIED (account-access +3 cenários admin; scheduling linha do médico na resposta final — pin «exatamente» da U2 reconciliado; case-closure idem negativa); validate --specs 17/17 (warnings --strict de texto longo são pré-existentes em todo o corpus). Notas operacionais: pytest desta estação exige `TEST_DB_PORT=55438` (5433 hospeda outro serviço); `display_name` de usuário AD sem `first_name`/`last_name` cai no CPF — provisionamento médico DEVE preencher nome (D2). P2s de backlog: render `<br` positivo só no detalhe NIR (parametrizar p/ 3 superfícies), manual não menciona degradações, RED intermediário do helper. Commits 4bb86b9 + 10dce81.
 
 **Change `reapresentacao-casos-filas` (5 slices, ARQUIVADA em 2026-11-24)**:
@@ -133,7 +176,7 @@ Notas operacionais: portas host 5432/5433/55433 flutuam entre projetos — use `
 
 ```
 config/            settings por ambiente (base/dev/prod/test), urls, wsgi/asgi
-templates/         templates raiz + accounts (login/perfil/home/switch-role)
+templates/         templates raiz + accounts (login/perfil/home/switch-role) + admin/base.html (override sem link de senha); apps/accounts/templates/ (widget de senha, nível do app)
 static/            CSS/JS (tema hospitalar HMD, Bootstrap 5.3 CDN)
 tests/             suíte raiz (smoke + resolução de banco)
 apps/accounts/     User/Role (ad_upn), backends (Kerberos AD + break-glass), kerberos.py (cliente/failover), ratelimit.py (anti-lockout), middleware (papel ativo + guard), admin, ad_check
@@ -153,6 +196,11 @@ docs/adr/          decisões arquiteturais (0001–0008)
 
 - **Identidade reservada SAR–HMD (ui-parity-foundation D1, 3 tokens):** o nome exibido é `SAR – HMD` (`APP_DISPLAY_NAME`/manifest/` <title>`; override por ambiente preservado) e os três tokens reservados — (1) primária `#0d4a8a` (header/`theme-color`/botões), (2) `short_name "HMD"`, (3) sigla `HMD` no ícone (com faixa geométrica de família SAR + variante `-contrast`) — SHALL permanecer os diferenciadores do HMD: nenhum alinhamento visual futuro SHALL alterar esses três tokens. Premissa externa: o rename espelho do ats-web (`SAR – CHD`) é de outro repositório.
 - **Harness `verify-hmd` (ui-parity-foundation D7/D7b):** prova oficial dos slices visuais (fora do quality gate) — instância isolada em loopback sob `config.settings.verify`, banco próprio `hmd_verify_*` com checagens fail-closed, seed sintético (`seed_verify`) e backend sintético exclusivo (`backends_verify`, recusa carregar fora de verify), drive Playwright pinado com login real pelo form (cookie injetado nunca é prova) e evidência em `tmp/verification/`; mapas em `.pi/skills/verify-hmd/features/`.
+- **Sem troca de senha no aplicativo (ADR-0011):** nenhuma rota, formulário, link
+  ou instrução de troca/redefinição de senha — no perfil nem no Django admin
+  (as três rotas herdadas são filtradas por nome). Senha do AD é presencial na
+  TI; senha do admin local via `manage.py changepassword`. Ressalva aprovada:
+  campos de senha do formulário de CRIAÇÃO de usuário (identidade local).
 - Monolito Django SSR; sem DRF/SPA; sem e-mails transacionais (ADR-0003).
 - Guard de intranet apenas para o papel ativo `nir`, decidido por papel ativo
   em sessão (ADR-0002).

@@ -24,6 +24,7 @@ from django.contrib.admin.apps import AdminConfig
 from django.contrib.auth import REDIRECT_FIELD_NAME
 from django.contrib.auth.decorators import login_not_required
 from django.http import HttpRequest, HttpResponse
+from django.urls import URLPattern, URLResolver
 from django.utils.decorators import method_decorator
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.cache import never_cache
@@ -57,6 +58,21 @@ def _is_local_admin_profile(username: str) -> bool:
 
 class HmdAdminSite(admin.AdminSite):
     """Admin site com o login coberto pelo anti-lockout local (D3)."""
+
+    def get_urls(self) -> list[URLPattern | URLResolver]:
+        """Sem rotas de troca de senha do admin (change bloqueio-troca-de-senha).
+
+        Filtra de ``super().get_urls()``, **por nome**, os padrões
+        ``password_change`` e ``password_change_done`` — as rotas deixam de
+        existir (``reverse`` levanta ``NoReverseMatch`` e a requisição cai
+        no catch-all do admin → 404 para autenticado). Os demais padrões
+        seguem na ordem original.
+        """
+        return [
+            pattern
+            for pattern in super().get_urls()
+            if getattr(pattern, "name", None) not in {"password_change", "password_change_done"}
+        ]
 
     @method_decorator(never_cache)
     @login_not_required

@@ -10,7 +10,7 @@
 </div>
 <div class="row g-4 mt-1">
   <!-- Dados do usuário -->
-  <div class="col-12 col-md-6">
+  <div class="col-12">
     <div class="card shadow-sm h-100">
       <div class="card-header app-card-header">
         <h2 class="h5 mb-0">Dados da conta</h2>
@@ -38,40 +38,7 @@
           <dt class="col-sm-5">Conselho profissional</dt>
           <dd class="col-sm-7">{{ user.professional_registration_display|default:"—" }}</dd>
         </dl>
-      </div>
-    </div>
-  </div>
-
-  <!-- Troca de senha local (enquanto a autenticação local existir) -->
-  <div class="col-12 col-md-6">
-    <div class="card shadow-sm h-100">
-      <div class="card-header app-card-header">
-        <h2 class="h5 mb-0">Alterar senha</h2>
-      </div>
-      <div class="card-body">
-        <form method="post">
-          {% csrf_token %}
-          {% if form.non_field_errors %}
-          <div class="alert alert-danger py-2">
-            {% for error in form.non_field_errors %}{{ error }}{% endfor %}
-          </div>
-          {% endif %}
-
-          {% for field in form %}
-          <div class="mb-3">
-            <label for="{{ field.id_for_label }}" class="form-label">{{ field.label }}</label>
-            {{ field }}
-            {% if field.help_text %}
-            <div class="form-text">{{ field.help_text }}</div>
-            {% endif %}
-            {% for error in field.errors %}
-            <div class="text-danger small mt-1">{{ error }}</div>
-            {% endfor %}
-          </div>
-          {% endfor %}
-
-          <button type="submit" class="btn btn-hospital">Alterar senha</button>
-        </form>
+        <p class="text-secondary mt-3 mb-0">Precisa trocar a senha? Procure pessoalmente a TI do hospital.</p>
       </div>
     </div>
   </div>

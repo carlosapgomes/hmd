@@ -224,7 +224,12 @@ try {
     check('doctor-home-url', page.url().includes('/doctor/'), page.url());
     await page.goto(`${base}/profile/`, { waitUntil: 'domcontentloaded' });
     check('profile-page-title', (await page.getByRole('heading', { name: 'Meu perfil' }).count()) >= 1, 'h1 Meu perfil');
-    check('profile-cards', (await page.locator('.card').count()) >= 2, `cards=${await page.locator('.card').count()}`);
+    check('profile-cards', (await page.locator('.card').count()) >= 1, `cards=${await page.locator('.card').count()}`);
+    check('profile-no-password-input', (await page.locator('input[type="password"]').count()) === 0, 'sem input de senha');
+    const profileHtml = await page.content();
+    check('profile-no-password-label', !profileHtml.includes('Alterar senha'), 'sem rótulo Alterar senha');
+    const guidance = page.getByText('Precisa trocar a senha? Procure pessoalmente a TI do hospital.', { exact: true });
+    check('profile-password-guidance', (await guidance.count()) >= 1 && (await guidance.first().isVisible()), 'orientação TI do hospital visível');
     check('profile-back-link', (await page.getByRole('link', { name: '← Voltar' }).count()) >= 1, 'Voltar');
     await snap(page, 'doctor-profile');
     observed.steps.push({ step: 'doctor-profile', url: page.url() });

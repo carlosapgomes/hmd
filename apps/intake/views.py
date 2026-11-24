@@ -85,7 +85,15 @@ from apps.cases.procedure_review import (
     source_fingerprint_for_case,
 )
 from apps.cases.procedures import get_declared_procedure_types
-from apps.cases.reappearance import historical_reappearance_links, recovery_status_for_case
+from apps.cases.reappearance import (
+    ConferenceResponseOutcome,
+    ReappearanceDriftError,
+    ReappearanceStaleError,
+    historical_reappearance_links,
+    list_nir_reappearance_candidates,
+    recovery_status_for_case,
+    respond_to_reappearance_conference,
+)
 from apps.cases.units import unit_label
 from apps.pipeline.tasks import ProcedureReviewEnqueueAfterCommitError
 
@@ -94,6 +102,7 @@ from .forms import (
     IntakeUploadForm,
     PostClosureIssueForm,
     ProcedureReviewForm,
+    ReappearanceConferenceForm,
 )
 from .services import (
     INTAKE_DISABLED_MESSAGE,
@@ -715,11 +724,76 @@ def closed_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse
     return render(request, "intake/closed_case_detail.html", context, status=status)
 
 
+def _document_file_exists(document: CaseDocument) -> bool:
+    """Verifica existência física do PDF no storage sem lançar exceção."""
+    if not document.file or not document.file.name:
+        return False
+    try:
+        return bool(document.file.storage.exists(document.file.name))
+    except OSError:
+        return False
+
+
+def _build_reappearance_conference_context(
+    case: Case,
+) -> list[dict[str, object]]:
+    """Monta contexto comparativo read-only de conferência NIR (slice 005, R1)."""
+    candidates = list_nir_reappearance_candidates(case)
+    items: list[dict[str, object]] = []
+    for cand in candidates:
+        prior = cand.prior
+        prior_detail_url = reverse(
+            "intake:closed_case_detail"
+            if prior.status == CaseStatus.CLEANED
+            else "intake:case_detail",
+            args=[prior.case_id],
+        )
+        prior_pdf_items = [
+            {
+                "id": doc.pk,
+                "position": doc.position,
+                "filename": doc.original_filename,
+                "size": doc.size_bytes,
+                "serve_url": reverse("intake:serve_document", args=[prior.case_id, doc.pk]),
+                "viewer_url": reverse("intake:pdf_viewer", args=[prior.case_id, doc.pk]),
+            }
+            for doc in prior.documents.all()
+            if _document_file_exists(doc)
+        ]
+        items.append(
+            {
+                "prior_case_id": str(prior.case_id),
+                "revision_digest": cand.revision_digest,
+                "evidence_code": cand.evidence_code,
+                "reason_label": cand.reason_label,
+                "conflict": cand.conflict,
+                "in_active_queue": cand.in_active_queue,
+                "has_historical_decision": cand.has_historical_decision,
+                "prior_decision_label": cand.prior_decision_label,
+                "prior_decided_at": cand.prior_decided_at,
+                "prior_reference": prior.disambiguated_reference,
+                "prior_detail_url": prior_detail_url,
+                "patient_name": prior.patient_name,
+                "patient_age": prior.patient_age,
+                "patient_cns": prior.patient_cns,
+                "agency_record_number": prior.agency_record_number,
+                "origin_unit": prior.origin_unit,
+                "procedure_labels": _procedure_labels(_declared_types_from_rows(prior)),
+                "created_at": prior.created_at,
+                "status_label": prior.get_status_display(),
+                "prior_pdf_items": prior_pdf_items,
+            }
+        )
+    return items
+
+
 def _assemble_case_detail_context(
     case: Case,
     *,
     review_form: ProcedureReviewForm | None = None,
     viewer: User | None = None,
+    reappearance_error: str = "",
+    reappearance_conflict: str = "",
 ) -> dict[str, object]:
     """Monta o contexto do detalhe (página cheia e re-render 400 da revisão).
 
@@ -833,6 +907,10 @@ def _assemble_case_detail_context(
         "show_procedure_review": show_procedure_review,
         "show_legacy_divergence": show_legacy_divergence,
         "procedure_review_form": form,
+        "reappearance_candidates": _build_reappearance_conference_context(case),
+        "current_declared_labels": _procedure_labels(_declared_types_from_rows(case)),
+        "reappearance_error": reappearance_error,
+        "reappearance_conflict": reappearance_conflict,
     }
 
 
@@ -1408,3 +1486,152 @@ def procedure_review_confirm(request: HttpRequest, case_id: uuid.UUID) -> HttpRe
     )
     context = _assemble_case_detail_context(full_case, review_form=display_form, viewer=user)
     return render(request, "intake/case_detail.html", context, status=400)
+
+
+def _render_reappearance_feedback(
+    request: HttpRequest,
+    *,
+    case: Case,
+    user: User,
+    status: int,
+    reappearance_error: str = "",
+    reappearance_conflict: str = "",
+) -> HttpResponse:
+    """Re-renderiza o detalhe do caso com erro/conflito explícito na conferência."""
+    context = _assemble_case_detail_context(
+        case,
+        viewer=user,
+        reappearance_error=reappearance_error,
+        reappearance_conflict=reappearance_conflict,
+    )
+    return render(request, "intake/case_detail.html", context, status=status)
+
+
+def _flash_reappearance_outcome(request: HttpRequest, outcome: ConferenceResponseOutcome) -> None:
+    """Registra flash informativo/sucesso conforme o desfecho não-conflitante."""
+    if outcome.status == "independent":
+        messages.info(
+            request,
+            "Pedido marcado como independente para esta revisão; ambos os casos seguem seus fluxos.",
+        )
+    elif outcome.status == "applied_medical":
+        messages.success(
+            request,
+            "Reapresentação confirmada e substituição aplicada na fila médica.",
+        )
+    elif outcome.status == "applied_scheduling":
+        messages.success(
+            request,
+            "Reapresentação confirmada; o pedido anterior permanece na fila de agendamento e "
+            "este envio foi arquivado vinculado.",
+        )
+    elif outcome.status == "confirmed_context_only":
+        messages.success(
+            request,
+            "Vínculo de contexto histórico confirmado e disponível para consulta médica "
+            "(sem reanálise automática).",
+        )
+    elif outcome.status == "confirmed_evolved":
+        messages.info(
+            request,
+            "Confirmação registrada; os casos já evoluíram e nenhuma decisão existente foi alterada.",
+        )
+    elif outcome.status == "confirmed_awaiting_pipeline":
+        messages.info(
+            request,
+            "Confirmação registrada; a resolução será aplicada automaticamente quando o "
+            "processamento concluir.",
+        )
+
+
+@role_required("nir")
+@require_POST
+def reappearance_respond(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    """Responde conferência de reapresentação pelo NIR em escopo de equipe (S5, R1–R4)."""
+    user = _require_user(request)
+    active_role = request.session.get("active_role", "")
+    case = get_object_or_404(
+        Case.objects.select_related("created_by").prefetch_related("procedures"),
+        case_id=case_id,
+    )
+    detail_url = reverse("intake:case_detail", args=[case.case_id])
+
+    for field in ("prior_case_id", "revision_digest", "decision"):
+        if len(request.POST.getlist(field)) != 1:
+            return _render_reappearance_feedback(
+                request,
+                case=case,
+                user=user,
+                status=400,
+                reappearance_error=(
+                    "Requisição de conferência inválida; reabra o caso e tente novamente."
+                ),
+            )
+
+    form = ReappearanceConferenceForm(request.POST)
+    if not form.is_valid():
+        return _render_reappearance_feedback(
+            request,
+            case=case,
+            user=user,
+            status=400,
+            reappearance_error=("Dados de conferência inválidos; reabra o caso e tente novamente."),
+        )
+
+    try:
+        outcome = respond_to_reappearance_conference(
+            incoming=case,
+            prior_case_id=form.cleaned_data["prior_case_id"],
+            revision_digest=form.cleaned_data["revision_digest"],
+            decision=form.cleaned_data["decision"],
+            user=user,
+            role=active_role,
+        )
+    except PermissionError as exc:
+        raise PermissionDenied(str(exc)) from exc
+    except (ReappearanceStaleError, ValueError) as exc:
+        logger.warning(
+            "reappearance_respond_rejected user=%s case=%s motivo=%s", user.pk, case_id, exc
+        )
+        return _render_reappearance_feedback(
+            request,
+            case=case,
+            user=user,
+            status=400,
+            reappearance_error=f"{exc} Reabra ou recarregue a página antes de responder.",
+        )
+    except ReappearanceDriftError as exc:
+        logger.warning(
+            "reappearance_respond_drift user=%s case=%s motivo=%s", user.pk, case_id, exc
+        )
+        return _render_reappearance_feedback(
+            request,
+            case=case,
+            user=user,
+            status=409,
+            reappearance_conflict=(
+                "Concorrência detectada ao registrar a conferência; recarregue e tente novamente."
+            ),
+        )
+
+    if outcome.status == "deferred":
+        if outcome.schedule_failed:
+            conflict_msg = (
+                "Confirmação registrada como pendente, mas SEM agendamento automático de nova "
+                "tentativa — informe o caso à equipe de suporte técnico."
+            )
+        else:
+            conflict_msg = (
+                "Uma reserva ativa ou processamento em curso impediu a resolução imediata; o "
+                "vínculo foi salvo como pendente e uma nova tentativa automática foi agendada."
+            )
+        return _render_reappearance_feedback(
+            request,
+            case=case,
+            user=user,
+            status=409,
+            reappearance_conflict=conflict_msg,
+        )
+
+    _flash_reappearance_outcome(request, outcome)
+    return redirect(detail_url)

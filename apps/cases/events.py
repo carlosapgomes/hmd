@@ -230,6 +230,16 @@ class CaseEventType(models.TextChoices):
         "CASE_REAPPEARANCE_REENQUEUED",
         "Recuperação de reapresentação reenfileirada",
     )
+    # Conferência humana do NIR (slice 005, D2/D6/D7): confirmação ou
+    # independência de par candidato na revisão vigente, sem PII.
+    CASE_REAPPEARANCE_CONFIRMED = (
+        "CASE_REAPPEARANCE_CONFIRMED",
+        "Reapresentação confirmada pelo NIR",
+    )
+    CASE_REAPPEARANCE_INDEPENDENT = (
+        "CASE_REAPPEARANCE_INDEPENDENT",
+        "Pedido marcado como independente pelo NIR",
+    )
 
 
 def case_status_event_type(state: str) -> str:

@@ -307,6 +307,7 @@ def _build_prior_cases(
                 "reason": _prior_real_reason(summary.prior_case_id, procedure_type),
                 "origin_label": _PRIOR_ORIGIN_LABELS.get(summary.origin, summary.origin),
                 "denial_count": summary.prior_denial_count,
+                "confirmed_after_summarization": summary.confirmed_after_summarization,
             }
         )
     return prior_cases

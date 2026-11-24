@@ -24,6 +24,7 @@ const journeyArg = process.argv.indexOf('--journey');
 const journeyName = journeyArg >= 0 ? process.argv[journeyArg + 1] : 'default';
 const isS2 = journeyName === 's2' || process.argv.includes('--s2');
 const isS4 = journeyName === 's4' || process.argv.includes('--s4');
+const isS5 = journeyName === 's5' || process.argv.includes('--s5');
 const artifacts = path.join(runDir, 'artifacts');
 const PASSWORD = manifest.seedPassword;
 
@@ -179,7 +180,7 @@ try {
   // lançamento falha e o drive sai BLOCKED (exit 2), sem substituir motor.
   // Para s4 (que prova rede de <embed type="application/pdf">), o plugin de PDF
   // exige Chromium headed sob Xvfb (DISPLAY), nunca headless-shell.
-  if (isS4) {
+  if (isS4 || isS5) {
     if (!process.env.DISPLAY) {
       console.error('infra BLOCKED: sem DISPLAY — o plugin de PDF do headless não busca/renderiza <embed>; rode sob Xvfb.');
       process.exit(2);
@@ -806,6 +807,419 @@ if (isS4) {
   await browser.close();
   console.log(s4failures.length === 0 ? 'DRIVE S4 PASS' : `DRIVE S4 FAIL: ${s4failures.join(', ')}`);
   process.exit(s4failures.length === 0 ? 0 : 1);
+}
+// Jornada S5 (slice 005) via entrypoint oficial drive.mjs --journey s5.
+// Mesma posse/Chromium/assets do default; prova conferência NIR por não-criador
+// (mobile viewer+Voltar + desktop lazy PDF, silêncio, independente, substituição
+// médica, repetição no agendamento, negativa histórica tardia, card médico e
+// confirmação no agendamento). Artefatos s5-* sem sobrescrever default/s2/s4.
+if (isS5) {
+  const s5checks = [];
+  const s5failures = [];
+  const s5failedAssets = [];
+  const s5observed = { runId: manifest.runId, base, database: manifest.database, steps: [] };
+  function s5check(id, ok, detail) {
+    s5checks.push({ id, ok: !!ok, detail: String(detail ?? '') });
+    if (!ok) s5failures.push(id);
+    console.log(`${ok ? 'PASS' : 'FAIL'} ${id} ${detail ?? ''}`);
+  }
+  async function s5snap(page, name) {
+    const file = path.join(artifacts, `${name}.txt`);
+    let text;
+    try {
+      text = await page.locator('body').ariaSnapshot();
+    } catch {
+      text = await page.locator('body').innerText();
+    }
+    writeFileSync(file, `${page.url()}\n${text}\n`);
+    await page.screenshot({ path: path.join(artifacts, `${name}.png`), fullPage: true });
+  }
+  async function s5loginAs(viewport, username) {
+    const context = await browser.newContext(viewport ? { viewport } : {});
+    const page = await context.newPage();
+    page.on('response', (res) => {
+      if (res.url().includes('/static/') && res.status() >= 400) {
+        s5failedAssets.push(`${res.status()} ${res.url()}`);
+      }
+    });
+    await page.goto(`${base}/login/`, { waitUntil: 'domcontentloaded' });
+    await page.getByLabel('Usuário').fill(username);
+    await page.getByLabel('Senha', { exact: true }).fill(PASSWORD);
+    await page.getByRole('button', { name: 'Entrar' }).click();
+    await page.waitForURL((url) => !url.pathname.endsWith('/login/'), { timeout: 15000 });
+    return { context, page };
+  }
+  async function openIntakeCaseByQuery(page, recordNumber) {
+    await page.goto(`${base}/intake/cases/?q=${encodeURIComponent(recordNumber)}`, {
+      waitUntil: 'domcontentloaded',
+    });
+    const link = page.locator('[data-my-cases-card] a[href*="/intake/cases/"]:has-text("Ver detalhes")').first();
+    if ((await link.count()) !== 1) {
+      throw new Error(`Caso ${recordNumber} não encontrado em /intake/cases/?q=${recordNumber}`);
+    }
+    await link.click();
+    await page.waitForURL(/\/intake\/cases\/[0-9a-f-]{36}\//, { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
+    return page.url().split('#')[0];
+  }
+  const VIEWPORTS = { desktop: { width: 1280, height: 800 }, mobile: { width: 390, height: 844 } };
+  let case502Url = '';
+  let case502Id = '';
+  let case508Id = '';
+  try {
+    // ── 1) Mobile 390×844 PRIMEIRO em 880502 (antes de responder independente) ──
+    {
+      const { context, page } = await s5loginAs(VIEWPORTS.mobile, 'verify-nir');
+      const mobilePdfResponses = [];
+      page.on('response', (res) => {
+        const u = new URL(res.url()).pathname;
+        if (u.includes('/documents/')) {
+          mobilePdfResponses.push({ pathname: u, status: res.status() });
+        }
+      });
+
+      case502Url = await openIntakeCaseByQuery(page, '880502');
+      case502Id = case502Url.match(/\/intake\/cases\/([0-9a-f-]{36})\//)?.[1] || '';
+
+      const confMobile = page.locator('#conferencia-reapresentacao');
+      s5check('s5-mobile-502-conference-visible', (await confMobile.count()) === 1, case502Url);
+      const mobileEmbedPaths = await confMobile.locator('embed.pdf-lazy-embed').evaluateAll((els) =>
+        els.map((el) => el.getAttribute('data-src')).filter(Boolean),
+      );
+      const mobileEagerFetches = mobilePdfResponses.filter((r) => mobileEmbedPaths.includes(r.pathname));
+      s5check(
+        's5-mobile-502-zero-eager-embed-fetches',
+        mobileEmbedPaths.length >= 2 && mobileEagerFetches.length === 0,
+        `embeds=${mobileEmbedPaths.length}, eager=${mobileEagerFetches.length}`,
+      );
+      await s5snap(page, 's5-mobile-502-conference');
+
+      // Viewer mobile do PDF atual + Voltar
+      const currViewerLink = confMobile.locator('a:has-text("Visualizar PDF atual")').first();
+      await currViewerLink.scrollIntoViewIfNeeded();
+      const [currViewerRes, currServeRes] = await Promise.all([
+        page.waitForResponse(
+          (res) => new URL(res.url()).pathname.includes('/viewer/') && res.status() === 200,
+          { timeout: 15000 },
+        ),
+        page.waitForResponse(
+          (res) => {
+            const p = new URL(res.url()).pathname;
+            return p.includes('/documents/') && !p.endsWith('/viewer/') && res.status() === 200;
+          },
+          { timeout: 15000 },
+        ),
+        currViewerLink.click(),
+      ]);
+      await page.waitForURL(/\/viewer\//, { timeout: 15000 });
+      s5check(
+        's5-mobile-502-current-pdf-viewer-200',
+        currViewerRes.status() === 200 && currServeRes.status() === 200,
+        `viewer=${currViewerRes.status()} serve=${currServeRes.status()}`,
+      );
+      await s5snap(page, 's5-mobile-502-current-pdf-viewer');
+      await page.locator('a:has-text("Voltar")').first().click();
+      await page.waitForURL(new RegExp(`/intake/cases/${case502Id}/`), { timeout: 15000 });
+      s5check('s5-mobile-502-current-pdf-back', page.url().includes(`/intake/cases/${case502Id}/`), page.url());
+
+      // Viewer mobile do PDF anterior + Voltar
+      const priorViewerLink = page.locator('#conferencia-reapresentacao a:has-text("Visualizar PDF anterior")').first();
+      await priorViewerLink.scrollIntoViewIfNeeded();
+      const [priorViewerRes, priorServeRes] = await Promise.all([
+        page.waitForResponse(
+          (res) => new URL(res.url()).pathname.includes('/viewer/') && res.status() === 200,
+          { timeout: 15000 },
+        ),
+        page.waitForResponse(
+          (res) => {
+            const p = new URL(res.url()).pathname;
+            return p.includes('/documents/') && !p.endsWith('/viewer/') && res.status() === 200;
+          },
+          { timeout: 15000 },
+        ),
+        priorViewerLink.click(),
+      ]);
+      await page.waitForURL(/\/viewer\//, { timeout: 15000 });
+      s5check(
+        's5-mobile-502-prior-pdf-viewer-200',
+        priorViewerRes.status() === 200 && priorServeRes.status() === 200,
+        `viewer=${priorViewerRes.status()} serve=${priorServeRes.status()}`,
+      );
+      await s5snap(page, 's5-mobile-502-prior-pdf-viewer');
+      await page.locator('a:has-text("Voltar")').first().click();
+      await page.waitForURL(new RegExp(`/intake/cases/${case502Id}/`), { timeout: 15000 });
+      s5check(
+        's5-mobile-502-conference-intact-after-pdfs',
+        (await page.locator('#conferencia-reapresentacao').count()) === 1,
+        page.url(),
+      );
+      s5observed.steps.push({ step: 's5-mobile-502', url: page.url() });
+      await context.close();
+    }
+
+    // ── 2) Desktop 1280×800 — verify-nir (não-criador) ──
+    {
+      const { context, page } = await s5loginAs(VIEWPORTS.desktop, 'verify-nir');
+      const desktopPdfResponses = [];
+      page.on('response', (res) => {
+        const u = new URL(res.url()).pathname;
+        if (u.includes('/documents/')) {
+          desktopPdfResponses.push({ pathname: u, status: res.status() });
+        }
+      });
+
+      for (const asset of REQUIRED_ASSETS) {
+        const status = await page.evaluate(async (u) => (await fetch(u, { cache: 'no-store' })).status, asset);
+        s5check(`s5-static-asset-desktop-${asset.split('/').pop()}`, status === 200, `${asset} HTTP ${status}`);
+      }
+
+      // Par 1: 880502 vs 880501 (lazy PDFs + silêncio + independente)
+      await openIntakeCaseByQuery(page, '880502');
+      const conf502 = page.locator('#conferencia-reapresentacao');
+      const conf502Text = await conf502.innerText();
+      s5check(
+        's5-desktop-502-comparative-data',
+        (await conf502.count()) === 1 &&
+          conf502Text.includes('880502') &&
+          conf502Text.includes('880501') &&
+          conf502Text.includes('Unidade Origem S5 Alfa'),
+        'comparativo 880502 vs 880501 + origem',
+      );
+      const submitBtns = conf502.locator('form[action$="/reappearance/respond/"] button[type="submit"]');
+      const btnTexts = await submitBtns.allInnerTexts();
+      s5check(
+        's5-desktop-502-exactly-two-buttons',
+        (await submitBtns.count()) === 2 &&
+          btnTexts.some((t) => t.includes('É reapresentação do mesmo pedido')) &&
+          btnTexts.some((t) => t.includes('É um pedido independente')),
+        btnTexts.join(' | '),
+      );
+
+      const lazyPaths502 = await conf502.locator('embed.pdf-lazy-embed').evaluateAll((els) =>
+        els.map((el) => el.getAttribute('data-src')).filter(Boolean),
+      );
+      const eagerFetches502 = desktopPdfResponses.filter((r) => lazyPaths502.includes(r.pathname));
+      s5check(
+        's5-desktop-502-zero-eager-pdf-fetches',
+        lazyPaths502.length >= 2 && eagerFetches502.length === 0,
+        `embeds=${lazyPaths502.length}, eager=${eagerFetches502.length}`,
+      );
+      await s5snap(page, 's5-desktop-502-before-expand');
+
+      // Expande ambos collapses desktop (PDF atual e PDF anterior) -> 200
+      const currBtn = conf502.locator('button[data-bs-target^="#conf-curr-doc-"]').first();
+      const currTarget = await currBtn.getAttribute('data-bs-target');
+      const currSrc = await page.locator(`${currTarget} embed.pdf-lazy-embed`).getAttribute('data-src');
+      await currBtn.scrollIntoViewIfNeeded();
+      const [currRes] = await Promise.all([
+        page.waitForResponse(
+          (res) => new URL(res.url()).pathname === currSrc && res.status() === 200,
+          { timeout: 15000 },
+        ),
+        currBtn.click(),
+      ]);
+      await page.waitForFunction(
+        (sel) => {
+          const el = document.querySelector(sel);
+          return el && el.classList.contains('show') && !el.classList.contains('collapsing');
+        },
+        currTarget,
+        { timeout: 15000 },
+      );
+      s5check('s5-desktop-502-lazy-current-pdf-200', currRes.status() === 200, `${currSrc} HTTP ${currRes.status()}`);
+      await currBtn.click();
+      await page.waitForFunction(
+        (sel) => {
+          const el = document.querySelector(sel);
+          return el && !el.classList.contains('show') && !el.classList.contains('collapsing');
+        },
+        currTarget,
+        { timeout: 15000 },
+      );
+
+      const priorBtn = conf502.locator('button[data-bs-target^="#conf-prior-doc-"]').first();
+      const priorTarget = await priorBtn.getAttribute('data-bs-target');
+      const priorSrc = await page.locator(`${priorTarget} embed.pdf-lazy-embed`).getAttribute('data-src');
+      await priorBtn.scrollIntoViewIfNeeded();
+      const [priorRes] = await Promise.all([
+        page.waitForResponse(
+          (res) => new URL(res.url()).pathname === priorSrc && res.status() === 200,
+          { timeout: 15000 },
+        ),
+        priorBtn.click(),
+      ]);
+      s5check('s5-desktop-502-lazy-prior-pdf-200', priorRes.status() === 200, `${priorSrc} HTTP ${priorRes.status()}`);
+      await s5snap(page, 's5-desktop-502-expanded-pdfs');
+
+      // Teste de silêncio: sair sem clicar e voltar -> conferência ainda presente
+      await page.goto(`${base}/intake/cases/`, { waitUntil: 'domcontentloaded' });
+      await page.goto(case502Url, { waitUntil: 'networkidle' });
+      s5check(
+        's5-desktop-502-silence-preserves-conference',
+        (await page.locator('#conferencia-reapresentacao').count()) === 1,
+        'conferência preservada após navegar sem responder',
+      );
+
+      // Clica "É um pedido independente"
+      const indepBtn = page
+        .locator('#conferencia-reapresentacao button[type="submit"]:has-text("É um pedido independente")')
+        .first();
+      await indepBtn.click();
+      await page.waitForLoadState('networkidle');
+      const post502Body = await page.locator('body').innerText();
+      s5check(
+        's5-desktop-502-independent-outcome',
+        post502Body.includes('Pedido marcado como independente') &&
+          (await page.locator('#conferencia-reapresentacao').count()) === 0 &&
+          post502Body.includes('Aguardando decisão médica'),
+        'flash info + conferência oculta + 880502 Aguardando decisão médica',
+      );
+      await openIntakeCaseByQuery(page, '880501');
+      const body501 = await page.locator('body').innerText();
+      s5check(
+        's5-desktop-501-remains-awaiting-doctor',
+        body501.includes('Aguardando decisão médica'),
+        '880501 permanece Aguardando decisão médica',
+      );
+      await s5snap(page, 's5-desktop-502-independent');
+      s5observed.steps.push({ step: 's5-desktop-pair1-independent', url: case502Url });
+
+      // Par 2: 880504 vs 880503 (Substituição médica)
+      await openIntakeCaseByQuery(page, '880504');
+      await page
+        .locator('#conferencia-reapresentacao button[type="submit"]:has-text("É reapresentação do mesmo pedido")')
+        .first()
+        .click();
+      await page.waitForLoadState('networkidle');
+      const post504Body = await page.locator('body').innerText();
+      s5check(
+        's5-desktop-504-medical-replacement-flash',
+        post504Body.includes('substituição aplicada na fila médica') &&
+          post504Body.includes('Aguardando decisão médica'),
+        'flash substituição + 880504 Aguardando decisão médica',
+      );
+      await s5snap(page, 's5-desktop-504-medical-replacement');
+
+      await page.goto(`${base}/intake/closed-cases/?q=880503`, { waitUntil: 'domcontentloaded' });
+      const link503 = page.locator('a[href*="/intake/closed-cases/"]:has-text("Ver detalhes")').first();
+      s5check('s5-desktop-503-in-closed-cases', (await link503.count()) === 1, await link503.getAttribute('href'));
+      await link503.click();
+      await page.waitForURL(/\/intake\/closed-cases\/[0-9a-f-]{36}\//, { timeout: 15000 });
+      const body503 = await page.locator('body').innerText();
+      s5check('s5-desktop-503-cleaned', body503.includes('Caso concluído'), '880503 Caso concluído');
+      s5observed.steps.push({ step: 's5-desktop-pair2-medical', url: page.url() });
+
+      // Par 3: 880506 vs 880505 (Repetição de agendamento)
+      await openIntakeCaseByQuery(page, '880506');
+      await page
+        .locator('#conferencia-reapresentacao button[type="submit"]:has-text("É reapresentação do mesmo pedido")')
+        .first()
+        .click();
+      await page.waitForLoadState('networkidle');
+      const post506Body = await page.locator('body').innerText();
+      s5check(
+        's5-desktop-506-scheduling-repeat-cleaned',
+        post506Body.includes('arquivado vinculado') && post506Body.includes('Caso concluído'),
+        'flash arquivado vinculado + 880506 Caso concluído',
+      );
+      await s5snap(page, 's5-desktop-506-scheduling-repeat');
+      s5observed.steps.push({ step: 's5-desktop-pair3-scheduling', url: page.url() });
+
+      // Par 4: 880508 vs 880507 (Negativa histórica tardia)
+      const case508Url = await openIntakeCaseByQuery(page, '880508');
+      case508Id = case508Url.match(/\/intake\/cases\/([0-9a-f-]{36})\//)?.[1] || '';
+      await page
+        .locator('#conferencia-reapresentacao button[type="submit"]:has-text("É reapresentação do mesmo pedido")')
+        .first()
+        .click();
+      await page.waitForLoadState('networkidle');
+      const post508Body = await page.locator('body').innerText();
+      s5check(
+        's5-desktop-508-late-historical-denial-flash',
+        post508Body.includes('contexto histórico confirmado') &&
+          post508Body.includes('Aguardando decisão médica'),
+        'flash contexto histórico + 880508 Aguardando decisão médica',
+      );
+      await s5snap(page, 's5-desktop-508-historical-denial');
+      s5observed.steps.push({ step: 's5-desktop-pair4-historical', url: page.url() });
+
+      await context.close();
+    }
+
+    // ── 3) Visão do Médico (verify-doctor) em 880508 ──
+    {
+      const { context, page } = await s5loginAs(VIEWPORTS.desktop, 'verify-doctor');
+      const card508 = page.locator('[data-doctor-queue-card]').filter({ hasText: '880508' }).first();
+      s5check('s5-doctor-sees-880508-in-queue', (await card508.count()) === 1, `case=${case508Id}`);
+      await card508.locator('a.stretched-link').first().click();
+      await page.waitForURL(/\/doctor\/case\/[0-9a-f-]{36}\//, { timeout: 15000 });
+      await page.waitForLoadState('networkidle');
+      const docBody = await page.locator('body').innerText();
+      s5check(
+        's5-doctor-508-prior-case-card',
+        docBody.includes('Confirmado pelo NIR') &&
+          docBody.includes('Ausência de critério hemodinâmico recente') &&
+          docBody.includes('Vinculado após a sumarização'),
+        'Prior-case com Confirmado pelo NIR + motivo real + Vinculado após a sumarização',
+      );
+      await s5snap(page, 's5-doctor-508-prior-case');
+      s5observed.steps.push({ step: 's5-doctor-508', url: page.url() });
+      await context.close();
+    }
+
+    // ── 4) Visão do Agendador (verify-scheduler) em 880505 ──
+    {
+      const { context, page } = await s5loginAs(VIEWPORTS.desktop, 'verify-scheduler');
+      const card505 = page.locator('[data-scheduler-queue-card][data-agency-record-number="880505"]');
+      s5check('s5-scheduler-sees-880505', (await card505.count()) === 1, '880505 na fila');
+      const card505Text = await card505.first().innerText();
+      s5check(
+        's5-scheduler-880505-counter-badge',
+        card505Text.includes('Caso reapresentado 1 vez enquanto aguarda agendamento'),
+        'badge 1 vez',
+      );
+      await card505.first().locator('a[href*="/scheduler/case/"]').first().click();
+      await page.waitForURL(/\/scheduler\/case\/[0-9a-f-]{36}\//, { timeout: 15000 });
+      await page.waitForLoadState('networkidle');
+      const section505 = page.locator('#reapresentacoes-recebidas');
+      const section505Text = await section505.innerText();
+      s5check(
+        's5-scheduler-880505-receives-880506',
+        (await section505.count()) === 1 && section505Text.includes('880506'),
+        '#reapresentacoes-recebidas mostra 880506',
+      );
+
+      const confirmForm = page.locator('form[action$="/confirm/"]');
+      await confirmForm.locator('select[name="unit"]').selectOption('1');
+      await confirmForm.locator('input[name="scheduled_date"]').fill('2026-12-16');
+      await confirmForm.locator('input[name="scheduled_time"]').fill('11:00');
+      await confirmForm.locator('input[name="scheduled_location"]').fill('Sala Hemodinamica 1');
+      await confirmForm.getByRole('button', { name: 'Confirmar' }).click();
+      await page.waitForLoadState('domcontentloaded');
+      const postSchedBody = await page.locator('body').innerText();
+      s5check(
+        's5-scheduler-880505-confirmed-no-clinical-triage',
+        postSchedBody.includes('Agendamento confirmado.') &&
+          !postSchedBody.toLowerCase().includes('revisão clínica') &&
+          !postSchedBody.toLowerCase().includes('suspenso'),
+        page.url(),
+      );
+      await s5snap(page, 's5-scheduler-880505-confirmed');
+      s5observed.steps.push({ step: 's5-scheduler-880505', url: page.url() });
+      await context.close();
+    }
+  } catch (err) {
+    console.error(`infra/driver: ${err.message}`);
+    writeFileSync(path.join(artifacts, 'observed-state-s5.json'), JSON.stringify(s5observed, null, 2));
+    await browser.close();
+    process.exit(2);
+  }
+  s5check('s5-no-failed-static-assets', s5failedAssets.length === 0, s5failedAssets.join('; ') || 'nenhum /static/* >= 400');
+  writeFileSync(path.join(artifacts, 'report-s5.json'), JSON.stringify({ runId: manifest.runId, checks: s5checks, failures: s5failures, pass: s5failures.length === 0 }, null, 2));
+  writeFileSync(path.join(artifacts, 'observed-state-s5.json'), JSON.stringify(s5observed, null, 2));
+  await browser.close();
+  console.log(s5failures.length === 0 ? 'DRIVE S5 PASS' : `DRIVE S5 FAIL: ${s5failures.join(', ')}`);
+  process.exit(s5failures.length === 0 ? 0 : 1);
 }
 try {
   // 1) Médico: fila médica em leitura.

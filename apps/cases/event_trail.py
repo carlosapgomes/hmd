@@ -93,6 +93,8 @@ EVENT_LABELS: dict[str, str] = {
         "Falha ao agendar recuperação de reapresentação"
     ),
     CaseEventType.CASE_REAPPEARANCE_REENQUEUED: ("Recuperação de reapresentação reenfileirada"),
+    CaseEventType.CASE_REAPPEARANCE_CONFIRMED: "Reapresentação confirmada pelo NIR",
+    CaseEventType.CASE_REAPPEARANCE_INDEPENDENT: "Pedido marcado como independente pelo NIR",
     # Anexos clínicos.
     CaseEventType.CASE_ATTACHMENT_EXTERNAL_OCR_DISPATCHED: "Anexo enviado a OCR externo",
     CaseEventType.CASE_ATTACHMENT_PROCESSED: "Anexo processado e verificado",
@@ -160,6 +162,8 @@ EVENT_BADGE_CSS: dict[str, str] = {
     CaseEventType.CASE_REAPPEARANCE_RETRY_EXHAUSTED: BADGE_FAILURE,
     CaseEventType.CASE_REAPPEARANCE_SCHEDULE_FAILED: BADGE_FAILURE,
     CaseEventType.CASE_REAPPEARANCE_REENQUEUED: BADGE_SYSTEM,
+    CaseEventType.CASE_REAPPEARANCE_CONFIRMED: BADGE_NIR,
+    CaseEventType.CASE_REAPPEARANCE_INDEPENDENT: BADGE_NIR,
     CaseEventType.CASE_ATTACHMENT_EXTERNAL_OCR_DISPATCHED: BADGE_SYSTEM,
     CaseEventType.CASE_ATTACHMENT_PROCESSED: BADGE_SYSTEM,
     CaseEventType.CASE_ATTACHMENT_FAILED: BADGE_FAILURE,

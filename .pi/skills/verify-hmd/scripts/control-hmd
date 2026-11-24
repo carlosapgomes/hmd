@@ -421,6 +421,8 @@ case "$CMD" in
       DRIVE_JOURNEY="s2"
     elif [ "${4:-}" = "--s4" ] || [ "${4:-}" = "s4" ]; then
       DRIVE_JOURNEY="s4"
+    elif [ "${4:-}" = "--s5" ] || [ "${4:-}" = "s5" ]; then
+      DRIVE_JOURNEY="s5"
     fi
     # Todo drive passa pelo doctor (sem bypass) e pelo Chromium pinado do
     # Playwright — nunca Chrome do sistema, nunca motor substituto: se o
@@ -434,11 +436,11 @@ case "$CMD" in
       echo "BLOCKED: download do Chromium pinado do Playwright falhou (ver artifacts/playwright-install.log) — nenhum motor substituto foi usado" >&2
       exit 2
     fi
-    if [ "$DRIVE_JOURNEY" = "s4" ] && [ -z "${DISPLAY:-}" ]; then
+    if { [ "$DRIVE_JOURNEY" = "s4" ] || [ "$DRIVE_JOURNEY" = "s5" ]; } && [ -z "${DISPLAY:-}" ]; then
       if command -v xvfb-run >/dev/null 2>&1; then
-        xvfb-run -a node "$PW_DIR/drive.mjs" --run "$run" --journey s4
+        xvfb-run -a node "$PW_DIR/drive.mjs" --run "$run" --journey "$DRIVE_JOURNEY"
       else
-        echo "BLOCKED: s4 exige Xvfb (DISPLAY ou xvfb-run) para prova de rede de <embed type=application/pdf>" >&2
+        echo "BLOCKED: $DRIVE_JOURNEY exige Xvfb (DISPLAY ou xvfb-run) para prova de rede de <embed type=application/pdf>" >&2
         exit 2
       fi
     elif [ -n "$DRIVE_JOURNEY" ]; then
@@ -447,5 +449,5 @@ case "$CMD" in
       node "$PW_DIR/drive.mjs" --run "$run"
     fi
     ;;
-  *) echo "uso: control-hmd {launch|doctor --run <dir>|drive --run <dir> [--journey s2|s4]|cleanup --run <dir>}" >&2; exit 2 ;;
+  *) echo "uso: control-hmd {launch|doctor --run <dir>|drive --run <dir> [--journey s2|s4|s5]|cleanup --run <dir>}" >&2; exit 2 ;;
 esac

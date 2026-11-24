@@ -170,6 +170,15 @@ class Command(BaseCommand):
                 "(880401, 880402, 880403) pelos serviços reais."
             ),
         )
+        parser.add_argument(
+            "--reapresentacao-s5",
+            action="store_true",
+            default=False,
+            help=(
+                "Semeia as fixtures de conferência NIR de reapresentação "
+                "(880501–880508) pelos serviços reais."
+            ),
+        )
 
     def handle(self, *args: object, **options: object) -> None:
         _assert_verify_context()
@@ -182,6 +191,9 @@ class Command(BaseCommand):
             return
         if options.get("reapresentacao_s4"):
             self._seed_reappearance_s4()
+            return
+        if options.get("reapresentacao_s5"):
+            self._seed_reappearance_s5()
             return
         creator = User.objects.get(username="verify-nir")
         for record_number, patient_name, patient_age, days_on_screen in _VERIFY_CASES:
@@ -749,6 +761,258 @@ class Command(BaseCommand):
         }
         self.stdout.write(f"S4_SEED_JSON {json.dumps(payload)}")
         self.stdout.write(self.style.SUCCESS("seed_verify --reapresentacao-s4 concluído"))
+
+    def _seed_reappearance_s5(self) -> None:
+        """Fixtures S5 (880501–880508) pelos serviços reais (setup, não prova).
+
+        Cria usuário criador sintético ``verify-nir-criador`` (NIR, ativo,
+        senha inutilizável) para que ``verify-nir`` atue como outro membro da
+        equipe NIR (não-criador). Semeia 4 pares fracos por ``origin_unit``
+        (mesmo ``patient_name`` + ``procedure_type`` + ``origin_unit``,
+        ``agency_record_number`` distintos e CNS vazio — nunca auto-resolvem):
+        - Par 1 (silêncio + independente): 880501 + 880502 (AWAITING_DOCTOR).
+        - Par 2 (substituição médica): 880503 (5 dias atrás) + 880504 (hoje).
+        - Par 3 (repetição de agendamento): 880505 (SCHEDULER_REQUESTED) + 880506.
+        - Par 4 (negativa histórica tardia): 880507 (FINAL_REPLY_POSTED,
+          decidido 3 dias atrás) + 880508 (AWAITING_DOCTOR com CASE_LLM2_COMPLETED).
+        """
+        import json
+        from datetime import timedelta
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.utils import timezone
+
+        from apps.cases.closure import post_doctor_denial_reply
+        from apps.cases.models import ActorType, CaseEvent, CaseStatus
+        from apps.cases.procedures import record_doctor_procedure_decisions
+        from apps.cases.reappearance import list_nir_reappearance_candidates
+        from apps.intake.services import create_case_with_documents
+
+        call_command("seed_prompts")
+        nir_role = Role.objects.get(name="nir")
+        creator, _ = User.objects.get_or_create(
+            username="verify-nir-criador",
+            defaults={
+                "first_name": "Verificação Criador",
+                "last_name": "Sintético nir",
+                "is_active": True,
+                "account_status": "active",
+                "is_superuser": False,
+                "is_staff": False,
+            },
+        )
+        creator.first_name = "Verificação Criador"
+        creator.last_name = "Sintético nir"
+        creator.is_active = True
+        creator.account_status = "active"
+        creator.is_superuser = False
+        creator.is_staff = False
+        creator.set_unusable_password()
+        creator.save()
+        creator.roles.set([nir_role])
+
+        doctor = User.objects.get(username="verify-doctor")
+        declared = "angio_art_perif"
+        s5_numbers = (
+            "880501",
+            "880502",
+            "880503",
+            "880504",
+            "880505",
+            "880506",
+            "880507",
+            "880508",
+        )
+        existing_cases = {
+            c.agency_record_number: c
+            for c in Case.objects.filter(agency_record_number__in=s5_numbers)
+        }
+        if existing_cases:
+            if len(existing_cases) != len(s5_numbers) or Case.objects.filter(
+                agency_record_number__in=s5_numbers
+            ).count() != len(s5_numbers):
+                raise CommandError(
+                    "seed_verify --reapresentacao-s5: estado parcial incompatível para 880501–880508."
+                )
+            cases_by_num = existing_cases
+        else:
+
+            def _create_s5_case(
+                record_number: str,
+                patient_name: str,
+                patient_age: int,
+                days_on_screen: int,
+                origin_unit: str,
+                suffix: str,
+            ) -> Case:
+                created = create_case_with_documents(
+                    user=creator,
+                    role="nir",
+                    file=SimpleUploadedFile(
+                        f"relatorio-{record_number}-{suffix}.pdf",
+                        self._make_pdf_bytes(
+                            _review_report_lines(
+                                record_number, patient_name, patient_age, days_on_screen
+                            )
+                        ),
+                        content_type="application/pdf",
+                    ),
+                    procedure_type=declared,
+                )
+                created.refresh_from_db()
+                if created.status != CaseStatus.AWAITING_DOCTOR:
+                    raise CommandError(
+                        f"seed_verify --reapresentacao-s5: {record_number} não atingiu "
+                        f"AWAITING_DOCTOR (status={created.status})."
+                    )
+                Case.objects.filter(pk=created.pk).update(origin_unit=origin_unit)
+                created.refresh_from_db()
+                return created
+
+            # Par 1: Silêncio + Independente
+            c880501 = _create_s5_case(
+                "880501",
+                "Paciente Conferencia Indep",
+                61,
+                2,
+                "Unidade Origem S5 Alfa",
+                "anterior",
+            )
+            c880502 = _create_s5_case(
+                "880502",
+                "Paciente Conferencia Indep",
+                61,
+                1,
+                "Unidade Origem S5 Alfa",
+                "atual",
+            )
+
+            # Par 2: Substituição Médica (880503 criado há 5 dias, 880504 hoje)
+            c880503 = _create_s5_case(
+                "880503",
+                "Paciente Conferencia Medico",
+                62,
+                5,
+                "Unidade Origem S5 Beta",
+                "anterior",
+            )
+            Case.objects.filter(pk=c880503.pk).update(created_at=timezone.now() - timedelta(days=5))
+            c880503.refresh_from_db()
+            c880504 = _create_s5_case(
+                "880504",
+                "Paciente Conferencia Medico",
+                62,
+                1,
+                "Unidade Origem S5 Beta",
+                "atual",
+            )
+
+            # Par 3: Repetição de Agendamento (880505 aprovado -> SCHEDULER_REQUESTED)
+            c880505 = _create_s5_case(
+                "880505",
+                "Paciente Conferencia Agenda",
+                63,
+                4,
+                "Unidade Origem S5 Gama",
+                "anterior",
+            )
+            record_doctor_procedure_decisions(
+                c880505,
+                {declared: ("approved", "")},
+                user=doctor,
+                role="doctor",
+            )
+            c880505.refresh_from_db()
+            if c880505.status != CaseStatus.SCHEDULER_REQUESTED:
+                raise CommandError(
+                    f"seed_verify --reapresentacao-s5: 880505 não atingiu "
+                    f"SCHEDULER_REQUESTED (status={c880505.status})."
+                )
+            c880506 = _create_s5_case(
+                "880506",
+                "Paciente Conferencia Agenda",
+                63,
+                1,
+                "Unidade Origem S5 Gama",
+                "atual",
+            )
+
+            # Par 4: Negativa Histórica Tardia (880507 negado -> FINAL_REPLY_POSTED, 3 dias atrás)
+            c880507 = _create_s5_case(
+                "880507",
+                "Paciente Conferencia Negativa",
+                64,
+                3,
+                "Unidade Origem S5 Delta",
+                "anterior",
+            )
+            record_doctor_procedure_decisions(
+                c880507,
+                {declared: ("denied", "Ausência de critério hemodinâmico recente")},
+                user=doctor,
+                role="doctor",
+            )
+            post_doctor_denial_reply(c880507, user=doctor, role="doctor")
+            CaseProcedure.objects.filter(case=c880507, procedure_type=declared).update(
+                doctor_decided_at=timezone.now() - timedelta(days=3)
+            )
+            c880507.refresh_from_db()
+            if c880507.status != CaseStatus.FINAL_REPLY_POSTED:
+                raise CommandError(
+                    f"seed_verify --reapresentacao-s5: 880507 não atingiu "
+                    f"FINAL_REPLY_POSTED (status={c880507.status})."
+                )
+            c880508 = _create_s5_case(
+                "880508",
+                "Paciente Conferencia Negativa",
+                64,
+                1,
+                "Unidade Origem S5 Delta",
+                "atual",
+            )
+            if not CaseEvent.objects.filter(
+                case=c880508, event_type=CaseEventType.CASE_LLM2_COMPLETED
+            ).exists():
+                CaseEvent.objects.create(
+                    case=c880508,
+                    event_type=CaseEventType.CASE_LLM2_COMPLETED,
+                    actor_type=ActorType.SYSTEM,
+                    actor=None,
+                    actor_role="system",
+                    payload={},
+                )
+
+            cases_by_num = {
+                "880501": c880501,
+                "880502": c880502,
+                "880503": c880503,
+                "880504": c880504,
+                "880505": c880505,
+                "880506": c880506,
+                "880507": c880507,
+                "880508": c880508,
+            }
+
+        expected_pairs = (
+            ("880502", "880501"),
+            ("880504", "880503"),
+            ("880506", "880505"),
+            ("880508", "880507"),
+        )
+        for inc_num, prior_num in expected_pairs:
+            inc_case = cases_by_num[inc_num]
+            prior_case = cases_by_num[prior_num]
+            candidates = list_nir_reappearance_candidates(inc_case)
+            if len(candidates) != 1 or candidates[0].prior.case_id != prior_case.case_id:
+                raise CommandError(
+                    f"seed_verify --reapresentacao-s5: {inc_num} esperava candidato único "
+                    f"{prior_num} ({prior_case.case_id}), obtido "
+                    f"{[str(c.prior.case_id) for c in candidates]}."
+                )
+
+        payload = {num: str(cases_by_num[num].case_id) for num in s5_numbers}
+        self.stdout.write(f"S5_SEED_JSON {json.dumps(payload)}")
+        self.stdout.write(self.style.SUCCESS("seed_verify --reapresentacao-s5 concluído"))
 
     @staticmethod
     def _fixture_compatible(case: Case, declared: str) -> bool:

@@ -228,6 +228,12 @@ detalhe read-only (`case_detail.html`).
             <dt class="col-3 col-md-2 text-truncate">Negativas no pool</dt>
             <dd class="col-9 col-md-10 mb-0">{{ prior.denial_count }}</dd>
           </dl>
+          {% if prior.confirmed_after_summarization %}
+          <div class="alert alert-warning py-2 px-3 mt-2 mb-0 small">
+            <span class="badge rounded-pill text-bg-warning me-1">Vinculado após a sumarização</span>
+            Vínculo confirmado pelo NIR após a sumarização automática; não foi considerado pelo resumo da IA e não altera decisões médicas já registradas.
+          </div>
+          {% endif %}
         </div>
         {% endfor %}
         {% else %}

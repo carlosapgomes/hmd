@@ -8,74 +8,58 @@ Painel gerencial com métricas agregadas do serviço de hemodinâmica por perío
 
 ### Requirement: Métricas por período sem dados de paciente
 
-O sistema SHALL exibir um painel com métricas do período selecionado (hoje,
-7 dias, 30 dias, tudo) computadas a partir de fontes imutáveis (evento de
-resposta final com sua origem, decisões por procedimento, unidade
-agendada), de modo que casos encerrados e limpos continuem contados —
-INCLUINDO a contagem de casos encerrados administrativamente no período.
-A **seção de métricas** SHALL conter apenas contagens, tempos médios e
-labels de tipo/unidade — nenhum dado de paciente (a listagem de casos da
-mesma página exibe a identificação completa do paciente — invariante
-próprio no requisito "Lista de casos no painel"; o invariante de PHI aplica-se
-apenas à seção de métricas). Casos encerrados administrativamente SHALL sair
-da contagem de "em andamento".
+O sistema SHALL exibir painel por período (hoje, 7 dias, 30 dias, tudo) com fontes imutáveis de resposta final/origem, decisões e unidade, preservando resultados de casos limpos e contagem de encerramentos administrativos. Métricas SHALL conter só contagens, tempos e labels, sem identificação de paciente; listagem mantém identificação completa. Encerramentos administrativos e por reapresentação SHALL sair de Em andamento. Total do resumo conta envios recebidos e Encerrados conta CLEANED, inclusive técnicos; reapresentação não cria desfecho clínico ou administrativo.
 
 #### Scenario: Resumo do período
-
-- **GIVEN** casos no período (agendados, negados e em andamento)
-- **WHEN** o painel é aberto no período
-- **THEN** exibe total, agendados, negados e em andamento coerentes com os casos
+- **GIVEN** casos agendados, negados e em andamento no período
+- **WHEN** painel é aberto
+- **THEN** total, agendados, negados e em andamento refletem os casos sem desfecho fictício
 
 #### Scenario: Casos limpos continuam contados
-
-- **GIVEN** um caso encerrado e limpo pela ciência do NIR dentro do período
-- **WHEN** o painel é aberto
-- **THEN** o caso segue contado pelo seu resultado final (agendado ou negado)
+- **GIVEN** caso limpo pela ciência dentro do período
+- **WHEN** painel é aberto
+- **THEN** resultado real continua contado como agendado ou negado
 
 #### Scenario: Página sem dados de paciente
-
-- **GIVEN** casos com nomes e números de registro
-- **WHEN** o painel é renderizado
-- **THEN** na seção de métricas, nenhum nome ou número de registro de
-  paciente aparece (a lista de casos exibe a identificação do paciente —
-  o invariante de PHI é da seção de métricas)
+- **GIVEN** casos com nomes e registros
+- **WHEN** painel é renderizado
+- **THEN** seção de métricas não contém identificação; listagem continua exibindo identificação completa
 
 #### Scenario: Período selecionável
-
-- **GIVEN** casos criados em dias distintos
-- **WHEN** o período 7 dias é selecionado
-- **THEN** apenas os casos do período entram nas métricas
+- **WHEN** período de 7 dias é selecionado
+- **THEN** métricas usam a população desse período conforme os marcos existentes
 
 #### Scenario: Encerramentos administrativos contados no período
+- **WHEN** existem encerramentos administrativos no período
+- **THEN** contam na métrica administrativa e de encerrados, sem entrar em Em andamento
 
-- **GIVEN** casos encerrados administrativamente dentro do período
-- **WHEN** o painel é aberto
-- **THEN** a métrica de encerramentos administrativos reflete a contagem do
-  período, esses casos não aparecem como "em andamento" e seguem contados
-  como encerrados
+#### Scenario: Encerramento técnico não permanece em andamento
+- **GIVEN** original substituído ou incoming arquivado por reapresentação, sem decisão clínica
+- **WHEN** resumo é calculado, inclusive com feature desligada
+- **THEN** esse envio conta em Total e Encerrados, mas não em Em andamento, agendados, negados ou encerramentos administrativos
 
 
 ### Requirement: Quebra por tipo de procedimento e unidade
 
-O sistema SHALL quebrar as métricas por tipo de procedimento (total, aprovados, negados, sem decisão, na ordem canônica do catálogo) e por unidade de agendamento (unidade 1 e unidade 2), além do tempo médio do caso até a decisão médica no período.
+O sistema SHALL quebrar métricas por tipo (total, aprovados, negados, sem decisão, na ordem canônica) e unidade (1 e 2), com tempo médio até decisão médica. Casos encerrados por reapresentação SHALL ser excluídos de todas as contagens por procedimento, inclusive Total e Pendentes; auditoria e listagem preservam esses envios. Resultados reais do representante mantido permanecem contados.
 
 #### Scenario: Tabela por tipo com decisões
-
-- **GIVEN** casos com procedimentos declarados e decididos
-- **WHEN** o painel é aberto
-- **THEN** a tabela por tipo exibe total, aprovados, negados e sem decisão por tipo de procedimento
+- **GIVEN** pedidos não encerrados por reapresentação com procedimentos declarados/decididos
+- **WHEN** painel é aberto
+- **THEN** tabela mostra total, aprovados, negados e sem decisão por tipo
 
 #### Scenario: Agendados por unidade
-
-- **GIVEN** casos agendados nas unidades 1 e 2
-- **WHEN** o painel é aberto
-- **THEN** a quebra por unidade exibe a contagem de cada unidade
+- **WHEN** há casos realmente agendados em ambas as unidades
+- **THEN** quebra por unidade exibe as contagens reais de cada unidade
 
 #### Scenario: Tempo médio até a decisão
+- **WHEN** há decisões médicas registradas no período
+- **THEN** tempo médio entre início do caso e decisão médica aparece legível, sem decisão inventada para encerramentos técnicos
 
-- **GIVEN** casos com decisão médica registrada no período
-- **WHEN** o painel é aberto
-- **THEN** exibe o tempo médio do início do caso até a decisão médica de forma legível
+#### Scenario: Reenvios não inflam demanda por procedimento
+- **GIVEN** um pedido mantido e três envios encerrados por reapresentação
+- **WHEN** tabela por procedimento é calculada
+- **THEN** somente o mantido contribui às contagens; os três encerrados continuam encontráveis na listagem e auditoria
 
 
 ### Requirement: Acesso ao painel

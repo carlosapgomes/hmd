@@ -89,40 +89,52 @@ Em viewport mobile (abaixo de `md`) o card SHALL exibir link para o viewer dedic
 
 ### Requirement: Guards de serve e viewer por papel
 
-As rotas de serve e viewer SHALL aplicar os guards já vigentes de cada papel: papel ativo fora do permitido SHALL ser negado com 403 (guard de papel); com o papel correto, violações de alcance respondem fail-closed conforme o guard vigente de cada papel — NIR: guard de papel `nir` (equipe — caso de qualquer criador, decisão do dono 2026-11-22); médico: fora da matriz de subtipo → 403 (guard vigente de subtipo do serve, decisão do dono 2026-11-15 — paridade serve×viewer e com o ats-web); agendador: fora do gate → 404 (gate por **decisão de agendamento + status pós-decisão**, não por decisor — decisão do dono 2026-11-22; negativa médica direta, sem decisão de agendamento, fica fora do gate) — e documento/posição inexistente ou viewer sem PDF SHALL responder 404 sem distinguir os motivos.
+Serve e viewer SHALL aplicar guards equivalentes: papel errado recebe 403; NIR acessa casos de qualquer criador; médico fora da matriz de subtipo recebe 403; agendador fora do gate de decisão de agendamento + estado pós-decisão recebe 404, inclusive negativa médica sem decisão de agendamento. Documento/posição inexistente, arquivo ausente ou viewer de não-PDF recebem 404 sem distinguir motivos. EXCEÇÃO estreita: rotas de documentos de reapresentações aplicadas ao original acessível ao agendador SHALL permitir relatório/anexos recebidos enquanto aguarda agendamento e no Histórico do Agendador em CLEANED retido, sem abrir o PDF original fora de seu gate anterior, seguindo relação exata entre original, vínculo e arquivo.
 
 #### Scenario: NIR não serve caso alheio
-
-- **GIVEN** um caso criado por qualquer NIR
-- **WHEN** um usuário com papel ativo não NIR requisita o serve ou o viewer do documento
-- **THEN** o acesso é negado pelo guard de papel (403), sem vazar conteúdo
+- **GIVEN** caso de qualquer criador
+- **WHEN** papel não NIR pede serve/viewer NIR
+- **THEN** recebe 403 sem conteúdo
 
 #### Scenario: Médico fora da matriz recebe 403
-
-- **GIVEN** um caso cujo conjunto declarado não inclui o subtipo do médico
-- **WHEN** ele requisita o serve ou o viewer
-- **THEN** recebe 403 (guard vigente de subtipo, idêntico ao serve aceito — decisão do dono)
+- **WHEN** médico de subtipo incompatível pede serve/viewer
+- **THEN** recebe 403 em ambas as rotas
 
 #### Scenario: Agendador fora do gate recebe 404
-
-- **GIVEN** um caso fora dos estados pós-decisão de agendamento (ex.: reaberto por intercorrência) OU um caso de negativa médica direta em `FINAL_REPLY_POSTED`/`AWAITING_NIR_ACK` sem decisão de agendamento registrada
-- **WHEN** qualquer agendador requisita o serve ou o viewer
-- **THEN** recebe 404
+- **GIVEN** caso reaberto fora do gate ou negativa médica sem decisão de agendamento
+- **WHEN** agendador pede serve/viewer do PDF ORIGINAL
+- **THEN** recebe 404, independentemente de haver reapresentações
 
 #### Scenario: Painel exige manager ou admin
-
-- **GIVEN** um usuário com papel ativo fora de `manager`/`admin`
-- **WHEN** requisita o serve ou o viewer do painel
-- **THEN** o acesso é negado (403 do guard de papel)
+- **WHEN** outro papel pede serve/viewer do painel
+- **THEN** recebe 403
 
 #### Scenario: NIR não-criador serve caso da equipe
-
-- **GIVEN** um caso criado por outro usuário NIR
-- **WHEN** um NIR diferente requisita o serve ou o viewer do documento
-- **THEN** o documento é servido normalmente (equipe `nir`)
+- **WHEN** NIR diferente do criador pede serve/viewer
+- **THEN** documento é servido normalmente
 
 #### Scenario: Agendador serve PDF de caso processado por outro agendador
+- **GIVEN** decisão de agendamento por outro operador e estado pós-decisão
+- **WHEN** agendador pede serve/viewer original
+- **THEN** documento é servido normalmente
 
-- **GIVEN** um caso com decisão de agendamento registrada por outro agendador (confirmação ou negação), em estado pós-decisão
-- **WHEN** um agendador diferente requisita o serve ou o viewer
-- **THEN** o documento é servido normalmente (equipe de agendamento)
+#### Scenario: Documento recebido acessível antes da decisão de agendamento
+- **GIVEN** original aguardando agendamento com reapresentação aplicada
+- **WHEN** agendador pede serve/viewer do relatório recebido pela rota vinculada
+- **THEN** documento recebido é servido e o PDF original continua inacessível fora do gate antigo
+
+#### Scenario: Histórico CLEANED retido autoriza apenas recebidos
+- **WHEN** agendador consulta serve/viewer vinculado a canônico CLEANED retido com vínculo aplicado exato
+- **THEN** PDF/anexo recebido existente é servido, mesmo com feature desligada; PDF original em CLEANED continua retornando 404
+
+#### Scenario: Histórico minimizado não serve arquivos ausentes
+- **WHEN** canônico CLEANED e incoming foram minimizados ou purgados
+- **THEN** serve/viewer vinculados retornam 404 sem expor caminho de storage
+
+#### Scenario: IDs trocados não ampliam autorização
+- **WHEN** agendador troca vínculo, incoming, original ou arquivo por IDs sem a relação aplicada exata
+- **THEN** serve e viewer retornam 404, mesmo que outro caso seja acessível
+
+#### Scenario: Viewer preserva segurança e apresentação
+- **WHEN** documento vinculado é aberto em mobile com next externo ou em desktop com collapse fechado
+- **THEN** next inseguro cai no detalhe autorizado e embed fechado não carrega antecipadamente, preservando PDF.js e fallback sem JS

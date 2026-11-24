@@ -254,37 +254,47 @@ O detalhe do caso SHALL apresentar, apenas para `doctor`/`admin`, os dados reais
 
 ### Requirement: Card de prior-case com motivo real
 
-O detalhe do caso SHALL exibir, por procedimento declarado com caso prévio
-encontrado (número de ocorrência ou fallback nome+nascimento), um card com
-data, desfecho e motivo real da decisão prévia. O badge do caso prévio SHALL
-exibir a **referência desambiguada** do prévio — `nº · <8 primeiros chars do
-uid>` (ou `uid <8 chars>` quando sem nº) — e não o uid completo. O lookup do
-presenter é somente-leitura (eventos de lookup permanecem os do pipeline) e
-respeita as mesmas janelas configuráveis do pipeline.
+O detalhe do caso SHALL exibir, por procedimento declarado com caso prévio encontrado pelas regras de identidade e janela do pipeline, um card com data, desfecho, origem e motivo real da decisão prévia. O badge SHALL usar a referência desambiguada `nº · <8 chars>` ou `uid <8 chars>`, nunca uid completo. O presenter SHALL ser somente-leitura, respeitar confirmação NIR quando necessária e distinguir contexto confirmado após a sumarização de contexto já consumido pelo LLM2.
 
 #### Scenario: Card de negativa prévia por número de ocorrência
-
-- **GIVEN** um caso cujo procedimento tem caso prévio negado há 3 dias com o mesmo número de ocorrência
-- **WHEN** o médico abre o detalhe
-- **THEN** o card exibe data, desfecho negado e o motivo real registrado pelo médico prévio
+- **GIVEN** caso prévio negado há 3 dias com nome, procedimento e número de ocorrência iguais
+- **WHEN** médico abre o detalhe
+- **THEN** card exibe data, desfecho negado e motivo real do médico prévio
 
 #### Scenario: PDF original restrito a papel autorizado
-
 - **GIVEN** um caso com documento PDF
-- **WHEN** um usuário com papel ativo `nir` tenta acessar a URL do PDF médico diretamente
+- **WHEN** NIR tenta acessar diretamente a URL do PDF médico
 - **THEN** recebe HTTP 403 sem conteúdo do arquivo
 
 #### Scenario: Card de prior-case por fallback nome+nascimento
-
-- **GIVEN** um caso cujo procedimento tem caso prévio negado há 10 dias, número de ocorrência diferente, mesmo nome normalizado e nascimento
-- **WHEN** o médico abre o detalhe
-- **THEN** o card exibe o prévio com desfecho e motivo real, marcando a origem do match
+- **GIVEN** caso prévio negado há 10 dias com regulação diferente, nome e CNS válidos iguais, sem nascimento
+- **WHEN** médico abre o detalhe
+- **THEN** card exibe prévio com desfecho e motivo real, marcando origem CNS
 
 #### Scenario: Badge do prior-case usa referência desambiguada
+- **GIVEN** caso prévio com nº N igual ao do corrente
+- **WHEN** card é renderizado
+- **THEN** badge exibe `N · <8 chars do prévio>`, sem uid completo visível
 
-- **GIVEN** um caso cujo procedimento tem caso prévio com nº de ocorrência N (mesmo nº do caso corrente, originado de reenvio corrigido)
-- **WHEN** o médico abre o detalhe
-- **THEN** o badge do prior-case exibe `N · <8 primeiros chars do uid do prévio>` — o uid completo do prévio não aparece em texto visível
+#### Scenario: Contexto confirmado depois da sumarização
+- **WHEN** NIR confirma negativa anterior após LLM2 já ter sumarizado o novo
+- **THEN** card médico mostra origem `nir_confirmed` e inclusão posterior, sem alegar consumo pelo LLM2, disparar reanálise ou alterar decisão já registrada
+
+### Requirement: Espera preservada na substituição médica
+
+Cards pendentes SHALL exibir a espera acumulada herdada nas substituições de reapresentação, sem modificar criação nem dias em tela extraídos. FIFO SHALL usar esse marco como desempate, preservando prioridade principal por dias em tela. Abas decididas e guards existentes permanecem inalterados.
+
+#### Scenario: Reapresentações sucessivas
+- **WHEN** terceiro envio substitui segundo, que já substituiu primeiro ainda não decidido
+- **THEN** card novo mostra espera desde o primeiro marco e criação real continua sendo a do terceiro
+
+#### Scenario: Dias em tela continuam oficiais
+- **WHEN** novo relatório traz dias em tela diferentes do original
+- **THEN** ordenação principal e badge usam o novo valor extraído, sem fabricar dias para manter posição absoluta
+
+#### Scenario: Sem reapresentação
+- **WHEN** caso sem vínculo aplicado é listado
+- **THEN** espera usa criação como antes e paginação, subtipo, polling e reserva permanecem vigentes
 
 ### Requirement: Decisão por procedimento com motivo obrigatório em negativas
 

@@ -37,6 +37,42 @@ django-fsm substituído por django-fsm-2 (MIT; API django-fsm preservada — vie
 
 ## Estado atual (execução do roadmap)
 
+**Change `reapresentacao-casos-filas` (5 slices, ARQUIVADA em 2026-11-24)**:
+identidade conservadora por nome normalizado/procedimento efetivo + regulação,
+CNS estrutural SESAB ou origem (fraca); CNS conflitante, idade forte divergente
+ou múltiplos candidatos exigem conferência NIR. S1 `17fe1f2`: CNS/reset e
+prior-case com janela nova de 15 dias. S2 `e191d0a`: substituição médica apenas
+com novo pronto, espera herdada sem alterar criação/dias em tela, vínculo/FSM,
+mutex versionado antes de locks ordenados, retry limitado/idempotente e comando
+`reenqueue_pending_reappearances` (simulação por padrão, `--apply` só agenda).
+S3 `4a84552`: reenvio de agendamento arquivado somente pós-LLM1/reconciliação,
+preservando original/aprovação/reserva, documentos recebidos e disposição/purga
+por grupo. S4 `0b056af`: contador/documentos recebidos/espera/histórico retido do
+agendador, sem ampliar o gate do PDF original. S5 `9ecaf9e`: comparação read-only
+no detalhe NIR da equipe com exatamente duas respostas por par/revisão (mesmo
+pedido ou independente), silêncio sem bloqueio e contexto tardio honesto no
+card médico, sem reanálise automática, triagem clínica ou suspensão da agenda.
+Specs promovidas em 7 capacidades (nova `case-reappearance` + 6 existentes),
+16 requisitos novos e 7 modificados, preservando cenários não alterados.
+Validação final S5: ruff/format/mypy/Django check, **2818 testes distintos**
+(suíte principal com 1 teste de settings isolado para evitar override de
+`TEST_DB_NAME`), migrations sem drift e jornada oficial verify-hmd S5 **28/28**
+PASS em desktop/mobile com cleanup confirmado. Review S5 2/2: OK, zero achados;
+977 arquivos idênticos ao snapshot revisado antes/depois da validação.
+Evidência final: `/tmp/hmd-s5-final-validation-20261124/acceptance.md` e
+`tmp/verification/hmd-verify-9aaeb8192f5d40be/`. Archive:
+`openspec/changes/archive/2026-11-24-reapresentacao-casos-filas/`.
+Rollout de produção NÃO executado: `CASE_REAPPEARANCE_ENABLED` continua default
+false em prod; ativação exige smoke controlado de workers reais. Rollback
+preserva vínculos/documentos/métricas já aplicados, sem ressuscitar originais;
+lookup legado só com flag off. Notas P2 anteriores continuam deferidas: S1
+backstop de fixture/manual legado; S2 AUD-12/helper duplicado, AUD-13/driver
+superseded e P2-3/P2-4; S3 docstring FSM e nota RED 3C; S4 release do viewer
+mobile conforme padrão doctor, prova R4 via update vs e2e e typo de fixture RED.
+As specs principais passam validação normal; strict possui avisos de tamanho de
+descrições (>500 caracteres), já presentes antes da promoção (deltas aprovados
+preservados sem refatoração normativa fora de escopo).
+
 **Change `visibilidade-por-equipe` (7 slices + gate, ARQUIVADA em 2026-11-22)**: escopo de EQUIPE nos três papéis, motivada por incidente real de produção (login break-glass ≠ criador → lista vazia interpretada como "casos sumidos"). (001) lista NIR renomeada «Casos em Processamento» com todos os ativos de qualquer criador (rótulos em nav/h2/título sentence-case/alerta pós-lote/breadcrumb, contagem da equipe, manual NIR); (002) detalhe ativo + serve/viewer de PDF e anexos a qualquer `nir` (guard de papel, paridade serve×viewer); (003) gate + confirmação de divergência por qualquer `nir` NA CAMADA DE SERVIÇO — `_assert_owned_by` extinto, `_assert_nir_role` (re-check de papel NA transação consultando vínculo no banco) + `PermissionError→403` nas views (nunca 500); novo evento `CASE_GATE_DOCUMENTS_RESUBMITTED` com operador como ator (P1 do review: uploaded_by não é trilha); (004) ciência por qualquer `nir` (closure com re-check transacional, ator=operador) + reenvios corrigidos sem partição `is_own` (ativo→detalhe, encerrado→histórico) e redirect de recusa unificado; (005) «Decididos Hoje» da ESPECIALIDADE (`doctor_decided_by__isnull=False` + subtipo do visualizador, decisor no card via select_related, badge `queue_counters` coerente, manual médico); (006) «Processados Hoje» da equipe de agendamento (idem, «Processado por …»); (007) PDF/texto do detalhe do agendador por DECISÃO DE AGENDAMENTO + estado (`_scheduler_can_view_pdf = scheduling_decided_at is not None and status in PDF_ALLOWED_STATUSES`, helper único nos 4 pontos incl. histórico; **guarda anti-negativa-médica** com teste negativo explícito — decisão do dono: equipe de agendamento já acessa prontuário eletrônico; alargamento só para casos COM decisão). Execução: loops pi-subagents-openspec-loop/2 por slice (worker muse-spark-1.3-contributor:high + reviewer gpt-6.1-terra:high; S1 e S3 exigiram fix cycle; 2 rounds máx respeitados; checkpoints em /tmp/hmd-slice-runs/...). Specs promovidas: 15 requisitos MODIFIED em 7 capacidades (intake-nir ×5, case-closure ×3, scheduling ×3, doctor-decision, pdf-original-viewer, attachments, ui-shell — rótulo «Casos em Processamento» como desvio deliberado do vocabulário ats-web). Suíte 2369→2401. Quirks: títulos de cenários antitéticos preservados por design (D8 — matching MODIFIED por nome); notificações seguem criador-targeted (Non-Goal/backlog do dono).
 
 **Micro-change `p2-hardening-visibilidade-equipe` (2 slices, skip_specs, ARQUIVADA em 2026-11-22)**: quitou P2s deferidos — convergência do re-check de papel ao helper com mensagem por ação (paridade provada por testes intocados), remoção do parâmetro morto de `_decided_today_cases`, asserção de negação alheia no partial, testes dedicados do gate em `AWAITING_NIR_ACK` (via `nir_acknowledge()` FSM real) e manual do agendador preciso («à equipe de agendamento» + estados pós-decisão). Execução direta pelo controlador (autorização do dono), com provas de mutação pontual. Suíte 2401→2403.

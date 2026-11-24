@@ -266,47 +266,69 @@ recusado enquanto houver lock de worker com lease válida. Casos já em
 
 ### Requirement: Purga retroativa dos dados retidos
 
-O sistema SHALL oferecer comando de gerência que reaplica a minimização
-aos casos `CLEANED` cujos dados clínicos foram retidos pela política
-temporária: zera os campos clínicos/LLM e remove rows e arquivos físicos
-de documentos e anexos, com a mesma semântica da disposição minimizante do
-encerramento. O comando SHALL tocar apenas casos `CLEANED` com dados
-retidos, SHALL registrar ocorrência auditável na trilha de eventos de cada
-caso purgado — cujo payload SHALL conter apenas nomes de campos e
-contagens, nunca conteúdo clínico nem nomes de arquivo —, SHALL ser
-idempotente (re-execução sobre casos já purgados é no-op) e SHALL suportar
-execução a seco (`--dry-run`) que reporta o que seria purgado sem alterar
-nada. Falha na deleção física de arquivo SHALL ser reportada por caso
-(contagens de arquivos tentados/removidos/falhados) e o comando SHALL
-sinalizar a purga do caso como incompleta, encerrando com saída de erro
-quando houver falha física.
+O sistema SHALL oferecer comando de gerência que reaplica minimização a CLEANED com dados retidos, zerando campos clínicos/LLM e removendo rows e arquivos de documentos/anexos. SHALL registrar auditoria por caso com nomes de campos e contagens, nunca conteúdo clínico ou nomes de arquivos; ser idempotente; suportar --dry-run; reportar falha física por caso e sair com erro se houver. EXCEÇÃO: incoming de reapresentação vinculado a canônico ainda não CLEANED SHALL ser protegido e reportado como tal no dry-run e execução real. Após encerramento do canônico, a purga SHALL alcançar o grupo sem permitir corrida com reabertura. Pedido de purga de incoming cujo canônico CLEANED ainda não foi disposto SHALL purgar o grupo inteiro ou recusar sem escrita; nunca apagar só incoming enquanto canônico continua reabrível. Dry-run SHALL agrupar e deduplicar a mesma unidade de disposição.
 
 #### Scenario: Purga minimiza casos encerrados retidos
-
-- **GIVEN** casos `CLEANED` encerrados em modo de retenção, com documentos, anexos e artefatos presentes
-- **WHEN** o comando de purga é executado
-- **THEN** os campos clínicos ficam zerados, documentos e anexos deixam de existir (rows e arquivos), a trilha de cada caso registra a purga com payload de nomes de campos e contagens (sem conteúdo clínico nem nomes de arquivo) e rotas de documento passam a retornar 404
+- **GIVEN** casos CLEANED retidos sem proteção ativa
+- **WHEN** comando executa
+- **THEN** campos são zerados, rows/arquivos removidos, auditoria guarda nomes de campos/contagens sem conteúdo e rotas de documento retornam 404
 
 #### Scenario: Falha na deleção física é reportada
-
-- **GIVEN** um caso `CLEANED` retido cujo arquivo físico falha ao ser removido
-- **WHEN** o comando de purga é executado
-- **THEN** o caso é reportado com purga incompleta (contagem de arquivos falhados) e o comando encerra com saída de erro listando o caso
+- **WHEN** arquivo falha ao ser removido
+- **THEN** caso é reportado incompleto com contagem de falhas e comando sai com erro
 
 #### Scenario: Casos ativos não são tocados
-
-- **GIVEN** casos em estados operacionais com dados presentes
-- **WHEN** o comando de purga é executado
-- **THEN** nenhum caso fora de `CLEANED` é alterado
+- **WHEN** purga executa com casos operacionais presentes
+- **THEN** nenhum caso fora de CLEANED é alterado
 
 #### Scenario: Purga é idempotente
-
-- **GIVEN** casos `CLEANED` já purgados
-- **WHEN** o comando de purga é executado novamente
-- **THEN** é no-op sobre esses casos, sem eventos duplicados
+- **WHEN** comando executa novamente sobre casos já purgados
+- **THEN** não há nova alteração nem eventos duplicados
 
 #### Scenario: Execução a seco não altera nada
+- **WHEN** comando executa com --dry-run
+- **THEN** relatório lista elegíveis e protegidos sem alterar dados
 
-- **GIVEN** casos `CLEANED` com dados retidos
-- **WHEN** o comando é executado com `--dry-run`
-- **THEN** o relatório lista os casos que seriam purgados e nenhum dado é alterado
+#### Scenario: Incoming encerrado protegido por canônico ativo
+- **WHEN** comando encontra incoming CLEANED vinculado a canônico ativo, inclusive com resposta final ainda sem ciência
+- **THEN** informa proteção e não apaga dados ou arquivos daquele incoming
+
+#### Scenario: Purga de incoming com canônico ainda reabrível
+- **WHEN** purga é solicitada para incoming e canônico está CLEANED com dados retidos e sem disposição marcada
+- **THEN** operação dispõe grupo inteiro e marca canônico atomicamente, ou não remove nada se inelegível; não deixa canônico reabrível com documentação recebida removida
+
+#### Scenario: Reabertura concorrente
+- **WHEN** canônico é reaberto enquanto purga tenta avaliar o grupo
+- **THEN** a proteção é revalidada sob exclusão mútua e não ocorre purga de grupo com ciclo operacional ativo
+
+### Requirement: Encerramento específico por reapresentação
+
+O sistema SHALL encerrar por reapresentação somente após resolução válida do mesmo pedido, com vínculo e motivo rastreáveis. Esse encerramento SHALL ser distinto de ciência NIR, negativa clínica e encerramento administrativo; não exige simular papel manager/admin nem emite decisão ou resposta final fictícia.
+
+#### Scenario: Encerramento sistêmico legítimo
+- **WHEN** resolução médica ou de agendamento é aplicada
+- **THEN** caso apropriado chega a CLEANED com vínculo e evento próprio e caso mantido continua operacional
+
+#### Scenario: Disposição depende de quem encerra
+- **WHEN** original médico é substituído ou incoming é arquivado no agendamento
+- **THEN** original médico segue modo ordinário de retenção/minimização; incoming do agendamento retém dados e marcador de disposição nulo até disposição do grupo, sem apagar arquivos antecipadamente
+
+#### Scenario: Resultado legível
+- **WHEN** NIR consulta caso encerrado por reapresentação na busca/detalhe histórico
+- **THEN** vê o motivo, elo imediato e link autorizado ao representante atual da cadeia, sem reescrever elos antigos ou apresentar conclusão clínica/negativa inexistente
+
+### Requirement: Proteção dos reenvios vinculados ao ciclo ativo
+
+Documentos e anexos de incoming encerrado por reapresentação de agendamento SHALL permanecer disponíveis enquanto canônico não estiver CLEANED, inclusive em minimização. No encerramento canônico por ciência ou administração, os incoming vinculados SHALL seguir a mesma política de disposição do ciclo: minimização remove dados/arquivos e retenção preserva. Identidade, decisões e auditoria permanecem.
+
+#### Scenario: Minimização não apaga documentação de fila ativa
+- **WHEN** incoming encerra vinculado a original ainda aguardando agendamento com minimização ativa
+- **THEN** seus relatórios e anexos continuam acessíveis pelas rotas autorizadas
+
+#### Scenario: Encerramento do ciclo minimiza grupo
+- **WHEN** canônico encerra por ciência ou administração em minimização
+- **THEN** disposição inclui dados clínicos/documentos/anexos dos incoming vinculados, com remoção física após commit
+
+#### Scenario: Retenção preserva grupo
+- **WHEN** canônico encerra sob retenção
+- **THEN** dados do canônico e incoming permanecem e só purga explícita posterior pode minimizá-los

@@ -77,7 +77,9 @@ def test_pending_card_uses_inherited_wait_in_html(
     """R3: card do novo exibe espera herdada (5 dias), não a criação de hoje."""
     doctor = user_factory("geral-espera", ("doctor",))
     incoming = _substituted_pair(nir_user, number="wait-1")
-    assert incoming.created_at.date() == timezone.localdate()
+    # Data LOCAL dos dois lados: a data UTC de ``created_at`` já virou o dia
+    # seguinte entre 21:00 e 00:00 (-03) e fazia a pré-condição falhar.
+    assert timezone.localdate(incoming.created_at) == timezone.localdate()
     _login(client, doctor)
     response = client.get(reverse("doctor:queue"))
     assert response.status_code == 200

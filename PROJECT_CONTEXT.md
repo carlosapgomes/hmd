@@ -37,6 +37,27 @@ django-fsm substituído por django-fsm-2 (MIT; API django-fsm preservada — vie
 
 ## Estado atual (execução do roadmap)
 
+**Change `admin-lista-usuarios-nome-completo` (1 slice + gate, ARQUIVADA em 2026-11-25)**:
+lista de usuários do Django admin ganha a coluna calculada «Nome completo»
+(`User.display_name`: nome e sobrenome, com fallback para `username`) logo
+após `username` — que segue a primeira coluna e o link de edição
+(`list_display_links` não declarado: default do Django) —, ordenável pelo
+primeiro nome (`ordering="first_name"`; quem não tem nome fica no início na
+ordem crescente — limitação aceita no design D2), e `search_fields` passa a
+casar `first_name`/`last_name` (parcial, sem diferenciar maiúsculas).
+Motivação: incidente de 25/11 — dois usuários AD provisionados com `username`
+de nome real não conseguiram entrar digitando o CPF (o login é o `username`,
+nunca o UPN; ver «Regras não negociáveis») e a lista não mostrava nomes.
+S1 `f7af5cf` (TDD: 9 failed → 9 passed; teste em
+`apps/accounts/tests/test_admin_user_list_display.py`). Sem migration; sem
+mudança de modelo, formulários ou autenticação. Execução direta na sessão do
+dono, SEM revisão independente por slice (decisão do dono); gate: ruff/format/
+mypy limpos, pytest 2870 passed. Specs: `account-access` +2 requisitos ADDED
+(«Lista de usuários exibe o nome completo», «Busca da lista de usuários
+alcança nome e sobrenome»; 5 cenários); `validate --specs` 18/18 (avisos
+--strict de texto longo seguem sendo os 6 pré-existentes). CHANGELOG fica para
+o release.
+
 **Change `bloqueio-troca-de-senha` (2 slices + gate, ARQUIVADA em 2026-11-24)**:
 dono removeu do aplicativo toda affordance de troca de senha — a senha é do AD e
 só é trocada presencialmente na TI do hospital (ADR-0011). S1 `9625e32`: perfil
@@ -201,6 +222,11 @@ docs/adr/          decisões arquiteturais (0001–0008)
   (as três rotas herdadas são filtradas por nome). Senha do AD é presencial na
   TI; senha do admin local via `manage.py changepassword`. Ressalva aprovada:
   campos de senha do formulário de CRIAÇÃO de usuário (identidade local).
+- **Login é o `username` (CPF), nunca o UPN (spec `account-access`, requisito
+  «Provisionamento administrativo com ad_upn»):** provisionar usuário AD com
+  `username` = CPF normalizado; o `ad_upn` só alimenta o Kerberos. A coluna
+  «Nome completo» da lista do admin é apenas exibição — incidente de 25/11
+  (dois usuários com `username` de nome real não conseguiram entrar).
 - Monolito Django SSR; sem DRF/SPA; sem e-mails transacionais (ADR-0003).
 - Guard de intranet apenas para o papel ativo `nir`, decidido por papel ativo
   em sessão (ADR-0002).

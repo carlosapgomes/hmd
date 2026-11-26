@@ -76,9 +76,9 @@ class UserAdmin(BaseUserAdmin):  # type: ignore[type-arg]
     """UserAdmin com os campos do HMD e a regra de senha do AD (R2/R3)."""
 
     form = UserChangeFormSemTrocaDeSenha
-    list_display = ("username", "ad_upn", "account_status", "is_staff")
+    list_display = ("username", "full_name", "ad_upn", "account_status", "is_staff")
     list_filter = ("account_status",)
-    search_fields = ("username", "ad_upn")
+    search_fields = ("username", "ad_upn", "first_name", "last_name")
     filter_horizontal = ("groups", "user_permissions", "roles", "specialties")
     fieldsets = (
         *(BaseUserAdmin.fieldsets or ()),
@@ -114,6 +114,11 @@ class UserAdmin(BaseUserAdmin):  # type: ignore[type-arg]
             {"fields": ("professional_council", "professional_council_number")},
         ),
     )
+
+    @admin.display(description="Nome completo", ordering="first_name")
+    def full_name(self, obj: User) -> str:
+        """Coluna «Nome completo» da lista: nome e sobrenome ou ``username``."""
+        return obj.display_name
 
     def get_urls(self) -> list[URLPattern]:
         """Sem rota de senha por usuário (change bloqueio-troca-de-senha).

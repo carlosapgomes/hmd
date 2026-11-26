@@ -4,6 +4,31 @@ Formato: versões com resumo por change (Keep a Changelog adaptado ao workflow
 OpenSpec — cada change tem proposal/design/slices/specs arquivados em
 `openspec/changes/archive/`).
 
+## [0.1.31] — 2026-11-25
+
+**Lista de usuários do admin com nome completo + correção de teste
+flaky** — 2 changes (`admin-lista-usuarios-nome-completo`, 1 slice TDD;
+`test-espera-herdada-data-local`, 1 slice só de teste), execução direta
+na sessão do dono **sem revisão independente por slice** (decisão do
+dono). Suíte 2861 → **2870** (+9 testes). Sem migrations e **sem seeds
+novos** (passo 5 do runbook roda idempotente como segurança). **Deploy
+direto.**
+
+- **Lista de usuários do Django admin**: coluna «Nome completo» (nome e
+  sobrenome, com fallback para o `username`) logo após o `username`, que
+  segue a primeira coluna e o link de edição; ordenável pelo primeiro nome;
+  busca também por nome e sobrenome. Motivação: incidente de 25/11 — dois
+  usuários AD provisionados com `username` de nome real não conseguiram
+  entrar digitando o CPF (o login é o `username`, nunca o UPN). Sem
+  mudança de login, de modelo nem de autenticação.
+- **Teste**: a pré-condição de
+  `test_pending_card_uses_inherited_wait_in_html` (`apps/doctor`) passa a
+  comparar data local — o teste falhava todos os dias entre 21:00 e 00:00
+  (-03) e quebrou o gate de 25/11. Nenhuma mudança de produção.
+- Operação: para o usuário AD entrar, o login é o `username` cadastrado
+  (CPF, por desenho) — renomear no admin ou orientar o usuário; a coluna
+  «Nome completo» é só exibição.
+
 ## [0.1.30] — 2026-11-24
 
 **Bloqueio de troca de senha (BREAKING — senha é do AD, só na TI)** —

@@ -58,6 +58,19 @@ alcança nome e sobrenome»; 5 cenários); `validate --specs` 18/18 (avisos
 --strict de texto longo seguem sendo os 6 pré-existentes). CHANGELOG fica para
 o release.
 
+**Change `test-espera-herdada-data-local` (1 slice, só teste, `skip_specs`, ARQUIVADA em
+2026-11-25)**: `test_pending_card_uses_inherited_wait_in_html` (`apps/doctor`)
+falhava todos os dias entre 21:00 e 00:00 (-03) — a pré-condição comparava a
+data UTC de `created_at` (`.date()`) com `timezone.localdate()`; quebrou o gate
+de 25/11 sem relação com a change em validação. S1 `5c9a528`:
+`timezone.localdate(incoming.created_at)` (data local dos dois lados — convenção
+de `apps/cases/day_bounds.py`); corpo do teste intacto, zero produção; era o
+único ponto do repo com o padrão. RED no relógio real (22:14 -03, dentro da
+janela) → GREEN no relógio real e com `now` fixado antes (20:30) e depois
+(22:00) da fronteira UTC; gate 22:15–22:18 (-03): 2870 passed. Execução direta
+na sessão do dono, sem revisão independente. Suíte 2861 → 2870 (os 9 testes da
+change anterior). CHANGELOG fica para o release.
+
 **Change `bloqueio-troca-de-senha` (2 slices + gate, ARQUIVADA em 2026-11-24)**:
 dono removeu do aplicativo toda affordance de troca de senha — a senha é do AD e
 só é trocada presencialmente na TI do hospital (ADR-0011). S1 `9625e32`: perfil
@@ -240,6 +253,11 @@ docs/adr/          decisões arquiteturais (0001–0008)
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest
 ```
+
+Determinismo temporal em testes: comparar datas com `timezone.localdate(<aware>)`,
+nunca `<aware>.date()` (data UTC) contra `timezone.localdate()` — entre 21:00 e
+00:00 (-03) o UTC já virou o dia (lição de `test-espera-herdada-data-local`; a
+suíte só conecta com o compose de teste publicado na porta certa — `TEST_DB_PORT`).
 
 Projeto de referência (padrões, somente-leitura): `/projects/dev/ats-web`.
 
